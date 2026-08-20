@@ -201,3 +201,7 @@ success the **Release** workflow runs [semantic-release](https://semantic-releas
 to version, changelog, publish to npm, and tag a GitHub release.
 
 See [TODO.md](./TODO.md) for deferred work.
+
+## License
+
+[MIT](LICENSE) © Benjamin Van Treese

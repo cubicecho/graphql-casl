@@ -33,3 +33,7 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and
 drive a single, repo-wide release via
 [semantic-release](https://semantic-release.gitbook.io/): one version and tag for
 the whole repo, with every package published together at that version.
+
+## License
+
+[MIT](LICENSE) © Benjamin Van Treese

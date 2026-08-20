@@ -2,6 +2,19 @@
   "name": "@vantreeseba/graphql-casl",
   "version": "1.0.0",
   "description": "GraphQL middleware plugin for defining CASL permission rules on resolvers.",
+  "keywords": [
+    "graphql",
+    "graphql-middleware",
+    "casl",
+    "authorization",
+    "permissions",
+    "access-control",
+    "rbac",
+    "abac",
+    "resolvers",
+    "middleware",
+    "typescript"
+  ],
   "type": "module",
   "repository": {
     "type": "git",
@@ -12,6 +25,8 @@
   "bugs": {
     "url": "https://github.com/vantreeseba/graphql-casl/issues"
   },
+  "license": "MIT",
+  "author": "Benjamin Van Treese <vantreeseba@gmail.com>",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

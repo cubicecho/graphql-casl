@@ -79,3 +79,7 @@ All options are optional strings:
   config: { subjectConstName: 'Subjects', abilityName: 'buildAbility' },
 },
 ```
+
+## License
+
+[MIT](LICENSE) © Benjamin Van Treese
