@@ -1,0 +1,190 @@
+Wider GraphQL authz ecosystem — analysis (Workstream D)
+=======================================================
+Status: ANALYSIS ONLY. No code written. Ideas harvested from libraries OTHER
+than graphql-shield, ranked by value to this library.
+
+Companion file: shield-parity.todo.txt (the graphql-shield gap table).
+Several items here matter MORE than shield parity does — E1 in particular.
+
+Sources reviewed
+----------------
+  - graphql-authz        AstrumU/graphql-authz README (@graphql-authz/core)
+  - Pothos scope-auth    pothos-graphql.dev/docs/plugins/scope-auth
+  - @envelop/generic-auth the-guild.dev/graphql/envelop/plugins/use-generic-auth
+  - CASL itself          @casl/ability + @casl/ability/extra (already a peer dep)
+
+Also considered and deliberately not pursued: GraphQL Armor /
+graphql-query-complexity / graphql-depth-limit (query-cost hardening, not
+authorization); Hasura & PostGraphile RLS (database-layer, different niche).
+
+
+[ ] E1. POST-EXECUTION RULES — authorize the RESOLVED ENTITY, not the
+        client-asserted args.
+        Source: graphql-authz postExecRule / PostExecutionRule. Its rules get
+        (context, fieldArgs, RESULT, parent).
+
+        THE SINGLE MOST VALUABLE IDEA IN THIS SURVEY. It is the actual fix for
+        the IDOR footgun that packages/graphql-casl/README.md documents as a
+        known limitation and that test/example.test.ts already encodes as a
+        passing test. graphql-middleware runs the rule BEFORE the resolver, so
+        getSubjectData only ever sees what the CLIENT ASSERTED; a post-exec
+        rule can run ability.can(action, typed('Todo', result)) against the
+        REAL record. That is precisely what CASL conditions are built for, so
+        the fit is unusually good.
+
+        Carry over graphql-authz's own caveat verbatim: with post-exec rules the
+        RESOLVERS STILL RUN even when the rule denies, so they are unsuitable
+        for mutations and for queries with side effects (view counters etc.).
+        graphql-authz's documented alternative for those cases is to query the
+        DB inside a PRE-exec rule instead — worth documenting the same fork.
+
+        Cross-links: accessibleby.todo.txt (row-level filtering is the natural
+        sibling — deny a list ITEM vs. deny the whole field); E4 below (a denied
+        item in a list wants masking, not a thrown error).
+
+[ ] E2. SELECTION-SET INJECTION — a rule declares the fields it needs, and they
+        are fetched even if the client didn't request them.
+        Source: graphql-authz `selectionSet: '{ status author { id } }'`;
+        equivalently shield's `fragment` (see S5 in shield-parity.todo.txt).
+        Two independent libraries converged on this, which is a strong signal.
+        Prerequisite for BOTH E1 and for parent-aware field rules
+        (packages/graphql-casl/TODO.md item 2). graphql-middleware already
+        supports the {fragment, resolve} middleware form; only the `Rule` type
+        blocks it here.
+
+[ ] E3. CASL FIELD-LEVEL PERMISSIONS — can('read', 'Post', ['title']) and
+        permittedFieldsOf from @casl/ability/extra.
+        Not an ecosystem gap so much as UNUSED CAPABILITY IN A DEPENDENCY THE
+        PROJECT ALREADY HAS. CASL's `fields` argument maps 1:1 onto GraphQL
+        field selection. Nothing in src/ touches it today.
+        Payoff: one ability rule could drive EVERY field rule for a type, instead
+        of hand-listing them in the PermissionsMap — which is exactly the kind
+        of schema-derived leverage this library is already built around.
+        Pairs with E4 (mask the fields CASL says you may not read) and with E8
+        (a type-level '*' whose behavior is "consult permittedFieldsOf").
+
+[ ] E4. UNAUTHORIZED -> null INSTEAD OF THROWING.
+        Sources: Pothos `unauthorizedResolver` (return null / [] instead of an
+        error) and `treatErrorsAsUnauthorized`; envelop generic-auth
+        `rejectUnauthorized: false` (protected fields fail silently, public
+        fields still execute).
+        Here EVERY denial throws. test/integration/permissions.integration.test.ts
+        already documents the resulting asymmetry: a denial on a nullable field
+        (me: User) nulls just that field, but a denial under a non-null chain
+        ([Todo!]!) nulls the ENTIRE data payload. Field-masking is the standard
+        alternative and would make partial responses actually usable.
+
+[ ] E5. DIRECTIVE-BASED DECLARATION — @can(action:, subject:) in SDL.
+        Sources: graphql-authz @authz(rules:, compositeRules:,
+        deepCompositeRules:) on FIELD_DEFINITION | OBJECT | INTERFACE;
+        envelop generic-auth @authenticated / @skipAuth / @requiresScopes.
+        The dominant idiom for schema-first users and the main reason someone
+        picks graphql-authz over shield — permissions live next to the schema
+        instead of in a parallel map.
+        Fits this repo's existing shape as a THIRD package alongside
+        graphql-casl-codegen. Note graphql-authz also supports attaching rules
+        via `extensions` (code-first) and via a standalone `authSchema` object;
+        PermissionsMap is already the equivalent of that third form.
+
+[ ] E6. NON-graphql-middleware INTEGRATIONS — envelop/Yoga plugin, Apollo
+        Server plugin.
+        graphql-authz ships plugins for Apollo Server, envelop, express-graphql,
+        graphql-helix, Apollo Federation and schema stitching; it does this by
+        wrapping `execute` (wrapExecuteFn) rather than mutating the schema.
+        This is a REACH limitation, not a feature one: graphql-middleware is the
+        sole integration path here and is awkward on Apollo Server 4+ and on
+        federated gateways. An envelop plugin would likely widen the addressable
+        audience more than any single shield feature would.
+        Worth noting graphql-authz explicitly advertises "doesn't mutate the
+        executable schema" as a benefit — applyPermissions does mutate it.
+
+[ ] E7. GRANTED SCOPES — a parent grants authorization to its children.
+        Source: Pothos grantScopes / $granted. "$granted scopes are separate
+        from other scopes" and do not inherit transitively.
+        Avoids re-authorizing Post.author when Post itself was already
+        authorized. Meaningful on nested and list-heavy queries, and it composes
+        with the per-request cache from S4b.
+
+[ ] E8. WILDCARD PRECEDENCE, PROPERLY SPECIFIED.
+        If S3 (wildcards) gets built, copy graphql-authz's spec rather than
+        shield's — it is strictly more complete:
+          - '*' usable as a TYPE name and as a FIELD name, in any combination
+          - wildcard rules NEVER compose with each other; exactly one applies
+          - a wildcard is overridden by ANY explicitly attached rule
+          - precedence: (1) any field of a NAMED type, (2) a NAMED field of any
+            type, (3) any field of any type
+        Shield only implements the per-type '*' field default.
+
+[ ] E9. DENY-BY-DEFAULT AS A NAMED MODE.
+        Source: envelop generic-auth modes — protect-all / protect-granular /
+        resolve-only (plus @skipAuth to opt individual fields out of
+        protect-all).
+        Same machinery as S2 (fallbackRule), but the MODE framing is far more
+        legible in docs than an options flag, and it makes the schema-coverage
+        guarantee explicit rather than implicit. Recommend adopting the framing
+        even if the implementation is just fallbackRule underneath.
+
+[ ] E10. INTERFACE / UNION RULE INHERITANCE.
+         graphql-authz attaches rules to INTERFACE types and inherits them to
+         implementors (and Pothos has skipInterfaceScopes to opt out).
+         Nothing in src/ is abstract-type aware: no __resolveType / __isTypeOf
+         handling, no inheritance, no per-concrete-type resolution for union
+         members. Subject detection is strictly the literal __typename string.
+         SHARP EDGE (FIXED): __isTypeOf and __resolveType are keys of the
+         generated per-type resolver interfaces and used to typecheck as rule
+         targets in PermissionsMap. They are now Exclude'd from its field keys,
+         so attaching a rule to one is a compile error. The rest of E10 —
+         inheriting rules from an interface to its implementors — is untouched.
+
+[ ] E11. TEST ESCAPE HATCH — disable authorization wholesale.
+         Source: Pothos disableScopeAuth. Small, cheap, and consumers will
+         otherwise hand-roll it badly (or worse, ship the hand-rolled version).
+
+[ ] E12. EXTERNAL PDP ESCAPE HATCH — OPA / Cerbos / OpenFGA / Oso.
+         CASL cannot express relationship-derived (ReBAC / Zanzibar-style)
+         permissions: "can edit any doc in a folder they own". This is the most
+         common structural objection to a CASL-based approach.
+         Rules are ALREADY async functions, so calling out to a policy decision
+         point already works today. This is therefore a DOCUMENTATION task, not
+         a code one — a worked example of a rule that awaits a PDP, plus a note
+         on caching the decision per request (S4b), neutralizes the objection at
+         essentially zero cost. Highest doc-value item in this file.
+
+
+EXPLICIT NON-GOALS (record so they stop being re-proposed)
+---------------------------------------------------------
+- Row/list-level filtering (accessibleBy): already tracked in
+  accessibleby.todo.txt. graphql-shield doesn't do it either. E1 and E3 both
+  brush against it — cross-link, don't duplicate.
+- Query cost / depth / rate limiting: GraphQL Armor,
+  graphql-query-complexity, graphql-depth-limit. Adjacent hardening, NOT
+  authorization. Worth one README line pointing at them so the boundary is
+  explicit, and nothing more.
+- Database-layer RLS (Hasura, PostGraphile): different architecture entirely.
+
+WHERE graphql-casl ALREADY LEADS (say this out loud in the docs)
+---------------------------------------------------------------
+None of graphql-shield, graphql-authz, Pothos scope-auth or envelop
+generic-auth offer:
+  - conditions evaluated against subject attributes (they all use opaque
+    boolean predicates)
+  - subject/field/condition names type-checked against the schema at compile
+    time
+  - permissions as plain serializable JSON, so they can live in a database and
+    be rehydrated at startup
+The gap analysis should be framed as "plumbing to catch up on, model to defend",
+not as a pure deficit list.
+
+
+OPEN QUESTIONS
+--------------
+- E1 (post-execution rules) is architecturally the biggest item here and cannot
+  be done inside the current pre-resolver middleware shape without also doing
+  E2. Is closing the documented IDOR gap worth that? (Recommendation: yes — it
+  is currently a KNOWN limitation shipped with a warning and a test.)
+- E5 (directives) and E6 (envelop plugin) are each a new package. Which, if
+  either, is worth the maintenance surface for a solo-maintained project?
+- E3: should CASL field-level permissions REPLACE hand-listed field rules in
+  PermissionsMap, or sit alongside them as an alternative? Replacing is more
+  elegant; sitting alongside is less disruptive.
+- E4: is null-masking a per-rule option, a global mode, or both?

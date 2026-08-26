@@ -1,0 +1,265 @@
+Prior art — approaches to the authorization problem (Workstream E)
+==================================================================
+Status: REFERENCE + a few actionable items. No code written.
+
+Companion files:
+  shield-parity.todo.txt     — feature gaps vs graphql-shield
+  ecosystem-parity.todo.txt  — ideas from graphql-authz / Pothos / envelop
+  accessibleby.todo.txt      — row-level filtering (Workstream B)
+
+Those two companions compare against libraries in the SAME niche (a
+graphql-middleware-shaped permission layer). This file looks at systems that
+solve the problem a DIFFERENT WAY, because the useful question is not "what
+feature is missing" but "is the shape right".
+
+Six approaches exist. graphql-casl sits squarely in #1.
+
+  1. RESOLVER/MIDDLEWARE WRAPPING — graphql-shield, graphql-casl
+  2. EXECUTION WRAPPING          — graphql-authz (wrapExecuteFn)
+  3. SCHEMA-DIRECTIVE + PLANNER  — Apollo Router / Federation
+  4. POLICY ENGINE (external PDP)— Cerbos, Oso, OpenFGA/SpiceDB, OPA, Cedar
+  5. DATA-LAYER PUSHDOWN         — Postgres RLS, Hasura, PostGraphile,
+                                   @casl/prisma, @casl/mongoose
+  6. STRUCTURAL / SCHEMA DESIGN  — the viewer pattern (no library at all)
+
+
+-----------------------------------------------------------------------
+A. APOLLO ROUTER / FEDERATION AUTH DIRECTIVES  (approach #3)
+   apollographql.com/docs/graphos/routing/security/authorization
+-----------------------------------------------------------------------
+Directives: @authenticated, @requiresScopes(scopes:), @policy(policies:).
+Applicable to fields and object types (Federation v2.9+ forbids interfaces).
+
+THREE THINGS WORTH STEALING:
+
+[ ] A1. FILTERING, NOT REJECTING, IS THE DEFAULT — and it is specified.
+        The router REMOVES unauthorized fields from the query BEFORE execution,
+        sends only the authorized portion to subgraphs, and returns the data it
+        could get plus errors describing what was filtered. `reject_unauthorized:
+        true` opts into all-or-nothing. Standard null propagation still applies:
+        a filtered nullable field is null + error; a filtered non-null field
+        propagates up.
+        This is a much better-specified version of ecosystem-parity E4, and it
+        settles the open question there ("per-rule option, global mode, or
+        both?"): make it a GLOBAL MODE with filtering as the sane default.
+        Adopt their error shape too — it is becoming the de-facto standard:
+          extensions: { code: "UNAUTHORIZED_FIELD_OR_TYPE" }, path: [...]
+        plus a config knob for whether filtered paths land in `errors`, in
+        `extensions`, or are suppressed entirely.
+        Note this also fixes the asymmetry documented in
+        test/integration/permissions.integration.test.ts, where a denial under a
+        non-null chain currently nulls the ENTIRE data payload.
+
+[ ] A2. AND/OR IN A DIRECTIVE VIA NESTED ARRAYS — no combinator objects needed.
+          scopes: [["read:users", "read:profiles"], ["read:admin"]]
+          => (read:users AND read:profiles) OR read:admin
+        Compare graphql-authz, which needs three input types
+        (AuthZDirectiveCompositeRulesInput, DeepCompositeRulesInput, ...) of SDL
+        boilerplate to express the same thing. If ecosystem-parity E5
+        (directives) is ever built, use the nested-array encoding.
+
+[ ] A3. IF DIRECTIVES GET BUILT, SPEAK THE EXISTING VOCABULARY.
+        @authenticated / @requiresScopes / @policy is a de-facto standard across
+        the federation ecosystem. Composing with it — or at minimum not
+        colliding with it — beats inventing @can. Their composition rule is also
+        worth copying: when multiple subgraphs declare auth on the same field,
+        the directives compose with AND.
+
+
+-----------------------------------------------------------------------
+B. CERBOS — PlanResources / Query Plan  (approach #4)
+   docs.cerbos.dev/cerbos/latest/api ; github.com/cerbos/query-plan-adapters
+-----------------------------------------------------------------------
+Cerbos has TWO APIs, and the split is the interesting part:
+  - CheckResources  -> allow/deny for specific resources     (a gate)
+  - PlanResources   -> a QUERY PLAN for "which resources?"   (a filter)
+
+The plan response is:
+  kind: KIND_ALWAYS_ALLOWED | KIND_ALWAYS_DENIED | KIND_CONDITIONAL
+  condition: an operator/operand AST (eq, gt, and, ...) when CONDITIONAL
+
+Clients convert that AST into a native query via per-ORM adapters (Prisma,
+Drizzle, Mongoose, SQLAlchemy, Convex).
+
+[ ] B-note1. THIS IS DIRECT VALIDATION OF accessibleby.todo.txt B2.
+        That plan already proposes returning the raw $and/$or condition tree and
+        letting the consumer translate it. Cerbos is proof the design is right,
+        and CASL's own rulesToQuery is the third independent instance of it
+        (Oso's authorized_resources is a fourth). Stop treating B1 ("is this in
+        scope?") as an open question on design-risk grounds — the pattern is
+        settled. The remaining question is only packaging.
+
+[ ] B-note2. THE THREE-STATE RETURN IS BETTER THAN CASL'S TWO-STATE.
+        rulesToQuery returns null for "wholly disallowed" and a query object
+        otherwise, collapsing ALWAYS_ALLOWED and CONDITIONAL into one shape.
+        Cerbos's explicit KIND_ALWAYS_ALLOWED lets a caller skip building a
+        WHERE clause entirely. Worth mirroring in whatever B2 returns:
+          { kind: 'always-allowed' | 'always-denied' | 'conditional', condition? }
+
+[ ] B-note3. STEAL THE FAILURE PHILOSOPHY, VERBATIM.
+        The Cerbos Prisma adapter documents its limitations as "loud failures,
+        never silently-wrong filters" — e.g. it THROWS on `exists_one` rather
+        than degrading to `exists`, and throws on LIKE needles containing % or _
+        rather than emitting a wrong pattern.
+        For an AUTHORIZATION filter this is the only defensible stance: a
+        silently over-broad filter is a data leak, not a bug. Whatever B2 ships
+        must throw on any condition it cannot faithfully translate.
+
+[ ] B-note4. SOBERING SCOPE CHECK.
+        That adapter supports logical/comparison/string ops, relation ops
+        (is/isNot/some/none/every), collection ops, set ops, arithmetic solved
+        algebraically, field-to-field comparisons, hierarchy operators,
+        three-valued-logic guards for nullable columns... This is the real cost
+        of the "return a condition tree" design, and it is an argument for
+        keeping graphql-casl's `convert` deliberately SMALL and schema-agnostic
+        (as B2 already says) rather than growing an adapter per ORM.
+
+
+-----------------------------------------------------------------------
+C. @casl/prisma — IN-FAMILY PRIOR ART  (approach #5)
+   github.com/stalniy/casl/tree/master/packages/casl-prisma
+-----------------------------------------------------------------------
+The most directly relevant library in this entire survey, because it is the
+CASL author solving the same binding problem for a different target.
+
+[ ] C1. CASL LETS YOU SWAP THE CONDITIONS LANGUAGE. THIS IS A REAL FORK.
+        @casl/prisma ships `createPrismaAbility` — conditions are written as
+        Prisma `WhereInput` (startsWith, some, every, is, ...) instead of Mongo
+        query operators, interpreted at runtime by ucast (github.com/stalniy/ucast).
+        So "conditions must be $eq/$in/$gt" is NOT a CASL constraint; it is a
+        choice this library currently makes by using createMongoAbility.
+
+        IMPORTANT: this fork was already half-taken here and then lost.
+        .agents/graphqlability.todo.txt's "what shipped" section claims a bespoke
+        GqlOperators / gqlConditionsMatcher conditions language, and
+        packages/graphql-casl/docs/api/ still has orphaned pages for
+        GqlOperators, gqlConditionsMatcher, GqlConditionsFor and
+        GqlFieldCondition — but src/graphqlAbility.ts actually uses CASL
+        MongoAbility with mongoQueryMatcher. Resolve this deliberately rather
+        than by drift:
+          (a) stay on Mongo operators (familiar to CASL users, zero work), or
+          (b) define a GraphQL-native conditions language over ucast, which is
+              what prisma-schema-typing.todo.txt P2 is really asking for when it
+              proposes field-type-aware operators.
+        Note prisma-schema-typing.todo.txt builds its whole proposal on top of
+        GqlOperators, a type that does not exist. That file needs a correction
+        pass before it can be actioned either way.
+
+[ ] C2. __typename IS A GENUINE STRUCTURAL ADVANTAGE — SAY SO IN THE README.
+        @casl/prisma is forced to use the `subject()` helper on every record
+        because "Prisma returns DTO objects without exposing any type
+        information", and its README calls this out as having no easy fix short
+        of adding a column to every model (links prisma/prisma#5315).
+        GraphQL hands you __typename for free. That is the single best argument
+        for a GraphQL-specific CASL binding existing at all, and the docs
+        currently do not make it.
+
+[ ] C3. accessibleBy(ability).ofType('Post') is the naming precedent for
+        Workstream B. Matching the sibling package's API shape is worth more
+        than a marginally nicer name of our own.
+
+
+-----------------------------------------------------------------------
+D. OSO / OpenFGA / SpiceDB / OPA / AWS Cedar  (approach #4, continued)
+-----------------------------------------------------------------------
+Oso: Polar policy language; policy fully separated from enforcement; data
+filtering via `authorized_query` (runs against your DB) vs `authorized_resources`
+(returns the logic for client-side filtering) — the same gate-vs-filter split as
+Cerbos. Oso Cloud stores authorization data as FACTS ("authorization as data").
+OpenFGA / SpiceDB: Google Zanzibar relationship tuples + a Check API.
+AWS Cedar: a policy language with a formally verified evaluator and partial
+evaluation for filtering.
+
+[ ] D1. REINFORCES ecosystem-parity E12 (external PDP escape hatch), and
+        sharpens why it matters: CASL structurally cannot express
+        relationship-derived permissions ("edit any doc in a folder you own")
+        without materializing the closure into conditions. Rules here are
+        already async functions, so awaiting a PDP works TODAY — this stays a
+        documentation task, and it is the cheapest credibility win available.
+
+[ ] D2. POSITIONING, NOT A FEATURE: "authorization as data" is what Oso Cloud
+        and Cerbos sell, and graphql-casl ALREADY HAS IT — rules are plain JSON,
+        persistable and rehydratable via buildGraphQLAbility. The README
+        mentions this as a usage note. It is actually the differentiator, and it
+        should be sold as one.
+
+
+-----------------------------------------------------------------------
+E. DATA-LAYER PUSHDOWN — Postgres RLS, Hasura, PostGraphile  (approach #5)
+-----------------------------------------------------------------------
+Authorization enforced by the database, so it holds no matter which code path
+reaches the data.
+
+[ ] E1. THIS IS THE HONEST STRUCTURAL ANSWER TO THE IDOR WARNING.
+        packages/graphql-casl/README.md already recommends "enforce ownership in
+        the data layer" as one mitigation. It is worth stating plainly that this
+        approach is STRICTLY STRONGER than any resolver-level gate, and that
+        graphql-casl is defense-in-depth on top of it rather than a replacement.
+        A permission library that is candid about its own trust boundary is more
+        trustworthy, not less — and it costs nothing to say.
+        Cross-links: ecosystem-parity E1 (post-execution rules) is the in-library
+        mitigation; this is the out-of-library one.
+
+
+-----------------------------------------------------------------------
+F. THE VIEWER PATTERN — no library  (approach #6)
+-----------------------------------------------------------------------
+Root every authorized read at `viewer`/`me` so the schema itself makes
+unauthorized access unrepresentable: `viewer { todos }` cannot return another
+user's todos because the resolver never accepts an owner argument.
+
+[ ] F1. WORTH ONE README PARAGRAPH. Every arg-derived condition
+        (getSubjectData(args)) is an IDOR waiting to happen — that is exactly
+        what example.test.ts's IDOR test demonstrates. Schema design removes the
+        class of bug rather than guarding it. Recommending it costs the library
+        nothing and prevents the failure mode the docs currently only warn about.
+
+
+-----------------------------------------------------------------------
+G. THE ANCESTORS — CanCanCan, Pundit, Laravel Gates  (approach #1)
+-----------------------------------------------------------------------
+CASL is an explicit port of Ruby's CanCanCan, so CanCanCan's mature API is a
+preview of where a CASL-shaped library tends to end up.
+
+[ ] G1. CanCanCan `accessible_by` — the original of the whole gate-vs-filter
+        split, predating Cerbos and Oso by a decade. More support for
+        Workstream B being in scope.
+[ ] G2. Laravel `Response::deny('message')` / `Gate::after` — a denial carries a
+        REASON string that surfaces to the caller. Direct prior art for
+        shield-parity S10 (CASL's per-rule `reason` is currently discarded
+        because createCan calls ability.can rather than
+        ForbiddenError.from(ability).throwUnlessCan). Pairs with S6/S7.
+[ ] G3. Pundit's policy-object-per-model — the alternative to a central rule
+        map. Not recommended here (it fights the schema-derived typing that is
+        this library's main asset), noted so it stops being re-proposed.
+
+
+-----------------------------------------------------------------------
+WHAT THIS SURVEY ACTUALLY CHANGES
+-----------------------------------------------------------------------
+1. accessibleby.todo.txt B1 ("is row-level filtering in scope?") should stop
+   being an open design question. Four independent systems converged on
+   gate + filter as SEPARATE APIS over the same rules. Adopt Cerbos's
+   three-state return (B-note2) and its fail-loudly rule (B-note3).
+2. ecosystem-parity E4's open question is settled by Apollo Router: filtering is
+   a global MODE, filtering is the default, rejecting is opt-in, and there is
+   already a standard error code to use (A1).
+3. A real fork was left half-taken: Mongo conditions vs a GraphQL-native
+   conditions language over ucast (C1). Docs, .agents notes and src currently
+   disagree about which side the library is on.
+4. Two things this library already does better than the field, currently unsold:
+   __typename subject detection (C2) and rules-as-data (D2).
+5. Three docs items that are pure upside and need no code: the data-layer
+   trust-boundary paragraph (E1), the viewer pattern (F1), and the external-PDP
+   worked example (D1).
+
+
+OPEN QUESTIONS
+--------------
+- C1 is the biggest one: does the conditions language stay Mongo-flavoured, or
+  become GraphQL/schema-flavoured over ucast? It affects prisma-schema-typing.todo.txt,
+  the stale docs/api pages, and every conditions example in the README.
+- Is "gate + filter as two APIs over one rule set" the library's north star
+  (matching Cerbos/Oso/CanCanCan), or does filtering stay a separate package?
+- Does adopting Apollo's directive vocabulary (A3) imply eventually supporting
+  federation, or can the vocabulary be borrowed without the runtime?

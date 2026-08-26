@@ -1,0 +1,239 @@
+graphql-shield feature parity — analysis (Workstream C)
+=======================================================
+Status: ANALYSIS ONLY. No code written. This file is the gap table plus a
+prioritized backlog; nothing here is scheduled yet.
+
+Companion file: ecosystem-parity.todo.txt (graphql-authz / Pothos / envelop
+ideas, which in several places matter MORE than shield parity does).
+
+Sources
+-------
+Verified against graphql-shield's SOURCE, not its docs site (the-guild.dev/
+graphql/shield/docs/api 302s to the GitHub repo). Repo: maticzav/graphql-shield,
+packages/graphql-shield/src/{types,constructors,rules,generator,shield,
+validation}.ts.
+
+Motivation
+----------
+graphql-casl and graphql-shield occupy the same niche: a graphql-middleware
+permission layer. Shield is the incumbent most users would migrate FROM, so its
+feature list is the de-facto baseline.
+
+Where graphql-casl is clearly AHEAD, and should keep saying so:
+  - CASL conditions on subjects (shield rules are opaque predicates)
+  - schema-derived typed subjects; compile-time validation of type / field /
+    subject / condition-field names (stronger than shield's runtime check)
+  - JSON-serializable rules for DB-backed, cached-at-startup permissions
+
+Where it is behind is the RULE PLUMBING around that model. src/rules.ts is ~103
+lines: a `Rule` type alias, `accept`, `deny`, `PermissionsMap`, and an
+`applyPermissions` that is a single cast into applyMiddleware. Shield's
+equivalent layer carries ~16 features this has no answer for.
+
+
+TIER 1 — structural (no workaround exists today)
+------------------------------------------------
+
+[ ] S1. LOGIC COMBINATORS: and / or / not / chain / race.
+        Shield: constructors.ts + rules.ts (RuleAnd/RuleOr/RuleNot/RuleChain/
+        RuleRace). `and`/`or` evaluate in parallel; `chain`/`race` sequentially
+        (chain = short-circuiting and, race = short-circuiting or);
+        `not(rule, error?)` takes an optional custom error.
+        Here: absent, and UNBUILDABLE against today's `Rule`. A `Rule` is a
+        wrapping middleware (resolve, parent, args, ctx, info) that denies by
+        THROWING — there is no way to ask it "would you pass?" without letting
+        it run the resolver. See DESIGN DECISION below.
+
+[ ] S2. fallbackRule (whitelist mode).
+        Shield: shield.ts normalizeOptions defaults it to `allow`; setting
+        `fallbackRule: deny` is how you get deny-by-default across a schema.
+        Here: absent. Any type/field NOT named in the PermissionsMap is
+        silently UNGUARDED — implicit allow-all.
+        NB for the README: the "deny by default" claim there is about CASL
+        ABILITIES, not about schema coverage. Those are different guarantees
+        and the docs currently blur them.
+
+[ ] S3. Wildcard '*' field key.
+        Shield: generator.ts applyRuleToType pulls rules['*'] as the per-type
+        default, strips it, then validates the remaining keys against the
+        schema's field map.
+        Here: absent, and would not typecheck (PermissionsMap keys are
+        `keyof TResolvers`). See E8 in ecosystem-parity.todo.txt — graphql-authz
+        specifies wildcard precedence better than shield does; copy that spec,
+        not this one.
+
+[ ] S4. RULE RESULT CACHING: cache: 'no_cache' | 'contextual' | 'strict' |
+        ICacheKeyFn, plus a `hashFunction` option.
+        Shield: rules.ts Rule#executeRule. 'contextual' keys on the rule name
+        alone; 'strict' keys on hash({parent, args}); a function gets the raw
+        (parent, args, ctx, info). Cache lives at ctx._shield.cache.
+        Here: absent; nothing memoizes.
+        CONCRETE COST: createCan awaits getAbility(context) on EVERY guarded
+        field resolution, so a query touching 50 nodes rebuilds the ability 50
+        times unless the consumer memoizes it themselves.
+
+        [x] S4a. DONE. createCan now memoizes getAbility(context) in a
+                 WeakMap<object, Promise<AbilityLike>> created per factory, so
+                 every rule from one createCan shares a request's ability. A
+                 rejected build is evicted so it can't poison the rest of the
+                 request; a non-object context falls back to no memo.
+        [ ] S4b. General rule caching. Must stay ZERO-DEP (shield pulls in
+                 object-hash; this package has no runtime deps and should keep
+                 it that way). A small deterministic sorted-key stringifier
+                 covers 'strict', with a `hashFunction` option as the escape
+                 hatch for consumers who want object-hash /
+                 fast-json-stable-stringify.
+                 Put the cache behind a module-level Symbol on context, NOT a
+                 string key like shield's `_shield` — a string key can collide
+                 with app context fields.
+
+[ ] S5. FRAGMENTS: rule({ fragment: '... on User { id }' }).
+        Shield: generator.ts emits the {fragment, resolve} /
+        {fragments, resolve} middleware form when a rule declares one, forcing
+        the fields a rule needs into the parent's selection set.
+        Here: UNREACHABLE. graphql-middleware supports this
+        (IMiddlewareWithOptions, node_modules/graphql-middleware/dist/
+        types.d.ts), but `Rule` is typed as the bare function form only.
+        This is the missing piece behind packages/graphql-casl/TODO.md item 2
+        ("parent-aware createCan"): a parent-conditioned field rule can't be
+        trusted unless the fields it reads are guaranteed to be selected.
+        Same mechanism as E2 in ecosystem-parity.todo.txt, arriving from a
+        different direction — do these together.
+
+
+TIER 2 — error control
+----------------------
+
+[ ] S6. Rules return boolean | string | Error (IRuleResult).
+        Shield: rules.ts Rule#resolve normalizes string -> new Error(string).
+        Here: rules must THROW. No per-rule custom message, no GraphQLError
+        with extensions / error code.
+
+[ ] S7. fallbackError: Error | string | mapper.
+        Shield: IFallbackErrorMapperType = (err, parent, args, ctx, info) =>
+        Error | Promise<Error>. Default new Error('Not Authorised!').
+        Here: denial messages are hardcoded plain Error('Forbidden') /
+        Error('Not authenticated') with no extensions or codes.
+
+[ ] S8. allowExternalErrors.
+        Shield: generator.ts wraps rule + resolver execution in try/catch; by
+        DEFAULT it MASKS resolver-thrown internal errors behind fallbackError,
+        and allowExternalErrors: true passes them through.
+        Here: there is no try/catch anywhere in the library, so internal errors
+        leak verbatim. Note this is a security-relevant default difference:
+        shield fails closed, graphql-casl fails open.
+
+[ ] S9. debug.
+        Shield: debug: true RETHROWS errors raised INSIDE a rule instead of
+        quietly converting them to a denial.
+        Here: absent. A throwing getAbility() is today indistinguishable from a
+        legitimate denial, which is a genuinely annoying thing to debug.
+
+[ ] S10. (CASL-side, shield-adjacent) rule `reason` plumbing.
+         createCan calls ability.can(...), not
+         ForbiddenError.from(ability).throwUnlessCan(...), so per-rule `reason`
+         strings set on the ability are silently discarded. Pairs naturally
+         with S6/S7 — reason is the obvious source for a denial message.
+
+
+TIER 3 — smaller
+----------------
+
+[ ] S11. inputRule — argument validation as a rule.
+         Shield: constructors.ts inputRule + rules.ts InputRule, backed by yup,
+         forced to cache: 'strict'.
+         Here: absent; `args` is an unchecked `args as TArgs` cast.
+         If built: prefer Standard Schema (standardschema.dev, the `~standard`
+         property) over a yup dependency — zod / valibot / yup>=1.7 all
+         implement it, so consumers bring their own validator and the package
+         stays zero-dep.
+
+[ ] S12. Whole-schema rule: shield(someRule) applies one rule to every field.
+         Shield: generator.ts applyRuleToSchema.
+         Here: absent; PermissionsMap must be keyed per type.
+
+[ ] S13. RUNTIME schema validation.
+         Shield: generator.ts throws ValidationError naming the types/fields
+         that don't exist in the schema ("It seems like you have applied rules
+         to X.y fields but Shield cannot find them in your schema.").
+         Here: compile-time only, via `keyof TResolvers` — and only if the
+         consumer uses codegen. Overlaps prisma-schema-typing.todo.txt item P1
+         (validating rehydrated DB-stored rules against a runtime
+         GraphQLSchema); do them as one piece of work.
+
+[ ] S14. Duplicate rule-name validation (validation.ts validateRuleTree —
+         errors if two rules share a name but aren't the same function).
+         N/A today because rules are anonymous. Becomes relevant the moment
+         rules get names for caching (S4b).
+
+[ ] S15. Introspection-type exclusion (isIntrospectionType) when applying
+         rules broadly. Becomes REQUIRED the moment S2 or S3 exists, otherwise
+         a fallbackRule would guard __Schema / __Type and break introspection.
+
+[ ] S16. allow / deny usable as combinator operands.
+         Here: accept / deny exist and behave correctly, but they're plain
+         middleware, so they cannot be operands of S1's combinators. Falls out
+         of the DESIGN DECISION below for free.
+
+
+DESIGN DECISION (recorded — do not relitigate)
+----------------------------------------------
+For S1, the user chose the ADDITIVE `CheckableRule` approach over redefining
+`Rule` as a shield-style predicate:
+
+  export type RuleResult = boolean | string | Error;
+  export type Check =
+    (parent, args, context, info) => RuleResult | Promise<RuleResult>;
+
+  export interface CheckableRule extends Rule {   // still callable as middleware
+    readonly check: Check;
+    readonly ruleName: string;
+    readonly fragment?: string;
+  }
+
+  export function rule(check: Check, opts?: {
+    name?: string;
+    cache?: 'no_cache' | 'contextual' | 'strict' | ((p, a, c, i) => string);
+    fragment?: string;
+  }): CheckableRule;
+
+Rationale:
+  - Existing hand-written middleware `Rule`s keep compiling and working, so no
+    major version bump. The predicate-only alternative is breaking: accept/deny
+    signatures change and every hand-written Rule stops compiling.
+  - createCan's body is ALREADY a pure predicate (isAuthenticated +
+    ability.can), so lifting it to CheckableRule is mechanical, and it then
+    gains composition, caching and error control for free.
+  - Combinators reject a non-checkable operand LOUDLY at construction time,
+    naming the operand — never degrade silently.
+  - accept/deny become CheckableRules, which resolves S16.
+Honest cost: two rule kinds coexist, and the docs have to explain when you get
+which. Accepted.
+
+Semantics to implement when built: check() true -> resolve; false -> throw the
+effective fallback error; string -> new Error(string); Error -> throw it.
+
+
+SUGGESTED ORDER
+---------------
+1. [DONE] S4a  (memoize getAbility — trivial, no API change, N-times win)
+2. S5 + E2/E1  (fragments + post-execution rules; closes the documented IDOR
+   gap AND TODO.md item 2 in one architectural move)
+3. S2 + S3 + S15  (fallbackRule + wildcards; makes "deny by default" a real
+   schema-coverage guarantee rather than a claim about abilities)
+4. S1 + S16  (combinators, per the design decision above)
+5. S6-S10  (error control)
+6. S11, S12, S13/P1, S14  (the rest)
+
+
+OPEN QUESTIONS
+--------------
+- Do S2/S3 justify rewriting applyPermissions from a one-line cast into a real
+  schema walk (shield's generator.ts shape)? They can't be done without it.
+  That's the single biggest structural commitment in this file.
+- Should the shield-default error-masking behavior (S8) become the default here
+  too? It is the safer default but it IS a breaking behavior change for anyone
+  relying on internal errors surfacing.
+- Is a "coming from graphql-shield" migration table worth writing before any of
+  this ships? It may be the highest-leverage adoption doc in the repo, and it
+  costs nothing but prose.
