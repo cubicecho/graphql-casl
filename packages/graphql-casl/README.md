@@ -29,12 +29,13 @@ npm install @casl/ability graphql graphql-middleware
 | `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives. |
+| `accessibleBy(ability, action, subject, adapter?)` | Folds the ability into a query filter for row-level filtering, or `null` for deny-all. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
 Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
 `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`,
 `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`,
-`AbilityLike`.
+`AbilityLike`, `AccessibleFilter`, `FilterAdapter`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
@@ -446,6 +447,55 @@ From highest precedence to lowest:
 
 Field names under `'*'` are still checked — against every field in the schema, so a
 typo that matches no type at all is an error.
+
+### Row-level filtering
+
+A rule is a gate: it allows or denies a whole field. That is the wrong shape for
+a list — `notes` should not be denied outright because one row is off-limits.
+`accessibleBy` folds the ability's rules for one action and subject into a query
+filter, so the rows the caller may not read are never fetched:
+
+```ts
+import { accessibleBy, Actions } from '@vantreeseba/graphql-casl';
+
+const resolvers = {
+  Query: {
+    notes: async (_parent, _args, ctx) => {
+      const filter = accessibleBy(await ctx.ability, Actions.read, 'Note');
+      if (filter === null) return []; // nothing is accessible
+      return db.notes.find(filter);
+    },
+  },
+};
+```
+
+`null` is a decision, not an absence: it means *deny all*. Every other value —
+including `{}`, which means "no restriction" — is a filter to pass on.
+
+The default dialect is mongo-shaped, matching the operators CASL conditions are
+already written in. A `FilterAdapter` swaps the boolean skeleton for another:
+
+```ts
+const prismaFilter: FilterAdapter<object> = {
+  rule: (conditions, inverted) => (inverted ? { NOT: conditions } : conditions),
+  and: (filters) => ({ AND: filters }),
+  or: (filters) => ({ OR: filters }),
+  everything: () => ({}),
+};
+
+const where = accessibleBy(ability, Actions.read, 'Note', prismaFilter);
+return where === null ? [] : prisma.note.findMany({ where });
+```
+
+> ⚠️ The adapter controls the boolean skeleton, **not the leaves**. Conditions
+> are passed through as written, so a rule using `{ status: { $in: [...] } }`
+> still emits `$in` inside a Prisma-shaped tree. Write conditions in the target
+> dialect's terms, or translate them in `rule`.
+
+CASL evaluates rules in priority order and stops at the first match; a query has
+no such ordering. Each `can` therefore becomes an `$or` branch bounded by the
+`cannot`s that outrank it, which is why the output nests more than the rules
+suggest. Field-level rules are ignored — this answers which *rows* are reachable.
 
 ### 5. Persisting rules (optional)
 

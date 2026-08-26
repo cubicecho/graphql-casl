@@ -39,6 +39,10 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Row-level filtering** (`accessibleby.todo.txt`) — `accessibleBy(ability,
+  action, subject, adapter?)` folds the ability's rules into a query filter so a
+  list resolver fetches only accessible rows. Dialect-agnostic via
+  `FilterAdapter`; `null` means deny-all.
 - **Masking denials** (`ecosystem-parity` E4) — `applyPermissions`'s
   `maskDenials` resolves a denied field to `null`, or `[]` where the field is a
   non-null list, instead of throwing, so one unauthorized field no longer nulls

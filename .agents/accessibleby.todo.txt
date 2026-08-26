@@ -1,7 +1,45 @@
 accessibleBy-style query helper — plan (Workstream B)
 =====================================================
-Status: NOT STARTED. Deferred follow-up to the GraphQLAbility work
-(see graphqlability.todo.txt for that, now DONE).
+Status: DONE (2026-08). Shipped as `accessibleBy` in src/accessibleBy.ts.
+Deferred follow-up to the GraphQLAbility work (see graphqlability.todo.txt).
+
+What shipped
+------------
+accessibleBy(ability, action, subject, adapter?) -> filter | null.
+
+  B1 ANSWERED — IN THIS LIBRARY, not a separate package. It needs no new
+     dependency (the fold is ~30 lines over ability.rulesFor), and a package
+     holding one function would cost consumers more than it saves. Framing: the
+     library stays a GATE by default; this is an additive helper a resolver
+     calls, not something applyPermissions does behind your back.
+  B2 DONE, with one deviation. NOT built on rulesToQuery: that helper is
+     `rulesToQuery` on @casl/ability 6 and was REPLACED by `rulesToCondition` /
+     `rulesToAST` in 7 (verified against the installed v7 typings), and the peer
+     range is >=6. The priority-flattening fold is implemented in-library
+     instead, mirroring CASL's own algorithm: rules come back highest-priority
+     first, so each `can` becomes an OR branch bounded by the `cannot`s that
+     outrank it; an unconditioned `cannot` ends the walk, an unconditioned `can`
+     means "everything, minus the bounds above it". A test cross-checks the
+     filter against ability.can() row by row so the two cannot drift.
+     null => deny-all, as planned.
+  B3 DONE — the default AccessibleFilter<T> types its LEAVES against the
+     subject's fields (MongoQuery<TSubjectMap[K]>), adding only the boolean
+     operators around them. Subject names are constrained to keyof TSubjectMap.
+  B4 DONE — test/accessibleBy.test.ts, 15 tests: deny-all, other-action,
+     single rule, operators preserved, OR of several, allow-all, bounded
+     allow-all, bounded branches, an outranked exclusion, an unconditioned
+     exclusion from both directions, the row-by-row cross-check, and three
+     adapter tests.
+  B5 CONFIRMED but MOOT — no import from '@casl/ability/extra' at all, so no
+     new peer dep and no import path to document. README + AGENTS.md updated.
+
+  Q2 ANSWERED — free function, not a factory. TSubjectMap is inferred from the
+     ability itself, so a factory would only repeat what the ability knows.
+  Q3 ANSWERED — a FilterAdapter interface (rule/and/or/everything), defaulting
+     to a mongo-style dialect since CASL conditions are already mongo-shaped. A
+     Prisma-shaped adapter is five lines and is documented in the README rather
+     than shipped, so the library stays free of data-layer opinions. Documented
+     limit: an adapter controls the boolean SKELETON, not the leaf operators.
 
 Motivation
 ----------
@@ -26,25 +64,25 @@ conditions, so it fetches only accessible rows instead of post-filtering.
 
 Plan
 ----
-[ ] B1. SCOPE DECISION (review w/ user): does row-level filtering belong in this
+[x] B1. SCOPE DECISION (review w/ user): does row-level filtering belong in this
         library (shifts it from "gate" to "gate + filter"), or in a separate
         package? Affects public API surface and docs framing.
 
-[ ] B2. Prototype accessibleBy(ability, action, subjectName) wrapping rulesToQuery
+[x] B2. Prototype accessibleBy(ability, action, subjectName) wrapping rulesToQuery
         from '@casl/ability/extra'. Keep `convert` SCHEMA-AGNOSTIC: return the raw
         $and/$or condition tree and let the consumer translate it to their data
         layer (Prisma/Drizzle/SQL/Mongo). Do NOT bake in Mongo operators.
         null result => deny-all (resolver returns []).
 
-[ ] B3. Optional typed return: key the produced filter off
+[x] B3. Optional typed return: key the produced filter off
         GraphQLAbility<TSubjectMap>[subject] so it is typed against the model's
         fields (reuse the Tagged-subject machinery from src/graphqlAbility.ts).
 
-[ ] B4. Tests: unit (rules -> query tree for direct + inverted rules, and the
+[x] B4. Tests: unit (rules -> query tree for direct + inverted rules, and the
         null/deny-all case) + an integration list resolver returning only owned
         rows. Mirror the style of test/integration/permissions.integration.test.ts.
 
-[ ] B5. Confirm '@casl/ability/extra' is part of '@casl/ability' >=6 (it is in v7
+[x] B5. Confirm '@casl/ability/extra' is part of '@casl/ability' >=6 (it is in v7
         here: node_modules/@casl/ability/dist/types/extra). No NEW peer dep needed,
         but document the import path. README + AGENTS.md updates.
 

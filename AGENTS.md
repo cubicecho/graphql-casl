@@ -44,6 +44,7 @@ packages/
       combinators.ts      — and / or / not / chain / race over CheckableRules
       applyPermissions.ts — validates a PermissionsMap against the schema and applies it
       ability.ts          — CASL Action/Actions + the loose AbilityLike shape
+      accessibleBy.ts     — folds an ability into a query filter (row-level filtering)
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       subjects.ts         — createSubjects / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
@@ -51,6 +52,7 @@ packages/
       permissions.test.ts                — unit tests for the rule primitives
       applyPermissions.test.ts           — the schema walk: enforcement + validation errors
       combinators.test.ts                — rule(), the combinators, operand validation
+      accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
@@ -80,6 +82,8 @@ vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a sing
   consumer's context shape and ability builder — keep auth/ability logic out of
   the library core
 - `accept` and `deny` are the always-pass / always-fail rule primitives
+- Rules gate a whole field; `accessibleBy` is the row-level counterpart, handing a
+  resolver a query filter instead. Its `null` return means deny-all, not "no filter"
 - A failed auth check throws `Not authenticated`; a failed ability check throws `Forbidden`
 - Tests live in `test/` (parallel to `src/`); integration tests go under `test/integration/`
 
