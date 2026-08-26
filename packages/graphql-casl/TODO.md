@@ -22,6 +22,13 @@ Two analysis-only workstreams, recorded but not scheduled:
   shield parity, most notably **post-execution rules** (authorize the resolved
   entity rather than the client-asserted args).
 
+- **[`.agents/arg-scoping.todo.txt`](../../.agents/arg-scoping.todo.txt)** — a
+  rule that merges the ability's filter into a resolver's *own* filter argument,
+  for generated CRUD schemas (drizzle-graphql, Prisma/Pothos CRUD) where you own
+  no resolver to call `accessibleBy` from. Design worked out; not started. Two
+  probed findings drive it: a `Rule` can already rewrite args, and rewritten args
+  bypass GraphQL input coercion, so a bad filter fails silently at the data layer.
+
 - **[`.agents/prior-art.todo.txt`](../../.agents/prior-art.todo.txt)** — systems
   that solve authorization a *different* way: Apollo Router's federation auth
   directives, Cerbos/Oso query plans, `@casl/prisma`, data-layer pushdown, and

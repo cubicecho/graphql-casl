@@ -44,6 +44,12 @@ accessibleBy(ability, action, subject, adapter?) -> filter | null.
      than shipped, so the library stays free of data-layer opinions. Documented
      limit: an adapter controls the boolean SKELETON, not the leaf operators.
 
+FOLLOW-UP (2026-08): accessibleBy assumes you OWN the resolver and can pass the
+filter to your data layer. With a generated CRUD schema you do not — see
+arg-scoping.todo.txt, which injects this filter into the field's own filter
+argument instead, and which needs the FilterAdapter leaf hook this file
+deliberately left out (Q3).
+
 Motivation
 ----------
 The library is GATE-ONLY today: a rule allows or denies a whole resolver/field.

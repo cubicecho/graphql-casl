@@ -1,0 +1,287 @@
+Argument scoping — rules that narrow a resolver's own filter (Workstream G)
+==========================================================================
+Status: NOT STARTED. Design worked out below; nothing implemented.
+Raised by user 2026-08-26 after reading drizzle-team/drizzle-graphql#15
+("Strategies for authorization" — closed with no library-side answer: the
+maintainer's advice is to wrap each generated handler yourself, and the
+commenters point at graphql-shield, noted there as unmaintained, and at
+graphql-authz).
+
+Related: accessibleby.todo.txt (the filter this injects), prior-art.todo.txt A1
+(filtering-not-rejecting as a specified default), ecosystem-parity.todo.txt E3
+(field-level permissions — the column analog, already shipped).
+
+
+THE GAP
+-------
+accessibleBy already answers "which rows may this caller reach". It assumes you
+own the resolver and can pass the filter to your data layer:
+
+    notes: async (_p, _a, ctx) => {
+      const filter = accessibleBy(await ctx.ability, Actions.read, 'Note');
+      return filter === null ? [] : db.notes.find(filter);
+    }
+
+With a GENERATED CRUD schema you own no such resolver. drizzle-graphql,
+@pothos/plugin-prisma-crud and friends hand you `notes(where: NoteFilters)`
+fully formed. The only surface you control is the ARGUMENTS on the way in.
+
+So the missing piece is not the filtering — that shipped — it is the binding: a
+rule that computes the ability filter and merges it into the field's own filter
+argument before the generated resolver runs. The caller cannot widen it, because
+the rule runs after the client's args are coerced and before the resolver sees
+them.
+
+This is the single most-requested thing in that niche and nothing serves it
+today. It is also the case where "authorization as a gate" is most obviously the
+wrong shape: denying `notes` outright because one row is off-limits is useless,
+and a generated `deleteFromUsers(where:)` with no scope is catastrophic.
+
+
+VERIFIED FINDINGS (probed against the built package, not assumed)
+----------------------------------------------------------------
+F1. A `Rule` CAN ALREADY REWRITE ARGS. `Rule` receives `resolve` and the
+    standard resolver arguments, and calling `resolve(parent, newArgs, ctx,
+    info)` passes the rewritten args straight through. Probed end-to-end through
+    applyPermissions: a rule injecting `where.ownerId` from context returned only
+    the caller's row, and a client passing `where: { ownerId: "u2" }` got the
+    same scoped result — the injection wins. NO ARCHITECTURE CHANGE IS NEEDED;
+    this workstream is a helper over machinery that already exists.
+
+F2. INJECTED ARGS BYPASS GRAPHQL INPUT COERCION — the important finding.
+    Rules run downstream of coercion, so the rewritten value is never validated
+    against the field's input type. Probed: a rule injecting
+    `{ ownerId: { $in: ['u1'] }, nonExistentField: 1 }` into a `NoteFilters` arg
+    that declares neither reached the resolver verbatim, with `errors: null`.
+    CONSEQUENCE: a wrong-dialect or misspelled filter does not fail loudly. It is
+    handed to the data layer, which will either throw something unrelated or —
+    worse — ignore the clause and return unscoped rows. There is no safety net
+    here, which is why G3 (validation) and G1 (leaf translation) are both
+    load-bearing rather than nice-to-have.
+
+F3. accessibleBy's three-state return is exactly what this needs, and each state
+    means something different once injected:
+      null            -> the caller may reach no row at all
+      everything()    -> no restriction; inject NOTHING and pass args through
+      a filter        -> merge with whatever the client supplied
+
+F4. LEAF TRANSLATION IS ALREADY POSSIBLE, JUST NOT PLEASANT. `adapter.rule()`
+    receives the whole conditions object, so an adapter can already walk it and
+    rewrite operators — the README says so. But every consumer would reimplement
+    the same mongo-conditions walk, and getting it wrong is silent (F2). That is
+    what G1 turns into ten lines of operator naming.
+
+
+DESIGN
+------
+
+Part 1 — LEAF-AWARE ADAPTERS (the actual work)
+
+CASL conditions are mongo-shaped ($eq/$in/$gt/…). A generated filter input is
+not: drizzle-graphql emits eq/ne/inArray/… under AND/OR/NOT, Prisma emits
+equals/in/gt under AND/OR/NOT. FilterAdapter deliberately controls only the
+boolean SKELETON and passes leaves through as written — a documented limit that
+is fine when a resolver author can write conditions in the target dialect, and
+not fine here, because of F2.
+
+Widen FilterAdapter into a discriminated union, so existing adapters keep
+working and a new one opts into leaf translation:
+
+    /** One condition, decomposed. */
+    interface LeafCondition {
+      /** Dot-notation split: 'author.id' -> ['author', 'id']. */
+      readonly path: readonly string[];
+      /** '$eq' for a bare equality value. */
+      readonly operator: LeafOperator;
+      readonly value: unknown;
+    }
+
+    type LeafOperator =
+      | '$eq' | '$ne' | '$in' | '$nin' | '$gt' | '$gte' | '$lt' | '$lte'
+      | '$exists' | '$regex' | '$all' | '$size' | '$elemMatch';
+
+    interface AdapterCore<TFilter> {
+      and(filters: TFilter[]): TFilter;
+      or(filters: TFilter[]): TFilter;
+      everything(): TFilter;
+      /** Optional. Enables `onDenyAll: 'nothing'`; see open question 4. */
+      nothing?(): TFilter;
+    }
+
+    interface SkeletonAdapter<TFilter> extends AdapterCore<TFilter> {
+      rule(conditions: object, inverted: boolean): TFilter;
+      leaf?: never;
+    }
+
+    interface LeafAdapter<TFilter> extends AdapterCore<TFilter> {
+      leaf(condition: LeafCondition): TFilter;
+      not(filter: TFilter): TFilter;
+      rule?: never;
+    }
+
+    type FilterAdapter<TFilter> = SkeletonAdapter<TFilter> | LeafAdapter<TFilter>;
+
+`rule?: never` / `leaf?: never` make it a real discriminated union: an adapter
+supplying both is a compile error, not a coin toss at runtime. When `leaf` is
+present the library supplies `rule` itself, by walking the conditions and
+combining the leaves with `and` (negating with `not` when inverted).
+
+THE WALKER, precisely — the details that decide whether it is correct:
+
+  - `{ status: 'live' }`            -> one leaf, operator '$eq'
+  - `{ n: { $gt: 2, $lt: 9 } }`     -> two leaves, `and`-combined
+  - `{ 'author.id': 5 }`            -> path ['author','id']
+  - `{ author: { id: 5 } }`         -> operator '$eq', path ['author'], value
+                                       `{id: 5}`. This is NOT a path. Mongo (and
+                                       therefore sift, and therefore CASL) reads
+                                       a plain nested object as a whole-document
+                                       equality match. Treating it as a path
+                                       would silently change the meaning of every
+                                       rule that uses one. Dotted keys are how
+                                       nesting is expressed; say so in the docs.
+  - `$and` / `$or` / `$nor` INSIDE conditions -> recurse, combining with
+    `and` / `or` / `not(or(...))`. The typed builder cannot produce these
+    (MongoQuery's toplevel is `{}`), but rehydrated JSON rules can, so the walker
+    must handle them or DB-stored rules silently lose clauses.
+  - `$elemMatch` -> hand the nested object to `leaf` as the value and let the
+    adapter decide. Do not pretend to translate collection semantics generically.
+  - An operator not in LeafOperator -> throw at fold time, naming it. Silently
+    dropping a clause WIDENS access (F2 again). Failing loudly is the only safe
+    default here.
+
+Part 2 — THE RULE: `requireCan.scope(action, subject, options)`
+
+It belongs on `createCan`, beside `.onResult` and `.fields`, not as a free
+function: it needs the caller's ability, and createCan already memoizes
+getAbility per request (S4a), so a query touching many scoped fields builds one
+ability.
+
+    canUser.scope(Actions.read, Subject.Note, {
+      into?: string,                  // arg name; default 'where'
+      adapter: FilterAdapter<T>,
+      merge?: (clientFilter: unknown, scope: T) => unknown,
+      onDenyAll?: 'deny' | 'nothing', // default 'deny'
+    })
+
+Semantics, mapped off F3:
+
+  - filter        -> args[into] = client value ? merge(client, scope) : scope
+  - everything()  -> args untouched. Do not inject `{}`; some data layers treat
+                     an empty filter object differently from an absent one.
+  - null          -> onDenyAll. 'deny' throws a normal denial (so fallbackError,
+                     maskDenials and reasons all behave as everywhere else);
+                     'nothing' injects `adapter.nothing()` and requires the
+                     adapter to supply it.
+
+  - MERGE IS A TOP-LEVEL AND, NEVER A KEY SPREAD. The probe in F1 spread keys and
+    happened to be safe only because the client used the same key. A client
+    passing `where: { OR: [...] }` escapes a key-level merge entirely. Default
+    `merge` is `adapter.and([client, scope])`; the override exists for dialects
+    whose AND is spelled oddly, not as an invitation to spread.
+
+  - NOT COMBINABLE. Like `.onResult`, a scope rule must wrap `resolve`, so it
+    cannot be a combinator operand and must be rejected when the map is built,
+    naming the operand's position — the existing check covers this for free.
+    See open question 1 for the `chain` tail case, which is the one place it
+    would genuinely be useful.
+
+  - PAIR IT WITH `fallbackRule`. A field not named in the map is unguarded, which
+    for a generated CRUD schema means an unscoped `deleteFromUsers`. Scoping and
+    `fallbackRule: deny` should be documented as a single practice, not two
+    independent options.
+
+  - MUTATIONS ARE IN SCOPE, deliberately, unlike `.onResult` which refuses root
+    mutation fields. Scoping is a PRE-execution narrowing, so nothing has
+    happened yet — and a scoped `updateX(where:)` / `deleteFromX(where:)` is the
+    highest-value case there is. The hazard is different: with
+    `onDenyAll: 'nothing'` a delete becomes a successful no-op, which reports
+    success for an operation the caller was not allowed to perform. That is
+    exactly why the default is 'deny'.
+
+Part 3 — VALIDATION AT MAP-BUILD TIME
+
+F2 removes GraphQL's safety net, so put one back where the map is already walked:
+`collectProblems` knows the field, so it can check that `into` names a real
+argument of it and report through the existing aggregated PermissionsError. This
+catches the misspelling that would otherwise silently return unscoped rows.
+Needs a way to see a rule's `into` — the same shape `CheckableRule` uses for
+`check`/`ruleName` (a marked property on the returned rule) fits.
+
+Part 4 — DOCS FRAMING
+
+A scoped field returns FEWER ROWS, not an error. That is a different contract
+from every other rule in this library and must be stated plainly, not implied.
+prior-art A1 already argues for specifying filtering-vs-rejecting rather than
+leaving it to each rule; this is where that gets written down.
+
+
+TASKS
+-----
+[ ] G1. Widen FilterAdapter into the SkeletonAdapter | LeafAdapter union and add
+        the conditions walker, with the '$eq'-on-nested-object and unknown-
+        operator-throws behaviours above. Existing adapters must keep compiling
+        unchanged — this is additive.
+[ ] G2. Unit tests for the walker: bare equality, multi-operator objects, dotted
+        paths, nested-object equality (the one that must NOT become a path),
+        $and/$or/$nor inside conditions, $elemMatch passthrough, unknown operator
+        throws. Cross-check a translated filter against ability.can() row by row,
+        the way accessibleBy.test.ts does — that test is what makes the fold
+        trustworthy and the same argument applies here.
+[ ] G3. requireCan.scope(action, subject, options) per Part 2, including the
+        three accessibleBy states, top-level-AND merge, and onDenyAll.
+[ ] G4. Reject scope rules as combinator operands at map-build time (falls out of
+        the existing non-checkable check — verify, do not assume).
+[ ] G5. Validate `into` against the field's real arguments in collectProblems,
+        aggregated into PermissionsError like every other problem.
+[ ] G6. Integration test against a GENERATED-SHAPED schema: a `notes(where:)`
+        field whose resolver only understands `where`, proving (a) the client
+        cannot widen the scope, (b) an unrestricted ability injects nothing,
+        (c) deny-all denies rather than silently returning everything, and
+        (d) a scoped mutation narrows its own where clause.
+[ ] G7. README section: what scoping is, the returns-fewer-rows contract, the
+        fallbackRule pairing, and the F2 warning that a bad filter fails silently
+        at the data layer rather than at the GraphQL boundary.
+[ ] G8. A drizzle-graphql adapter as a documented RECIPE, not a package — see
+        open question 3. Same for a Prisma-shaped one; the leaf adapter for each
+        is roughly ten lines once G1 exists.
+[ ] G9. Close the loop on drizzle-graphql#15 (and #27, multitenant setups, which
+        is the same need wearing a different hat) once G7 exists.
+
+
+NON-GOALS (record so they stop being re-proposed)
+-------------------------------------------------
+- Scoping `orderBy` / `limit` / pagination args. Not authorization.
+- Column projection. That is field-level permissions (ecosystem-parity E3),
+  which shipped as requireCan.fields.
+- Rewriting mutation INPUT DATA — forcing `ownerId = ctx.user.id` on
+  `insertIntoNotes(values:)`. It is the same mechanism (arg rewriting) and a real
+  need, but it is a different operation from narrowing a filter and would want
+  its own constructor and its own validation. Revisit after G1-G7 land; do not
+  smuggle it into `scope`.
+
+
+OPEN QUESTIONS
+--------------
+1. Should a non-checkable rule be allowed as the LAST operand of `chain`?
+   `chain(isNotBanned, canUser.scope(...))` is the natural way to put cheap
+   checks in front of a scoped field, and the tail is the only position where a
+   resolver-wrapping rule is meaningful. Today all non-checkable operands are
+   rejected. Allowing it in tail position only is a small, well-defined
+   relaxation — but it makes `chain`'s type non-uniform, and the same argument
+   applies to `.onResult`, so decide it for both at once.
+2. Does `scope` belong on requireCan (recommended: yes — it needs the ability and
+   inherits the per-request memo) or as a free function taking an ability getter,
+   which would let people use it without adopting createCan?
+3. Ship dialect adapters, or document them? RECOMMEND DOCUMENT, at least first:
+   an adapter is small once G1 exists, and shipping one means tracking another
+   library's generated input shapes across versions — a maintenance liability for
+   a solo-maintained project, and exactly the kind of coupling this library has
+   avoided so far. Revisit if the same ten lines keep getting reinvented.
+4. Is `nothing()` expressible in every dialect? Mongo can spell it, Prisma needs a
+   field-specific trick (`{ id: { in: [] } }`), and some generated filters cannot
+   spell it at all. That is why it is OPTIONAL on the adapter and why the default
+   for deny-all is to throw instead. Confirm before documenting 'nothing' as a
+   first-class option.
+5. Does the arg name vary enough to need `into` at all, or is 'where' plus a
+   per-call override sufficient? drizzle-graphql and Prisma both use `where`;
+   check two or three more generators before settling the default.
