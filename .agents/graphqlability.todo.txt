@@ -1,21 +1,36 @@
 GraphQLAbility — redesign  (DONE)
 =================================
-Replaced the MongoAbility-based ability with a bespoke, schema-typed CASL ability.
+Replaced the untyped ability (AppAbility + abilityOptions) with a schema-typed
+one: a CASL MongoAbility whose conditions are checked against each subject's
+fields. See the CORRECTION below — an intermediate bespoke-conditions design was
+tried and dropped, and this file used to describe it as shipped.
 Workstream B (accessibleBy-style row/list filtering) is in accessibleby.todo.txt.
+
+CORRECTION (2026-08): this file previously described a BESPOKE conditions
+language (GqlOperators / GqlFieldCondition / GqlConditionsFor / GqlConditions /
+gqlConditionsMatcher). That was an intermediate design and NONE of it exists.
+Those symbols were deleted when the custom matcher was replaced by CASL's own
+`mongoQueryMatcher`, which `createMongoAbility` bundles. `GraphQLAbility` is a
+CASL `MongoAbility` and conditions are CASL's standard mongo-query operators.
+Anything downstream that builds on the bespoke language — notably P2 in
+prisma-schema-typing.todo.txt — is building on something that is not there.
 
 What shipped
 ------------
 - src/graphqlAbility.ts:
-    GraphQLAbility<TMap>        — CASL `Ability` (pure base, NOT MongoAbility) with
-                                  our conditions language + __typename detection.
+    GraphQLAbility<TMap>        — CASL `MongoAbility` whose conditions are typed
+                                  per subject, plus __typename detection.
     GraphQLAbilities<TMap>      — ability-tuple union; objects tagged with a required
                                   __typename; includes a [Action,'all'] member.
-    createGraphQLAbility<TMap>()— typed AbilityBuilder; build() applies the matcher
-                                  + __typename detection.
+    createGraphQLAbility<TMap>()— typed AbilityBuilder over createMongoAbility;
+                                  build() applies __typename detection (the mongo
+                                  conditions matcher is built in).
     buildGraphQLAbility(rules)  — rehydrate an ability from stored JSON rules.
     GraphQLRule<TMap>           — serializable rule type (RawRuleOf).
-    GqlOperators/GqlFieldCondition/GqlConditionsFor/GqlConditions — the conditions language.
-    gqlConditionsMatcher        — equality + eq/ne/in/nin/gt/gte/lt/lte (serializable).
+    GraphQLAbilityOptions<TMap> — the options build()/buildGraphQLAbility accept.
+  Conditions are CASL's mongo-query operators ($eq/$ne/$in/$nin/$gt/$gte/$lt/
+  $lte/…), typed against each subject's fields via MongoQuery<TMap[K]>. They are
+  plain JSON, so rules round-trip through a database unchanged.
 - src/ability.ts: removed AppAbility + abilityOptions (untyped path GONE); kept
   Action/Actions; AbilityLike loosened to `can(...args:any[])` so a strictly-typed
   ability satisfies it. createCan casts to AbilityLike at the internal can() call.
@@ -38,9 +53,10 @@ KEY TECHNICAL FINDINGS
    is why bare Partial<Model> tuples don't narrow. createTyped + the Tagged<> helper
    force a required __typename.
 2. Per-subject condition typing through CASL's AbilityBuilder needs the Conditions
-   generic to be an HKT: GqlConditions = GqlConditionsFor<T> & Container<GqlConditionsFactory>,
-   where GqlConditionsFactory.produce = GqlConditionsFor<this[0]>. Without the Container,
-   ProduceGeneric falls back to the bare type and conditions stop narrowing.
+   generic to be an HKT — a plain conditions type makes ProduceGeneric fall back to
+   the bare type and conditions stop narrowing. MongoAbility already ships that
+   HKT (MongoQuery is declared with CASL's Container/produce machinery), which is
+   the main reason the bespoke language was dropped: it was reimplementing this.
 3. A strictly-typed Ability does NOT satisfy a `can(action:string,subject:unknown)`
    shape (variadic union overload vs fixed params) — hence AbilityLike was loosened.
 

@@ -13,5 +13,11 @@
   "hideBreadcrumbs": true,
   "useCodeBlocks": true,
   "expandObjects": true,
-  "intentionallyNotExported": ["RootOperations", "ResolveFn"]
+  "intentionallyNotExported": [
+    "RootOperations",
+    "ResolveFn",
+    "Tagged",
+    "FieldNamesOf",
+    "AnyFieldName"
+  ]
 }

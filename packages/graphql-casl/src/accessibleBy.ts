@@ -138,7 +138,6 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * @param ability - The caller's ability.
  * @param action - The action to filter for, e.g. `Actions.read`.
  * @param subject - The subject name to filter, e.g. `'Note'`.
- * @param adapter - The filter dialect. Defaults to a mongo-style tree.
  * @returns The filter, or `null` if no row is accessible.
  * @example
  * ```ts
@@ -167,6 +166,19 @@ export function accessibleBy<
   action: Action,
   subject: K,
 ): AccessibleFilter<TSubjectMap[K]> | null;
+/**
+ * The filter matching every row of `subject` the ability permits `action` on,
+ * in the dialect `adapter` describes, or `null` when it permits none.
+ *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @typeParam TFilter - The dialect's filter type.
+ * @param ability - The caller's ability.
+ * @param action - The action to filter for, e.g. `Actions.read`.
+ * @param subject - The subject name to filter, e.g. `'Note'`.
+ * @param adapter - The filter dialect. The adapter controls the boolean
+ * skeleton, not the leaf operators: conditions are passed through as written.
+ * @returns The filter, or `null` if no row is accessible.
+ */
 export function accessibleBy<
   TSubjectMap extends Record<string, object>,
   K extends keyof TSubjectMap & string,

@@ -3,24 +3,17 @@
   "projectTitle": "@vantreeseba/graphql-casl",
   "description": "A graphql-middleware plugin for schema-agnostic CASL permission rules on GraphQL resolvers, declared per type/field in a PermissionsMap and enforced before each resolver runs.",
   "folders": [],
-  "excludeFolders": [
-    "dist",
-    "docs",
-    "node_modules",
-    "coverage",
-    ".github"
-  ],
-  "excludeFiles": [
-    "CHANGELOG.md"
-  ],
+  "excludeFolders": ["dist", "docs", "node_modules", "coverage", ".github"],
+  "excludeFiles": ["CHANGELOG.md"],
   "rules": [
     "The library is schema-agnostic: subject names and condition types are derived from the consumer's generated Resolvers / ResolversTypes. Never hardcode domain type names in the library core.",
-    "All public exports come from src/index.ts: runtime helpers (createCan, createTyped, createSubjects, accept, deny, applyPermissions, Actions, abilityOptions) plus type helpers (PermissionsMap, Rule, SubjectName, SubjectMap, ArgsOf, etc.).",
-    "Runtime subject detection uses __typename via abilityOptions.detectSubjectType. Consumers tag plain objects with createTyped() rather than CASL's subject(). Always pass abilityOptions when building an ability with createMongoAbility.",
-    "createCan(getAbility, isAuthenticated, buildSubject?) returns a requireCan(action, subject, getSubjectData?) rule builder bound to the consumer's context and ability builder; getSubjectData reads condition values from resolver args.",
-    "accept is the always-pass primitive; deny is the always-fail primitive. A failed authentication check throws 'Not authenticated'; a failed ability check throws 'Forbidden'.",
-    "applyPermissions(schema, permissions) wraps graphql-middleware's applyMiddleware and keeps permissions typed as PermissionsMap<Resolvers> so mistyped type or field names are caught at compile time.",
-    "Stack: TypeScript 5 strict, ESM only, Vitest for tests, Biome for lint/format. No runtime dependencies — @casl/ability >=6, graphql >=16, and graphql-middleware >=6 are peer deps.",
+    "All public exports come from src/index.ts: runtime helpers (createGraphQLAbility, buildGraphQLAbility, createCan, createTyped, createSubjects, rule, and/or/not/chain/race, accept, deny, applyPermissions, resolvePermissions, accessibleBy, Actions) plus type helpers (PermissionsMap, Rule, CheckableRule, GraphQLAbility, SubjectName, SubjectMap, ArgsOf, etc.).",
+    "Abilities are built with createGraphQLAbility<SubjectMap>(), which returns a CASL AbilityBuilder whose conditions are type-checked against each subject's fields and whose build() applies __typename subject detection. Consumers tag plain objects with createTyped() rather than CASL's subject(). Conditions use CASL's mongo-query operators and are plain JSON, so rules can be stored in a database and rehydrated with buildGraphQLAbility.",
+    "createCan(getAbility, isAuthenticated, buildSubject?, options?) returns a requireCan(action, subject, getSubjectData?) rule builder bound to the consumer's context and ability builder; getSubjectData reads condition values from the resolver args and parent, and getAbility(context) is memoized per request. requireCan.onResult authorizes the value the resolver returned instead of the args; requireCan.fields decides every field of a type from the ability's field lists.",
+    "rule(check) wraps a predicate returning true | false | string | Error into a combinable rule; and/or/not/chain/race compose combinable rules. accept is the always-pass primitive, deny the always-fail one. A failed authentication check throws 'Not authenticated'; a failed ability check throws 'Forbidden', or the matched rule's cannot(...).because(...) reason.",
+    "applyPermissions(schema, permissions, options?) validates the map against the runtime schema (throwing PermissionsError, which aggregates every problem) and applies it via graphql-middleware. Options: fallbackRule, '*' wildcards in either position, fallbackError, allowExternalErrors (defaults to true, the opposite of graphql-shield), debug, and maskDenials. Only denials are masked or reworded — a rule's own bug and a resolver error keep their own errors. resolvePermissions is the same layer without the graphql-middleware binding, for other integrations.",
+    "accessibleBy(ability, action, subject, adapter?) folds the ability's rules into a query filter so a list resolver fetches only accessible rows; null means deny-all and {} means no restriction.",
+    "Stack: TypeScript 5 strict, ESM only, Vitest for tests, Biome for lint/format. No runtime dependencies — @casl/ability >=6, graphql >=16, and graphql-middleware >=6 are peer deps. Sibling packages: @vantreeseba/graphql-casl-codegen (codegen plugin) and @vantreeseba/graphql-casl-envelop (envelop/Yoga plugin, which does depend on @envelop/on-resolve).",
     "Use Conventional Commits; commits drive automated semantic-release publishing (feat = minor, fix = patch, BREAKING CHANGE = major)."
   ],
   "previousVersions": []

@@ -3,6 +3,16 @@ Schema-driven condition typing (à la @casl/prisma) — exploration
 Status: NOT STARTED. Raised by user during the GraphQLAbility redesign.
 Prereq context: GraphQLAbility redesign is DONE (see graphqlability.todo.txt).
 
+CORRECTION (2026-08): this file was written against an intermediate design with
+a bespoke conditions language (GqlOperators / GqlConditionsFor). That language
+does NOT exist — GraphQLAbility is a CASL MongoAbility and conditions are CASL's
+standard mongo-query operators, typed per subject via MongoQuery<TMap[K]>. Read
+every "GqlOperators" below as "MongoQuery". This changes the premise of P2 and of
+decision point 1: the operator set is CASL's, not ours, so making it field-type-
+aware means diverging from CASL's matcher — a much larger commitment than
+adjusting a hand-rolled type, and it would break the JSON round-trip with any
+other CASL consumer.
+
 The idea
 --------
 @casl/prisma derives per-model condition types from Prisma's generated
@@ -36,8 +46,15 @@ for typing. A runtime schema (or the codegen introspection) WOULD enable:
           are edited outside the type system. This is the most concrete win.
   [ ] P2. A codegen-time generator that emits a typed condition map (per-field
           operator types) from the schema — closest to what @casl/prisma gets for free
-          from Prisma's generator. Heavier; only if hand-rolled GqlOperators proves
-          too coarse.
+          from Prisma's generator. Heavier; only if MongoQuery proves too coarse.
+          NB (2026-08): the generated types would have to keep matching CASL's
+          mongoQueryMatcher at runtime, since that is what actually evaluates the
+          conditions. A generator can therefore only NARROW what MongoQuery
+          already allows (e.g. drop $gt on booleans); it cannot add operators
+          without also shipping a custom matcher, which forfeits interoperability
+          with every other CASL tool. @casl/prisma escapes this by shipping its
+          own matcher AND its own accessibleBy; matching that is a much bigger
+          commitment than this entry implied when it was written.
 
 Decision points for the user
 ----------------------------
