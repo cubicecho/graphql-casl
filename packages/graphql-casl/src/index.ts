@@ -26,7 +26,7 @@
 
 export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
-export type { ApplyPermissionsOptions } from './applyPermissions.js';
+export type { ApplyPermissionsOptions, FallbackError } from './applyPermissions.js';
 export { applyPermissions, PermissionsError } from './applyPermissions.js';
 export { and, chain, not, or, race } from './combinators.js';
 export type {

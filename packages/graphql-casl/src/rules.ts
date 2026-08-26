@@ -77,15 +77,52 @@ export interface CheckableRule extends Rule {
 }
 
 /**
+ * Marks an error as a rule's *denial* rather than a failure of the rule itself
+ * or of the resolver beneath it. Those three are indistinguishable once they are
+ * all just thrown errors, and `applyPermissions` has to treat them differently:
+ * a denial is the system working, the other two are not.
+ *
+ * The value records whether the check named the error (a string or an `Error`)
+ * or merely returned `false` — only the latter is replaced by a `fallbackError`,
+ * since a rule that said what it meant should not be overruled.
+ */
+const DENIAL: unique symbol = Symbol.for('graphql-casl.denial');
+
+/** How a denial's error was chosen. Internal. */
+export type DenialKind = 'default' | 'explicit';
+
+/**
+ * Reads the denial marker off an error. `undefined` means the error is not a
+ * denial — it came from a broken rule or from the resolver. Internal.
+ */
+export function denialKindOf(error: unknown): DenialKind | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  return (error as Record<symbol, DenialKind | undefined>)[DENIAL];
+}
+
+/**
+ * Attaches the denial marker without making it visible to serialization.
+ *
+ * An already-marked error keeps its original kind: a combinator re-normalizes
+ * the error its operand produced, and an operand that named its denial should
+ * not be demoted to a replaceable default on the way out.
+ */
+function markDenial(error: Error, kind: DenialKind): Error {
+  if (denialKindOf(error) !== undefined) return error;
+  Object.defineProperty(error, DENIAL, { value: kind, enumerable: false, configurable: true });
+  return error;
+}
+
+/**
  * Normalizes a {@link RuleResult} into the error to throw, or `undefined` when
  * the check passed. Internal — shared with the combinators, not re-exported from
  * the package entry point.
  */
 export function denialFrom(result: RuleResult): Error | undefined {
   if (result === true) return undefined;
-  if (result === false) return new Error('Forbidden');
-  if (typeof result === 'string') return new Error(result);
-  return result;
+  if (result === false) return markDenial(new Error('Forbidden'), 'default');
+  if (typeof result === 'string') return markDenial(new Error(result), 'explicit');
+  return markDenial(result, 'explicit');
 }
 
 /**

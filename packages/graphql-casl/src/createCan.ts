@@ -41,6 +41,28 @@ export interface CreateCanOptions {
  * hand-rolled ability may not implement it — in which case the check is skipped
  * rather than guessed at.
  */
+/**
+ * Reads the `reason` CASL attached to the rule that decided a check, so a
+ * `cannot(...).because('...')` explanation reaches the caller instead of being
+ * replaced by a generic `Forbidden`.
+ *
+ * CASL surfaces this through `ForbiddenError.from(ability).throwUnlessCan(...)`,
+ * but that also rewrites the default message to `Cannot execute "x" on "Y"`,
+ * which both changes this library's denial message and tells an unauthorized
+ * caller the schema's type names. Reading the rule directly takes the reason
+ * without the disclosure.
+ */
+function reasonFor(ability: AbilityLike, action: Action, subject: unknown): string | undefined {
+  const { relevantRuleFor } = ability as AbilityLike & ReasonIntrospection;
+  if (typeof relevantRuleFor !== 'function') return undefined;
+  const reason = relevantRuleFor.call(ability, action, subject)?.reason;
+  return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
+}
+
+type ReasonIntrospection = {
+  relevantRuleFor?: (action: Action, subject: unknown) => { reason?: unknown } | undefined;
+};
+
 type RuleIntrospection = {
   rulesFor?: (
     action: Action,
@@ -368,7 +390,10 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
 
         // `instance` is an opaque subject value or name here; the ability's `can`
         // is narrowly overloaded, so check through the loose AbilityLike shape.
-        return ability.can(action, instance);
+        if (ability.can(action, instance)) return true;
+        // A `cannot(...).because('...')` reason is the rule author's own words
+        // for this denial; prefer it over the generic message.
+        return reasonFor(ability, action, instance) ?? false;
       },
       { name: `can(${action}, ${subject})` },
     );
@@ -413,8 +438,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
         const data = getSubjectData
           ? getSubjectData(candidate as TResult, parent as TParent)
           : (candidate as Partial<TSubjectMap[K]>);
-        if (!ability.can(action, tag(subject, data))) {
-          throw new Error('Forbidden');
+        const instance = tag(subject, data);
+        if (!ability.can(action, instance)) {
+          throw new Error(reasonFor(ability, action, instance) ?? 'Forbidden');
         }
       }
       return result;

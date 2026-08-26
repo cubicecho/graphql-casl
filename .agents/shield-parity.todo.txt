@@ -132,13 +132,26 @@ TIER 2 — error control
         Here: rules must THROW. No per-rule custom message, no GraphQLError
         with extensions / error code.
 
-[ ] S7. fallbackError: Error | string | mapper.
+[x] S7. DONE — applyPermissions options.fallbackError, same three forms as
+        shield (Error | string | mapper receiving (original, parent, args, ctx,
+        info)). Replaces ONLY denials that did not name their own error; an
+        explicit string/Error from a check, or a CASL reason, survives it.
+
+[ ] S7-orig. fallbackError: Error | string | mapper.
         Shield: IFallbackErrorMapperType = (err, parent, args, ctx, info) =>
         Error | Promise<Error>. Default new Error('Not Authorised!').
         Here: denial messages are hardcoded plain Error('Forbidden') /
         Error('Not authenticated') with no extensions or codes.
 
-[ ] S8. allowExternalErrors.
+[~] S8. DONE, WITH THE OPPOSITE DEFAULT TO SHIELD. options.allowExternalErrors
+        defaults to TRUE here (resolver errors reach the client), where shield
+        masks by default. Rationale: masking is safer, but it is not 1.0
+        behaviour and silently swallowing resolver errors on upgrade is worse
+        than an explicit opt-in. Documented in the README and to be repeated in
+        the migration table (see OPEN QUESTIONS). REVISIT AT 2.0 — masking is the
+        better default for a fresh major.
+
+[ ] S8-orig. allowExternalErrors.
         Shield: generator.ts wraps rule + resolver execution in try/catch; by
         DEFAULT it MASKS resolver-thrown internal errors behind fallbackError,
         and allowExternalErrors: true passes them through.
@@ -146,13 +159,28 @@ TIER 2 — error control
         leak verbatim. Note this is a security-relevant default difference:
         shield fails closed, graphql-casl fails open.
 
-[ ] S9. debug.
+[x] S9. DONE — options.debug rethrows an error raised INSIDE a rule instead of
+        reporting it as a denial. This needed a way to tell three failures apart:
+        rule() now marks the errors it throws as denials (a non-enumerable
+        Symbol.for('graphql-casl.denial') carrying 'default' | 'explicit'), and
+        resolver errors are identified by capturing what the wrapped resolve
+        threw. Anything left over is a rule failure.
+
+[ ] S9-orig. debug.
         Shield: debug: true RETHROWS errors raised INSIDE a rule instead of
         quietly converting them to a denial.
         Here: absent. A throwing getAbility() is today indistinguishable from a
         legitimate denial, which is a genuinely annoying thing to debug.
 
-[ ] S10. (CASL-side, shield-adjacent) rule `reason` plumbing.
+[x] S10. DONE — a cannot(...).because('...') reason becomes the denial message,
+         on both the pre-execution and onResult paths. Read via
+         ability.relevantRuleFor(action, subject)?.reason rather than
+         ForbiddenError.from(ability).throwUnlessCan(), because the latter also
+         rewrites the DEFAULT message to `Cannot execute "x" on "Y"` — which
+         both changes this library's denial message and discloses a schema type
+         name to an unauthorized caller.
+
+[ ] S10-orig. (CASL-side, shield-adjacent) rule `reason` plumbing.
          createCan calls ability.can(...), not
          ForbiddenError.from(ability).throwUnlessCan(...), so per-rule `reason`
          strings set on the ability are silently discarded. Pairs naturally
@@ -254,7 +282,8 @@ SUGGESTED ORDER
 3. [DONE] S2 + S3 + S13 + S15  (fallbackRule + wildcards + runtime schema
    validation; "deny by default" is now a real schema-coverage guarantee)
 4. [DONE] S1 + S16  (combinators, per the design decision above)
-5. S6-S10  (error control)
+5. [DONE] S6-S10  (error control) — S8 shipped with the opposite default; see
+   its entry.
 6. S11, S12, S13/P1, S14  (the rest)
 
 
@@ -263,9 +292,10 @@ OPEN QUESTIONS
 - [ANSWERED: yes, done] Do S2/S3 justify rewriting applyPermissions from a
   one-line cast into a real schema walk (shield's generator.ts shape)?
   src/applyPermissions.ts is that walk. S13 fell out of it for free.
-- Should the shield-default error-masking behavior (S8) become the default here
-  too? It is the safer default but it IS a breaking behavior change for anyone
-  relying on internal errors surfacing.
+- [ANSWERED, for now] Should the shield-default error-masking behavior (S8)
+  become the default here too? Shipped as an opt-in (allowExternalErrors: true
+  by default) precisely because it IS a breaking behaviour change. Flip it at
+  2.0, where the break is expected and can be changelogged.
 - Is a "coming from graphql-shield" migration table worth writing before any of
   this ships? It may be the highest-leverage adoption doc in the repo, and it
   costs nothing but prose.

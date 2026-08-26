@@ -9,6 +9,7 @@
 
 import {
   type GraphQLNamedType,
+  type GraphQLResolveInfo,
   type GraphQLSchema,
   isEnumType,
   isInputObjectType,
@@ -23,7 +24,7 @@ import {
   type IMiddlewareFieldMap,
   type IMiddlewareTypeMap,
 } from 'graphql-middleware';
-import type { PermissionsMap, Rule } from './rules.js';
+import { denialKindOf, type PermissionsMap, type Rule } from './rules.js';
 
 /** The wildcard key, in either the type or the field position. */
 const WILDCARD = '*';
@@ -185,8 +186,80 @@ function ruleForField(
   );
 }
 
+/** Resolves a {@link FallbackError} to the error to throw. */
+async function resolveFallbackError(
+  fallbackError: FallbackError,
+  original: unknown,
+  parent: unknown,
+  args: unknown,
+  context: unknown,
+  info: GraphQLResolveInfo,
+): Promise<Error> {
+  if (typeof fallbackError === 'string') return new Error(fallbackError);
+  if (typeof fallbackError === 'function') {
+    return fallbackError(original, parent, args, context, info);
+  }
+  return fallbackError;
+}
+
 /**
- * Resolves the map into one rule per guarded field.
+ * Wraps one field's rule with the error-control options.
+ *
+ * Three kinds of failure arrive here as thrown errors and have to be told apart:
+ * a **denial** (the rule did its job), a **rule failure** (the rule itself
+ * broke — a `getAbility` that threw), and a **resolver error** (the field was
+ * allowed and the resolver failed). Denials carry a marker from `rule()`;
+ * resolver errors are identified by capturing what the wrapped `resolve` threw.
+ * Anything left over is a rule failure.
+ */
+function withErrorControl(rule: Rule, options: ErrorControl): Rule {
+  const { fallbackError, allowExternalErrors, debug } = options;
+  if (!fallbackError && allowExternalErrors && !debug) return rule;
+
+  return async (resolve, parent, args, context, info) => {
+    // Identity, not a flag: the rule may catch and rethrow, and a denial thrown
+    // after a successful resolve must not be mistaken for a resolver error.
+    let resolverError: unknown;
+    let threw = false;
+    const tracked = async (
+      p?: unknown,
+      a?: unknown,
+      c?: unknown,
+      i?: GraphQLResolveInfo,
+      // biome-ignore lint/suspicious/noExplicitAny: mirrors the resolver's return
+    ): Promise<any> => {
+      try {
+        return await resolve(p, a, c, i);
+      } catch (error) {
+        resolverError = error;
+        threw = true;
+        throw error;
+      }
+    };
+
+    try {
+      return await rule(tracked, parent, args, context, info);
+    } catch (error) {
+      const isResolverError = threw && error === resolverError;
+      const denialKind = isResolverError ? undefined : denialKindOf(error);
+
+      // A rule that broke is not a denial. Surfacing it as one would report a
+      // bug as an authorization decision, so `debug` rethrows it untouched.
+      if (denialKind === undefined && !isResolverError && debug) throw error;
+
+      // An explicit denial is the rule author's own words; only the generic
+      // default is replaced.
+      if (denialKind === 'explicit') throw error;
+      if (isResolverError && allowExternalErrors) throw error;
+      if (!fallbackError) throw error;
+
+      throw await resolveFallbackError(fallbackError, error, parent, args, context, info);
+    }
+  };
+}
+
+/**
+ * Resolves the map into the per-field middleware `graphql-middleware` consumes.
  *
  * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
  * can guard a field no map entry names. Introspection types are skipped here, so
@@ -197,6 +270,7 @@ function resolveFieldRules(
   schema: GraphQLSchema,
   permissions: RawPermissions,
   fallbackRule: Rule | undefined,
+  errorControl: ErrorControl,
 ): IMiddlewareTypeMap {
   const middleware: IMiddlewareTypeMap = {};
 
@@ -206,13 +280,38 @@ function resolveFieldRules(
     const fieldRules: IMiddlewareFieldMap = {};
     for (const fieldName of Object.keys(type.getFields())) {
       const rule = ruleForField(permissions, type.name, fieldName, fallbackRule);
-      if (rule) fieldRules[fieldName] = rule;
+      if (rule) fieldRules[fieldName] = withErrorControl(rule, errorControl);
     }
 
     if (Object.keys(fieldRules).length > 0) middleware[type.name] = fieldRules;
   }
 
   return middleware;
+}
+
+/**
+ * A replacement error for denials that did not name one: an `Error`, a message,
+ * or a mapper that receives the original error and the resolver arguments.
+ *
+ * The mapper is the form that lets a denial become a `GraphQLError` with a code
+ * and extensions, or vary by field.
+ */
+export type FallbackError =
+  | Error
+  | string
+  | ((
+      original: unknown,
+      parent: unknown,
+      args: unknown,
+      context: unknown,
+      info: GraphQLResolveInfo,
+    ) => Error | Promise<Error>);
+
+/** The error-control options, resolved to their defaults. Internal. */
+interface ErrorControl {
+  fallbackError: FallbackError | undefined;
+  allowExternalErrors: boolean;
+  debug: boolean;
 }
 
 /** Options for {@link applyPermissions}. */
@@ -230,6 +329,57 @@ export interface ApplyPermissionsOptions {
    * overrides it.
    */
   fallbackRule?: Rule;
+
+  /**
+   * Replaces the error thrown by a denial that did not name its own.
+   *
+   * `Error('Forbidden')` says nothing a client can act on and carries no code.
+   * Supply a `GraphQLError` with `extensions.code`, a message, or a mapper that
+   * builds one from the field being guarded.
+   *
+   * A denial that *did* name its error — a check that returned a string or an
+   * `Error`, or a CASL `cannot(...).because(...)` reason — is left alone. The
+   * rule author was specific on purpose.
+   *
+   * @example
+   * ```ts
+   * fallbackError: (_err, _parent, _args, _ctx, info) =>
+   *   new GraphQLError(`Not authorized to read ${info.parentType.name}.${info.fieldName}`, {
+   *     extensions: { code: 'FORBIDDEN' },
+   *   }),
+   * ```
+   */
+  fallbackError?: FallbackError;
+
+  /**
+   * Whether an error thrown by the *resolver* of a permitted field reaches the
+   * client unchanged. Defaults to `true`.
+   *
+   * Setting it to `false` replaces those errors with `fallbackError`, so an
+   * internal failure — a database message, a stack-revealing library error —
+   * cannot leak through a guarded field. It has no effect without a
+   * `fallbackError` to replace them with.
+   *
+   * **This default is the opposite of `graphql-shield`'s**, which masks by
+   * default. Masking is the safer behaviour, but it is not what this library has
+   * done since 1.0, and silently swallowing resolver errors on upgrade would be
+   * worse than leaving the choice explicit. Set it to `false` deliberately.
+   */
+  allowExternalErrors?: boolean;
+
+  /**
+   * Whether an error raised *inside a rule* is rethrown untouched. Defaults to
+   * `false`.
+   *
+   * A rule that breaks — a `getAbility` that throws, a check with a bug — is not
+   * a denial, but it arrives as a thrown error just like one, so in production it
+   * is treated as a failure to authorize. That makes it indistinguishable from a
+   * legitimate `Forbidden` while debugging. `debug: true` lets it through with
+   * its original message and stack.
+   *
+   * Note this only bypasses `fallbackError`; the rule still denied the field.
+   */
+  debug?: boolean;
 }
 
 /**
@@ -246,6 +396,13 @@ export interface ApplyPermissionsOptions {
  * Types not named in the map are left unguarded — the map is a whitelist of what
  * to guard, not a schema-coverage guarantee. Pass
  * {@link ApplyPermissionsOptions.fallbackRule} to invert that.
+ *
+ * This is also where the error-control options apply, since they have to wrap
+ * every guarded field: {@link ApplyPermissionsOptions.fallbackError} replaces the
+ * generic denial error, {@link ApplyPermissionsOptions.allowExternalErrors}
+ * governs whether resolver errors reach the client, and
+ * {@link ApplyPermissionsOptions.debug} surfaces a rule's own failures instead of
+ * reporting them as denials.
  *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @param schema - The executable schema to guard.
@@ -266,5 +423,13 @@ export function applyPermissions<TResolvers>(
   const raw = permissions as RawPermissions;
   const problems = collectProblems(schema, raw);
   if (problems.length > 0) throw new PermissionsError(problems);
-  return applyMiddleware(schema, resolveFieldRules(schema, raw, options?.fallbackRule));
+  const errorControl: ErrorControl = {
+    fallbackError: options?.fallbackError,
+    allowExternalErrors: options?.allowExternalErrors ?? true,
+    debug: options?.debug ?? false,
+  };
+  return applyMiddleware(
+    schema,
+    resolveFieldRules(schema, raw, options?.fallbackRule, errorControl),
+  );
 }

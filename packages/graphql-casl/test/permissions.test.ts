@@ -645,3 +645,58 @@ describe('createCan — combinability', () => {
     );
   });
 });
+
+describe('createCan — CASL reason plumbing', () => {
+  function abilityWithReason(userId: string | undefined): TestAbility {
+    const { can, cannot, build } = createGraphQLAbility<ExampleSubjectMap>();
+    if (!userId) return build();
+    can(Actions.update, 'Note', { userId });
+    cannot(Actions.update, 'Note', { id: 'locked' }).because('That note is locked');
+    return build();
+  }
+
+  const canUser = createCan<TestContext, ExampleSubjectMap>(
+    async (ctx) => abilityWithReason(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typed,
+  );
+
+  const noteRule = canUser(Actions.update, 'Note', (args: { id: string; userId: string }) => ({
+    id: args.id,
+    userId: args.userId,
+  }));
+
+  it('uses a cannot(...).because reason as the denial message', async () => {
+    await expect(
+      noteRule(vi.fn(), null, { id: 'locked', userId: 'u1' }, { userId: 'u1' }, info),
+    ).rejects.toThrow('That note is locked');
+  });
+
+  it('falls back to Forbidden when no rule supplied a reason', async () => {
+    await expect(
+      noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info),
+    ).rejects.toThrow('Forbidden');
+  });
+
+  it('does not leak the schema type name into the default denial', async () => {
+    // CASL's own ForbiddenError would say `Cannot execute "update" on "Note"`,
+    // which tells an unauthorized caller a type name. The reason is read off the
+    // rule directly to avoid that.
+    await expect(
+      noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info),
+    ).rejects.toThrow(/^Forbidden$/);
+  });
+
+  it('reports the reason from onResult denials too', async () => {
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(
+        vi.fn().mockResolvedValue({ id: 'locked', userId: 'u1' }),
+        null,
+        {},
+        { userId: 'u1' },
+        resultInfo,
+      ),
+    ).rejects.toThrow('That note is locked');
+  });
+});

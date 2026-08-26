@@ -1,13 +1,16 @@
 import { makeExecutableSchema } from '@graphql-tools/schema';
-import { type GraphQLSchema, graphql } from 'graphql';
+import { GraphQLError, type GraphQLSchema, graphql } from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  type ApplyPermissionsOptions,
   accept,
+  and,
   applyPermissions,
   deny,
   PermissionsError,
   type PermissionsMap,
   type Rule,
+  rule,
 } from '../src/index.js';
 
 const typeDefs = /* GraphQL */ `
@@ -304,5 +307,127 @@ describe('applyPermissions — wildcard precedence', () => {
 
   it('accepts a wildcard field name that exists on some other type', () => {
     expect(() => apply({ '*': { body: deny } })).not.toThrow();
+  });
+});
+
+describe('applyPermissions — error control', () => {
+  /** A schema whose one field can be made to fail in each distinct way. */
+  function scenario(
+    rule: Rule,
+    options?: ApplyPermissionsOptions,
+    resolver: () => unknown = () => 'ok',
+  ) {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { note: String }`,
+      resolvers: { Query: { note: resolver } },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { note: rule } },
+      options,
+    );
+  }
+
+  async function run(schema: GraphQLSchema) {
+    const result = await graphql({ schema, source: '{ note }' });
+    return result.errors?.[0];
+  }
+
+  it('replaces a generic denial with fallbackError', async () => {
+    const error = await run(scenario(deny, { fallbackError: 'Not Authorised!' }));
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('accepts an Error instance', async () => {
+    const boom = new GraphQLError('nope', { extensions: { code: 'FORBIDDEN' } });
+    const error = await run(scenario(deny, { fallbackError: boom }));
+    expect(error?.message).toBe('nope');
+    expect(error?.extensions.code).toBe('FORBIDDEN');
+  });
+
+  it('accepts a mapper, and gives it the resolver arguments', async () => {
+    const error = await run(
+      scenario(deny, {
+        fallbackError: (_original, _parent, _args, _context, info) =>
+          new GraphQLError(`Denied ${info.parentType.name}.${info.fieldName}`),
+      }),
+    );
+    expect(error?.message).toBe('Denied Query.note');
+  });
+
+  it('leaves an explicitly-named denial alone', async () => {
+    // The rule author said what they meant; a blanket fallback must not overrule it.
+    const named = rule(() => 'Your trial has expired');
+    const error = await run(scenario(named, { fallbackError: 'Not Authorised!' }));
+    expect(error?.message).toBe('Your trial has expired');
+  });
+
+  it('leaves an explicit denial alone through a combinator too', async () => {
+    const error = await run(
+      scenario(
+        and(
+          accept,
+          rule(() => 'Your trial has expired'),
+        ),
+        {
+          fallbackError: 'Not Authorised!',
+        },
+      ),
+    );
+    expect(error?.message).toBe('Your trial has expired');
+  });
+
+  it('lets resolver errors through by default, even with a fallbackError set', async () => {
+    const error = await run(
+      scenario(accept, { fallbackError: 'Not Authorised!' }, () => {
+        throw new Error('connection refused: 10.0.0.4:5432');
+      }),
+    );
+    expect(error?.message).toBe('connection refused: 10.0.0.4:5432');
+  });
+
+  it('masks resolver errors when allowExternalErrors is false', async () => {
+    const error = await run(
+      scenario(accept, { fallbackError: 'Not Authorised!', allowExternalErrors: false }, () => {
+        throw new Error('connection refused: 10.0.0.4:5432');
+      }),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('masks an error raised inside a rule by default', async () => {
+    const broken = rule(() => {
+      throw new Error('getAbility exploded');
+    });
+    const error = await run(scenario(broken, { fallbackError: 'Not Authorised!' }));
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('surfaces an error raised inside a rule when debug is set', async () => {
+    const broken = rule(() => {
+      throw new Error('getAbility exploded');
+    });
+    const error = await run(scenario(broken, { fallbackError: 'Not Authorised!', debug: true }));
+    expect(error?.message).toBe('getAbility exploded');
+  });
+
+  it('does not confuse a resolver error with a rule failure under debug', async () => {
+    // debug is about the rule, not the resolver: a resolver error still follows
+    // allowExternalErrors.
+    const error = await run(
+      scenario(
+        accept,
+        { fallbackError: 'Not Authorised!', allowExternalErrors: false, debug: true },
+        () => {
+          throw new Error('connection refused');
+        },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('leaves rules untouched when no error-control option is set', async () => {
+    const error = await run(scenario(deny));
+    expect(error?.message).toBe('Forbidden');
   });
 });

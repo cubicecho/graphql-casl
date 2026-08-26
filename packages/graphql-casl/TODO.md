@@ -39,6 +39,11 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Error control** (`shield-parity` S6–S10) — `applyPermissions` takes
+  `fallbackError` (Error, message or mapper; only replaces denials that did not
+  name their own), `allowExternalErrors` and `debug`. A denial, a resolver error
+  and a rule's own failure are told apart rather than collapsed. CASL
+  `cannot(...).because('...')` reasons become the denial message.
 - **Combinable rules and combinators** (`shield-parity` S1 + S16) — `rule(check)`
   wraps a predicate into a `CheckableRule`, and `and` / `or` / `not` / `chain` /
   `race` compose them. `createCan`'s pre-execution rules and `accept` / `deny`

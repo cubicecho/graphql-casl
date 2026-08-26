@@ -314,6 +314,55 @@ Introspection is never guarded, so `fallbackRule: deny` does not break it.
 > action with no matching rule is denied. That is a different guarantee from
 > *schema coverage*, which is what `fallbackRule` provides. You want both.
 
+### Error control
+
+By default a denial throws `Error('Forbidden')`, which carries no code and tells
+a client nothing it can act on. Three options on `applyPermissions` change that:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  fallbackError: (_err, _parent, _args, _ctx, info) =>
+    new GraphQLError(`Not authorized to read ${info.parentType.name}.${info.fieldName}`, {
+      extensions: { code: 'FORBIDDEN' },
+    }),
+  allowExternalErrors: false, // mask resolver errors behind the fallback
+  debug: process.env.NODE_ENV !== 'production', // surface broken rules as themselves
+});
+```
+
+`fallbackError` takes an `Error`, a message, or a mapper. It replaces only
+denials that did not name their own error. A check that returned a string or an
+`Error`, and a CASL `cannot(...).because('...')` reason, both survive it — the
+rule author was specific on purpose.
+
+Three failures reach a client as errors and the options treat them differently:
+
+| Failure | Default | Option |
+| --- | --- | --- |
+| **Denial** — the rule did its job | `Forbidden` | `fallbackError` |
+| **Resolver error** — the field was allowed, the resolver failed | reaches the client verbatim | `allowExternalErrors: false` masks it |
+| **Rule failure** — `getAbility` threw, a check has a bug | reported as a denial | `debug: true` rethrows it untouched |
+
+> **Note for `graphql-shield` users:** `allowExternalErrors` defaults to `true`
+> here, the opposite of shield, which masks resolver errors by default. Masking
+> is the safer behaviour, but it is not what this library has done since 1.0 and
+> silently swallowing resolver errors on upgrade would be worse than leaving the
+> choice explicit. Set it to `false` deliberately.
+
+#### Denial reasons from CASL
+
+A `cannot(...).because('...')` reason becomes the denial message:
+
+```ts
+can(Actions.update, Subject.Note, { userId });
+cannot(Actions.update, Subject.Note, { locked: true }).because('That note is locked');
+```
+
+A caller updating a locked note of their own gets `That note is locked`;
+everything else still gets `Forbidden`. CASL's own `ForbiddenError` would default
+to `Cannot execute "update" on "Note"`, which tells an unauthorized caller a type
+name, so the reason is read off the matched rule instead.
+
 ### Wildcards
 
 `'*'` works in either position. Wildcards never compose: exactly one rule guards a
