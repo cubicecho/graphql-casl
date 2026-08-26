@@ -26,6 +26,7 @@
 
 export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
+export type { ApplyPermissionsOptions } from './applyPermissions.js';
 export { applyPermissions, PermissionsError } from './applyPermissions.js';
 export type {
   BuildSubject,
@@ -42,7 +43,7 @@ export type {
   GraphQLRule,
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
-export type { PermissionsMap, Rule } from './rules.js';
+export type { PermissionsMap, Rule, Wildcard } from './rules.js';
 export { accept, deny } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped } from './subjects.js';

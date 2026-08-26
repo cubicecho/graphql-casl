@@ -170,7 +170,45 @@ type), and introspection types cannot be guarded. In an authorization library, a
 rule that quietly never runs is the worst failure mode, so it is an error.
 
 Types not named in the map are left **unguarded** — the map is a whitelist of what
-to guard, not a schema-coverage guarantee.
+to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
+field added to the schema later ships protected rather than open:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  fallbackRule: deny, // deny by default; the map is now the allow-list
+});
+```
+
+Introspection is never guarded, so `fallbackRule: deny` does not break it.
+
+> **Note:** the "deny by default" that CASL gives you is about *abilities* — an
+> action with no matching rule is denied. That is a different guarantee from
+> *schema coverage*, which is what `fallbackRule` provides. You want both.
+
+### Wildcards
+
+`'*'` works in either position. Wildcards never compose: exactly one rule guards a
+field, and the most specific entry wins.
+
+```ts
+const permissions: PermissionsMap<Resolvers> = {
+  Note: { '*': canUser(Actions.read, Subject.Note), id: accept },
+  '*': { createdAt: deny },
+};
+```
+
+From highest precedence to lowest:
+
+| Entry | Matches |
+| --- | --- |
+| `{ Note: { body: rule } }` | a named field of a named type |
+| `{ Note: { '*': rule } }` or `{ Note: rule }` | any field of a named type |
+| `{ '*': { body: rule } }` | a named field of any type |
+| `{ '*': { '*': rule } }` or `{ '*': rule }` | any field of any type |
+| `fallbackRule` | everything else |
+
+Field names under `'*'` are still checked — against every field in the schema, so a
+typo that matches no type at all is an error.
 
 ### 5. Persisting rules (optional)
 

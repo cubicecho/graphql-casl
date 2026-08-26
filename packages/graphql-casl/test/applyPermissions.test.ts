@@ -182,3 +182,127 @@ describe('applyPermissions — schema validation', () => {
     expect(error.problems).toEqual(['boom']);
   });
 });
+
+describe('applyPermissions — fallbackRule', () => {
+  it('guards fields the map does not name', async () => {
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      baseSchema(),
+      { Query: { note: accept } },
+      { fallbackRule: deny },
+    );
+    await expect(
+      graphql({ schema, source: '{ note { id } }' }).then((r) => r.errors?.[0]?.message),
+    ).resolves.toBe('Forbidden');
+    const denied = await graphql({ schema, source: '{ notes { id } }' });
+    expect(denied.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('is overridden by every map entry, including a wildcard', async () => {
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      baseSchema(),
+      { Query: accept, Note: { '*': accept } },
+      { fallbackRule: deny },
+    );
+    const result = await graphql({ schema, source: '{ note { id body } }' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: { id: '1', body: 'hello' } });
+  });
+
+  it('leaves introspection working even when it denies everything', async () => {
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      baseSchema(),
+      {},
+      { fallbackRule: deny },
+    );
+    const introspection = await graphql({ schema, source: '{ __schema { types { name } } }' });
+    expect(introspection.errors).toBeUndefined();
+
+    const data = await graphql({ schema, source: '{ note { id } }' });
+    expect(data.errors?.[0]?.message).toBe('Forbidden');
+  });
+});
+
+describe('applyPermissions — wildcard precedence', () => {
+  // Each case pins one row of the precedence table in `PermissionsMap`'s docs.
+  // Rules record `Type.field` alongside their own name, because a query resolves
+  // several fields and each is guarded independently.
+  // A spec names each rule with a string, so the assertions can say which entry
+  // won; `guards` turns it into a real map of recording rules.
+  type SpecMap = Record<string, string | Record<string, string>>;
+
+  async function guards(spec: SpecMap, source = '{ note { id } }'): Promise<string[]> {
+    const marks: string[] = [];
+    const mark =
+      (name: string): Rule =>
+      (resolve, parent, args, context, info) => {
+        marks.push(`${info.parentType.name}.${info.fieldName}=${name}`);
+        return resolve(parent, args, context, info);
+      };
+    const built: LooseMap = {};
+    for (const [typeName, entry] of Object.entries(spec)) {
+      built[typeName] =
+        typeof entry === 'string'
+          ? mark(entry)
+          : Object.fromEntries(Object.entries(entry).map(([f, n]) => [f, mark(n)]));
+    }
+    await graphql({ schema: apply(built), source });
+    return marks;
+  }
+
+  /** Which rule guarded `Note.id`, ignoring the other fields the query resolves. */
+  async function guardOf(spec: SpecMap): Promise<string | undefined> {
+    const marks = await guards(spec);
+    return marks.find((m) => m.startsWith('Note.id='))?.split('=')[1];
+  }
+
+  it('a named field of a named type beats everything', async () => {
+    expect(
+      await guardOf({
+        Note: { id: 'type.field', '*': 'type.*' },
+        '*': { id: '*.field', '*': '*.*' },
+      }),
+    ).toBe('type.field');
+  });
+
+  it('any field of a named type beats the wildcard type', async () => {
+    expect(await guardOf({ Note: { '*': 'type.*' }, '*': { id: '*.field', '*': '*.*' } })).toBe(
+      'type.*',
+    );
+  });
+
+  it('a type-level rule is shorthand for the type wildcard', async () => {
+    expect(await guardOf({ Note: 'type.*', '*': { id: '*.field' } })).toBe('type.*');
+  });
+
+  it('a named field of any type beats the all-fields wildcard', async () => {
+    expect(await guardOf({ '*': { id: '*.field', '*': '*.*' } })).toBe('*.field');
+  });
+
+  it('falls through to the all-fields wildcard', async () => {
+    expect(await guardOf({ '*': { '*': '*.*' } })).toBe('*.*');
+  });
+
+  it('accepts a bare rule under the wildcard type as the all-fields default', async () => {
+    expect(await guardOf({ '*': '*.*' })).toBe('*.*');
+  });
+
+  it('applies exactly one rule per field — wildcards never compose', async () => {
+    const marks = await guards(
+      { Note: { '*': 'type.*' }, '*': { '*': '*.*' } },
+      '{ note { id body } }',
+    );
+    // Three fields resolve, each guarded exactly once, each by its most specific
+    // entry: Query.note has no Note entry so it falls to the wildcard.
+    expect(marks.sort()).toEqual(['Note.body=type.*', 'Note.id=type.*', 'Query.note=*.*']);
+  });
+
+  it('rejects a wildcard field name that matches nothing in the schema', () => {
+    expect(() => apply({ '*': { nope: deny } })).toThrow(
+      /no type in the schema has a field named `nope`/,
+    );
+  });
+
+  it('accepts a wildcard field name that exists on some other type', () => {
+    expect(() => apply({ '*': { body: deny } })).not.toThrow();
+  });
+});

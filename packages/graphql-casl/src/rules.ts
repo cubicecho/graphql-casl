@@ -59,7 +59,25 @@ export const deny: Rule = () => {
 type ResolverInternalKeys = '__isTypeOf' | '__resolveType';
 
 /**
- * The permissions map applied to a schema via {@link applyPermissions}.
+ * The wildcard key, usable in place of a type name or a field name in a
+ * {@link PermissionsMap}.
+ */
+export type Wildcard = '*';
+
+/** A type's guardable field names: its resolver keys, minus the discriminators. */
+type FieldNamesOf<TFields> = Exclude<keyof NonNullable<TFields>, ResolverInternalKeys>;
+
+/**
+ * Every guardable field name in the schema. Used to type the field keys under a
+ * wildcard type (`{ '*': { id: rule } }`), which are not tied to one type but
+ * still have to name a field that exists somewhere.
+ */
+type AnyFieldName<TResolvers> = {
+  [TypeName in keyof TResolvers]: FieldNamesOf<TResolvers[TypeName]>;
+}[keyof TResolvers];
+
+/**
+ * The permissions map applied to a schema via `applyPermissions`.
  *
  * Every key is validated against your generated `Resolvers`: type names come
  * from `keyof TResolvers` and field names from each type's resolver keys, so a
@@ -71,9 +89,17 @@ type ResolverInternalKeys = '__isTypeOf' | '__resolveType';
  * from the field keys — `graphql-middleware` never wraps them, so a rule attached
  * to one would never run.
  *
- * Because the keys are validated this is structurally narrower than
- * `graphql-middleware`'s `IMiddlewareTypeMap`; pass it through
- * {@link applyPermissions} rather than `applyMiddleware` directly.
+ * {@link Wildcard} (`'*'`) is accepted in either position. Wildcards never
+ * compose: exactly one rule guards a field, and the most specific entry wins.
+ * From highest precedence to lowest:
+ *
+ * 1. `{ Note: { body: rule } }` — a named field of a named type
+ * 2. `{ Note: { '*': rule } }` (or `{ Note: rule }`) — any field of a named type
+ * 3. `{ '*': { body: rule } }` — a named field of any type
+ * 4. `{ '*': { '*': rule } }` (or `{ '*': rule }`) — any field of any type
+ *
+ * Below all of those sits `applyPermissions`'s `fallbackRule` option, and below
+ * that, no guard at all.
  *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @example
@@ -81,16 +107,18 @@ type ResolverInternalKeys = '__isTypeOf' | '__resolveType';
  * const permissions: PermissionsMap<Resolvers> = {
  *   Query: { me: canUser(Actions.read, Subject.User) },
  *   Mutation: { requestMagicLink: accept, deleteNotes: deny },
+ *   Note: { '*': canUser(Actions.read, Subject.Note), id: accept },
  * };
  * ```
  */
 export type PermissionsMap<TResolvers> = {
-  [TypeName in keyof TResolvers]?:
+  [TypeName in keyof TResolvers | Wildcard]?:
     | Rule
     | {
-        [FieldName in Exclude<
-          keyof NonNullable<TResolvers[TypeName]>,
-          ResolverInternalKeys
-        >]?: Rule;
+        [FieldName in
+          | (TypeName extends keyof TResolvers
+              ? FieldNamesOf<TResolvers[TypeName]>
+              : AnyFieldName<TResolvers>)
+          | Wildcard]?: Rule;
       };
 };

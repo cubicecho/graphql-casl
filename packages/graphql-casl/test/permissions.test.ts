@@ -368,4 +368,18 @@ describe('PermissionsMap keys', () => {
     };
     expect(permissions.Query).toBeDefined();
   });
+
+  it('accepts the wildcard in either position, and still checks field names', () => {
+    const rule: Rule = accept;
+    const permissions: PermissionsMap<FakeResolvers> = {
+      '*': {
+        id: rule, // a field that exists somewhere in the schema
+        '*': rule,
+        // @ts-expect-error no type in the schema has an `emial` field
+        emial: rule,
+      },
+      Note: { '*': rule, id: rule },
+    };
+    expect(permissions['*']).toBeDefined();
+  });
 });

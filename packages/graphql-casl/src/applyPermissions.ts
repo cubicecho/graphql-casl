@@ -9,7 +9,6 @@
 
 import {
   type GraphQLNamedType,
-  type GraphQLObjectType,
   type GraphQLSchema,
   isEnumType,
   isInputObjectType,
@@ -25,6 +24,9 @@ import {
   type IMiddlewareTypeMap,
 } from 'graphql-middleware';
 import type { PermissionsMap, Rule } from './rules.js';
+
+/** The wildcard key, in either the type or the field position. */
+const WILDCARD = '*';
 
 /**
  * Thrown by {@link applyPermissions} when a permissions map does not line up with
@@ -78,8 +80,37 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
   const problems: string[] = [];
   const typeMap = schema.getTypeMap();
 
+  const guardableFields = new Set<string>();
+  for (const type of Object.values(typeMap)) {
+    if (isObjectType(type) && !isIntrospectionType(type)) {
+      for (const fieldName of Object.keys(type.getFields())) guardableFields.add(fieldName);
+    }
+  }
+
   for (const [typeName, entry] of Object.entries(permissions)) {
     if (entry == null) continue;
+
+    // A wildcard type is not looked up in the schema; its field keys are checked
+    // against every guardable field instead, so a typo there is still caught.
+    if (typeName === WILDCARD) {
+      if (!isRule(entry)) {
+        for (const [fieldName, rule] of Object.entries(entry)) {
+          if (rule === undefined || fieldName === WILDCARD) continue;
+          if (!guardableFields.has(fieldName)) {
+            problems.push(
+              `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
+            );
+          } else if (!isRule(rule)) {
+            problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
+          }
+        }
+        const wildRule = entry[WILDCARD];
+        if (wildRule !== undefined && !isRule(wildRule)) {
+          problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
+        }
+      }
+      continue;
+    }
 
     const type = typeMap[typeName];
     if (!type) {
@@ -103,7 +134,7 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
     const fields = type.getFields();
     for (const [fieldName, rule] of Object.entries(entry)) {
       if (rule === undefined) continue;
-      if (!(fieldName in fields)) {
+      if (fieldName !== WILDCARD && !(fieldName in fields)) {
         problems.push(
           `Field \`${typeName}.${fieldName}\` is in the permissions map but not in the schema.`,
         );
@@ -118,39 +149,87 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
   return problems;
 }
 
+/** Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand. */
+function fieldRuleOf(
+  entry: Rule | Record<string, Rule | undefined> | undefined,
+  fieldName: string,
+): Rule | undefined {
+  if (entry === undefined) return undefined;
+  // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`.
+  if (isRule(entry)) return fieldName === WILDCARD ? entry : undefined;
+  const rule = entry[fieldName];
+  return isRule(rule) ? rule : undefined;
+}
+
+/**
+ * The single rule guarding one field, or `undefined` to leave it unguarded.
+ *
+ * Wildcards never compose — exactly one rule applies, and the most specific
+ * entry wins. See {@link PermissionsMap} for the precedence table; the order of
+ * the lookups below *is* that table.
+ */
+function ruleForField(
+  permissions: RawPermissions,
+  typeName: string,
+  fieldName: string,
+  fallbackRule: Rule | undefined,
+): Rule | undefined {
+  const named = permissions[typeName];
+  const wild = permissions[WILDCARD];
+  return (
+    fieldRuleOf(named, fieldName) ??
+    fieldRuleOf(named, WILDCARD) ??
+    fieldRuleOf(wild, fieldName) ??
+    fieldRuleOf(wild, WILDCARD) ??
+    fallbackRule
+  );
+}
+
 /**
  * Resolves the map into one rule per guarded field.
  *
- * A type-level rule is expanded across the type's fields here rather than left to
- * `graphql-middleware` — the expansion is identical, but doing it in the walk is
- * what lets later features (schema-wide fallbacks, wildcards) decide precedence
- * per field. Only called after {@link collectProblems} returns clean, so every
- * lookup here is known to resolve.
+ * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
+ * can guard a field no map entry names. Introspection types are skipped here, so
+ * even `fallbackRule: deny` leaves introspection working. Only called after
+ * {@link collectProblems} returns clean.
  */
-function resolveFieldRules(schema: GraphQLSchema, permissions: RawPermissions): IMiddlewareTypeMap {
+function resolveFieldRules(
+  schema: GraphQLSchema,
+  permissions: RawPermissions,
+  fallbackRule: Rule | undefined,
+): IMiddlewareTypeMap {
   const middleware: IMiddlewareTypeMap = {};
-  const typeMap = schema.getTypeMap();
 
-  for (const [typeName, entry] of Object.entries(permissions)) {
-    if (entry == null) continue;
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (!isObjectType(type) || isIntrospectionType(type)) continue;
 
-    const type = typeMap[typeName] as GraphQLObjectType;
     const fieldRules: IMiddlewareFieldMap = {};
-
-    if (isRule(entry)) {
-      for (const fieldName of Object.keys(type.getFields())) {
-        fieldRules[fieldName] = entry;
-      }
-    } else {
-      for (const [fieldName, rule] of Object.entries(entry)) {
-        if (isRule(rule)) fieldRules[fieldName] = rule;
-      }
+    for (const fieldName of Object.keys(type.getFields())) {
+      const rule = ruleForField(permissions, type.name, fieldName, fallbackRule);
+      if (rule) fieldRules[fieldName] = rule;
     }
 
-    if (Object.keys(fieldRules).length > 0) middleware[typeName] = fieldRules;
+    if (Object.keys(fieldRules).length > 0) middleware[type.name] = fieldRules;
   }
 
   return middleware;
+}
+
+/** Options for {@link applyPermissions}. */
+export interface ApplyPermissionsOptions {
+  /**
+   * Rule for every field no map entry covers — the deny-by-default switch.
+   *
+   * Without it the map is a whitelist of what to guard, so a type or field it
+   * does not name is left completely unguarded, and a field added to the schema
+   * later ships unprotected. `fallbackRule: deny` inverts that: every field is
+   * guarded unless the map says otherwise. Introspection is unaffected either
+   * way.
+   *
+   * This is the lowest-precedence entry — every map entry, wildcards included,
+   * overrides it.
+   */
+  fallbackRule?: Rule;
 }
 
 /**
@@ -164,12 +243,14 @@ function resolveFieldRules(schema: GraphQLSchema, permissions: RawPermissions): 
  * from a database, built in plain JavaScript, or written against a schema that has
  * since drifted.
  *
- * Types not named in the map are left unguarded; the map is a whitelist of what to
- * guard, not a schema-coverage guarantee.
+ * Types not named in the map are left unguarded — the map is a whitelist of what
+ * to guard, not a schema-coverage guarantee. Pass
+ * {@link ApplyPermissionsOptions.fallbackRule} to invert that.
  *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @param schema - The executable schema to guard.
  * @param permissions - The permissions map to enforce.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
  * @returns The schema wrapped with the permission middleware.
  * @throws {@link PermissionsError} if the map does not line up with the schema.
  * @example
@@ -180,9 +261,10 @@ function resolveFieldRules(schema: GraphQLSchema, permissions: RawPermissions): 
 export function applyPermissions<TResolvers>(
   schema: GraphQLSchema,
   permissions: PermissionsMap<TResolvers>,
+  options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
   const raw = permissions as RawPermissions;
   const problems = collectProblems(schema, raw);
   if (problems.length > 0) throw new PermissionsError(problems);
-  return applyMiddleware(schema, resolveFieldRules(schema, raw));
+  return applyMiddleware(schema, resolveFieldRules(schema, raw, options?.fallbackRule));
 }
