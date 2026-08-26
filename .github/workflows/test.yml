@@ -21,6 +21,11 @@ jobs:
       - name: Lint
         run: npx biome check .
 
+      # Before type-checking: graphql-casl-envelop imports the runtime package,
+      # so it needs the runtime's dist/*.d.ts to exist.
+      - name: Build
+        run: npm run build
+
       - name: Type check
         run: npm run typecheck
 
@@ -32,9 +37,6 @@ jobs:
 
       - name: Coverage
         run: npm run coverage
-
-      - name: Build
-        run: npm run build
 
       - name: Generate API docs
         run: npm run docs

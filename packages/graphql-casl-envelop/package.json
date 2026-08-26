@@ -1,0 +1,64 @@
+{
+  "name": "@vantreeseba/graphql-casl-envelop",
+  "version": "1.0.0",
+  "description": "Envelop/Yoga plugin that enforces a @vantreeseba/graphql-casl permissions map, without graphql-middleware.",
+  "keywords": [
+    "graphql",
+    "envelop",
+    "graphql-yoga",
+    "yoga",
+    "plugin",
+    "casl",
+    "authorization",
+    "permissions",
+    "access-control",
+    "typescript"
+  ],
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vantreeseba/graphql-casl.git",
+    "directory": "packages/graphql-casl-envelop"
+  },
+  "homepage": "https://github.com/vantreeseba/graphql-casl#readme",
+  "bugs": {
+    "url": "https://github.com/vantreeseba/graphql-casl/issues"
+  },
+  "license": "MIT",
+  "author": "Benjamin Van Treese <vantreeseba@gmail.com>",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@envelop/on-resolve": "^7.0.0"
+  },
+  "peerDependencies": {
+    "@envelop/core": ">=5",
+    "@vantreeseba/graphql-casl": ">=1",
+    "graphql": ">=16"
+  },
+  "devDependencies": {
+    "@envelop/core": "^5.6.0",
+    "@envelop/testing": "^10.2.0",
+    "@graphql-tools/schema": "^10.0.0",
+    "@vantreeseba/graphql-casl": "^1.0.0",
+    "graphql": "^16.14.0"
+  }
+}

@@ -153,7 +153,7 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         via `extensions` (code-first) and via a standalone `authSchema` object;
         PermissionsMap is already the equivalent of that third form.
 
-[ ] E6. NON-graphql-middleware INTEGRATIONS — envelop/Yoga plugin, Apollo
+[x] E6. NON-graphql-middleware INTEGRATIONS — envelop/Yoga plugin, Apollo
         Server plugin.
         graphql-authz ships plugins for Apollo Server, envelop, express-graphql,
         graphql-helix, Apollo Federation and schema stitching; it does this by
@@ -164,6 +164,42 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         audience more than any single shield feature would.
         Worth noting graphql-authz explicitly advertises "doesn't mutate the
         executable schema" as a benefit — applyPermissions does mutate it.
+
+        DONE (2026-08) — shipped as packages/graphql-casl-envelop,
+        `useGraphQLCasl({ permissions, ...applyPermissionsOptions })`.
+          - Built on @envelop/on-resolve, NOT on wrapExecuteFn and NOT on
+            graphql-middleware. That hook hands over each field's resolver as
+            execution reaches it, which is what lets the same PermissionsMap run
+            against a schema the host owns.
+          - The permission SEMANTICS are not reimplemented: the runtime package
+            grew `resolvePermissions(schema, map, options)` -> (type, field) =>
+            Rule | undefined, and both applyPermissions and this plugin consume
+            it. Wildcards, fallbackRule, error control and maskDenials cannot
+            drift between the two integrations because there is one
+            implementation.
+          - Validation happens in onSchemaChange, so a bad map throws a
+            PermissionsError while the server is being built rather than on the
+            first query that touches the offending field. Swapped schemas are
+            re-validated (both maps are keyed by schema in a WeakMap).
+          - SHARP EDGE, verified in @envelop/on-resolve's source:
+            `replaceResolver` mutates the field's resolver permanently, once —
+            it is not a per-call wrapper. Wrapping on every resolution would
+            nest the rule N deep. Guarded with a per-schema Set of
+            "Type.field" keys.
+          - Fields with no resolver of their own are still guarded: useOnResolve
+            wraps the default resolver too, which is what makes canUser.fields
+            work on a plain object type. Introspection is skipped by the hook.
+          - This package is NOT zero-dependency: it depends on
+            @envelop/on-resolve. Peers: @envelop/core >=5, graphql >=16,
+            @vantreeseba/graphql-casl >=1.
+          - Apollo Server plugin: NOT shipped. Apollo 4 has an envelop
+            integration, so the plugin above already covers it; a separate
+            Apollo-native package would be a second implementation for no new
+            reach.
+          - STILL OPEN, re-scoped here from E2/S5: selection-set injection. The
+            plugin runs per RESOLVER, so it can wrap and it can mask, but it
+            cannot add fields to the selection set the parent resolver sees.
+            That needs an onExecute/document-level hook, not on-resolve.
 
 [ ] E7. GRANTED SCOPES — a parent grants authorization to its children.
         Source: Pothos grantScopes / $granted. "$granted scopes are separate

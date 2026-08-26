@@ -83,6 +83,13 @@ A soundness pass, taken from the lists above:
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
 
+- **An envelop/Yoga plugin** (`ecosystem-parity` E6) —
+  [`@vantreeseba/graphql-casl-envelop`](../graphql-casl-envelop) enforces the
+  same map through envelop instead of `graphql-middleware`, for hosts where the
+  schema cannot be wrapped up front (Apollo Server 4+, federation, dynamically
+  swapped schemas). It shares `resolvePermissions` with `applyPermissions`, so
+  the two integrations cannot drift.
+
 Note on fragments (`shield-parity` S5 / `ecosystem-parity` E2): the earlier plan
 was to gate parent-aware rules behind fragment support, so the fields a rule
 reads would be guaranteed present. **That guarantee is not available.** A probe

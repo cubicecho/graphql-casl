@@ -9,6 +9,7 @@ for GraphQL resolvers.
 |---|---|
 | [`@vantreeseba/graphql-casl`](./packages/graphql-casl) | The runtime: a `graphql-middleware` plugin for defining CASL permission rules on resolvers. See its [README](./packages/graphql-casl/README.md). |
 | [`@vantreeseba/graphql-casl-codegen`](./packages/graphql-casl-codegen) | A GraphQL Code Generator plugin that emits subject bindings from your schema. See its [README](./packages/graphql-casl-codegen/README.md). |
+| [`@vantreeseba/graphql-casl-envelop`](./packages/graphql-casl-envelop) | An envelop/Yoga plugin that enforces the same permissions map without `graphql-middleware`. See its [README](./packages/graphql-casl-envelop/README.md). |
 
 ## Development
 

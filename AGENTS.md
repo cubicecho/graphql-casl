@@ -9,6 +9,10 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
   declared per type/field in a `PermissionsMap` and enforced before the resolver runs.
 - **`packages/graphql-casl-codegen`** — a GraphQL Code Generator plugin that emits
   subject bindings (`SubjectMap`, `Subject`, `typed`, `ability`) from a schema.
+- **`packages/graphql-casl-envelop`** — an envelop/Yoga plugin that enforces the
+  same `PermissionsMap` through envelop instead of `graphql-middleware`, for
+  hosts where the schema cannot be wrapped up front (Apollo Server 4+,
+  federation, dynamically swapped schemas).
 
 ## Specifications
 
@@ -29,6 +33,10 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
   no runtime dependencies
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
+- **graphql-casl-envelop peer deps:** `@envelop/core >=5`, `graphql >=16`,
+  `@vantreeseba/graphql-casl >=1`; it does have one runtime dependency,
+  `@envelop/on-resolve` (the official envelop helper for wrapping resolvers) —
+  the zero-dependency rule above is the *runtime* package's
 - **Releases:** a single, repo-wide version via root `semantic-release` (one `v${version}`
   tag); `@semantic-release/exec` publishes every workspace together
 
@@ -61,6 +69,9 @@ packages/
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests
+  graphql-casl-envelop/
+    src/index.ts        — useGraphQLCasl: resolvePermissions + @envelop/on-resolve
+    test/plugin.test.ts — end-to-end tests through envelop's testkit
 vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a single instance
 ```
 
