@@ -6,6 +6,9 @@ import {
   accept,
   and,
   applyPermissions,
+  createCan,
+  createGraphQLAbility,
+  createTyped,
   deny,
   PermissionsError,
   type PermissionsMap,
@@ -429,5 +432,65 @@ describe('applyPermissions — error control', () => {
   it('leaves rules untouched when no error-control option is set', async () => {
     const error = await run(scenario(deny));
     expect(error?.message).toBe('Forbidden');
+  });
+});
+
+describe('applyPermissions — a fields() rule as a type-level entry', () => {
+  type M = { Note: { id: string; body: string; secret: string; userId: string } };
+
+  it('guards every field of the type from one map entry', async () => {
+    const typed = createTyped<M>();
+    const canUser = createCan<{ userId?: string }, M>(
+      async (ctx) => {
+        const { can, build } = createGraphQLAbility<M>();
+        if (!ctx.userId) return build();
+        can('read', 'Note', ['id', 'body']);
+        can('read', 'Note', ['secret'], { userId: ctx.userId });
+        return build();
+      },
+      (ctx) => ctx.userId != null,
+      typed,
+    );
+
+    const note = { id: 'n1', body: 'hello', secret: 'shh', userId: 'u1' };
+    const schema = makeExecutableSchema({
+      typeDefs: `
+        type Note { id: ID!, body: String!, secret: String, userId: String! }
+        type Query { note: Note }
+      `,
+      resolvers: { Query: { note: () => note } },
+    });
+
+    // One entry for Note, plus a rule on the root field itself.
+    const guarded = applyPermissions<Record<string, Record<string, unknown>>>(schema, {
+      Query: { note: accept },
+      Note: canUser.fields('read', 'Note'),
+    });
+
+    const own = await graphql({
+      schema: guarded,
+      source: '{ note { id body secret } }',
+      contextValue: { userId: 'u1' },
+    });
+    expect(own.data?.note).toEqual({ id: 'n1', body: 'hello', secret: 'shh' });
+    expect(own.errors).toBeUndefined();
+
+    // userId is on the schema but in no ability rule, so it is denied.
+    const unlisted = await graphql({
+      schema: guarded,
+      source: '{ note { userId } }',
+      contextValue: { userId: 'u1' },
+    });
+    expect(unlisted.errors?.[0]?.message).toBe('Forbidden');
+
+    // secret is conditioned on ownership; body is not.
+    const other = await graphql({
+      schema: guarded,
+      source: '{ note { body secret } }',
+      contextValue: { userId: 'u2' },
+    });
+    expect(other.data?.note).toEqual({ body: 'hello', secret: null });
+    expect(other.errors?.[0]?.message).toBe('Forbidden');
+    expect(other.errors?.[0]?.path).toEqual(['note', 'secret']);
   });
 });

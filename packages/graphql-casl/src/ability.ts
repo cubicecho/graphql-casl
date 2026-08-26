@@ -30,8 +30,12 @@ export const Actions = {
  * {@link GraphQLAbility} satisfies it; the method shape keeps type-checking for
  * consumers who annotate their ability with this type, unlike a `(...args: any[])`
  * shim.
+ *
+ * The optional third argument is CASL's field-level check
+ * (`can('read', user, 'email')`), which `createCan(...).fields` uses to decide a
+ * whole type's fields from the ability alone.
  */
 export type AbilityLike = {
   // biome-ignore lint/suspicious/noExplicitAny: subject is opaque to the rule layer; the action stays type-checked
-  can(action: Action, subject: any): boolean;
+  can(action: Action, subject: any, field?: string): boolean;
 };

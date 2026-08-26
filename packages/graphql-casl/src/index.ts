@@ -34,6 +34,8 @@ export type {
   CreateCanOptions,
   RequireCan,
   RequireCanBare,
+  RequireCanFields,
+  RequireCanOnResult,
   UnconditionedSubjectMode,
 } from './createCan.js';
 export { createCan } from './createCan.js';

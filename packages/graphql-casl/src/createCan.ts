@@ -160,7 +160,57 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
    * @see {@link RequireCanOnResult}
    */
   readonly onResult: RequireCanOnResult<TSubjectMap>;
+
+  /**
+   * Builds one rule that guards **every field of a type**, using CASL's
+   * field-level permissions.
+   *
+   * @see {@link RequireCanFields}
+   */
+  readonly fields: RequireCanFields<TSubjectMap>;
 }
+
+/**
+ * Builds a single rule that guards **every field of a type**, deciding each one
+ * from CASL's field-level permissions rather than from a hand-written entry.
+ *
+ * `can('read', 'User', ['id', 'name'])` already says which fields may be read.
+ * Restating that as a `PermissionsMap` entry per field duplicates it, and the two
+ * drift. Attached to a type, this rule checks
+ * `ability.can(action, subject, info.fieldName)` for whichever field is being
+ * resolved, so one ability rule drives them all:
+ *
+ * ```ts
+ * // abilities
+ * can(Actions.read, Subject.User, ['id', 'name']);
+ * can(Actions.read, Subject.User, ['email'], { id: userId }); // only your own
+ *
+ * // permissions map — one entry, every field of User guarded
+ * User: canUser.fields(Actions.read, Subject.User),
+ * ```
+ *
+ * The subject defaults to the resolver's `parent` — for a field of `User` that
+ * is the `User` being read, which is what a field-level condition is about.
+ * Supply `getSubjectData` to project it. A `buildSubject` tagger is required,
+ * since the parent carries no `__typename`; when the parent is not an object
+ * (a root `Query`/`Mutation` field) the check falls back to the bare subject
+ * name, which asks whether the field is readable *at all*.
+ *
+ * A field with no matching rule is denied, so this is deny-by-default across the
+ * type's fields — unlike the `PermissionsMap`, where an unnamed field is
+ * unguarded.
+ *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ */
+export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
+  K extends keyof TSubjectMap & string,
+  TParent = unknown,
+  TArgs extends Record<string, unknown> = Record<string, unknown>,
+>(
+  action: Action,
+  subject: K,
+  getSubjectData?: (parent: TParent, args: TArgs) => Partial<TSubjectMap[K]>,
+) => CheckableRule;
 
 /**
  * Builds a rule that runs the resolver first and authorizes what it returned.
@@ -398,6 +448,47 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       { name: `can(${action}, ${subject})` },
     );
   }
+
+  requireCan.fields = function fields<
+    K extends keyof TSubjectMap & string,
+    TParent = unknown,
+    TArgs extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    action: Action,
+    subject: K,
+    getSubjectData?: (parent: TParent, args: TArgs) => Partial<TSubjectMap[K]>,
+  ): CheckableRule {
+    if (!buildSubject) {
+      throw new Error(
+        'createCan: `fields` requires a `buildSubject` tagger (e.g. `typed` from ' +
+          '`createTyped`) to be passed to `createCan`; without it the parent object has no ' +
+          '`__typename` and CASL cannot classify it.',
+      );
+    }
+    const tag = buildSubject;
+    return rule(
+      async (parent, args, context, info) => {
+        if (!isAuthenticated(context as TContext)) return new Error('Not authenticated');
+        const ability = await resolveAbility(context as TContext);
+
+        // A root Query/Mutation field has no parent to be the subject. Fall back
+        // to the bare name, which asks whether the field is readable at all.
+        const instance =
+          getSubjectData || (typeof parent === 'object' && parent !== null)
+            ? tag(
+                subject,
+                getSubjectData
+                  ? getSubjectData(parent as TParent, args as TArgs)
+                  : (parent as Partial<TSubjectMap[K]>),
+              )
+            : subject;
+
+        if (ability.can(action, instance, info.fieldName)) return true;
+        return reasonFor(ability, action, instance) ?? false;
+      },
+      { name: `can(${action}, ${subject}, <field>)` },
+    );
+  };
 
   requireCan.onResult = function onResult<
     K extends keyof TSubjectMap & string,

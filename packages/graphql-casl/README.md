@@ -23,7 +23,7 @@ npm install @casl/ability graphql graphql-middleware
 |---|---|
 | `createGraphQLAbility<SubjectMap>()` | Returns a CASL `AbilityBuilder` typed against your schema — `can`/`cannot` conditions are checked against each subject's fields — with `__typename` detection applied by `build()`. |
 | `buildGraphQLAbility<SubjectMap>(rules, options?)` | Rebuilds an ability from stored `GraphQLRule`s (e.g. rules persisted in a database and loaded at startup). |
-| `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args. |
+| `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args; `requireCan.fields(...)` guards every field of a type from the ability's field lists. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for subject detection. |
 | `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
 | `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
@@ -231,6 +231,34 @@ export const permissions: PermissionsMap<Resolvers> = {
 > `fragment` option does not help either — it populates a `fragmentReplacements`
 > array for graphql-tools delegation and never reaches plain execution. Have the
 > parent resolver select the fields your rules condition on.
+
+### Field permissions from the ability
+
+CASL rules already carry field lists — `can('read', 'User', ['id', 'name'])`.
+Restating those as one `PermissionsMap` entry per field duplicates them, and the
+two drift. `canUser.fields` attaches a single rule to a type and decides each
+field from the ability:
+
+```ts
+// abilities
+can(Actions.read, Subject.User, ['id', 'name']);
+can(Actions.read, Subject.User, ['email'], { id: userId }); // only your own
+
+// permissions map — one entry, every field of User guarded
+export const permissions: PermissionsMap<Resolvers> = {
+  Query: { me: canUser(Actions.read, Subject.User) },
+  User: canUser.fields(Actions.read, Subject.User),
+};
+```
+
+The subject is the resolver's `parent` — for a field of `User` that is the `User`
+being read, which is what a field-level condition is about. Pass `getSubjectData`
+to project it. On a root field, where there is no parent, the check degrades to
+the bare subject name: "is this field readable at all".
+
+Unlike the rest of the map, this is **deny-by-default across the type's fields**:
+a field no ability rule mentions is denied rather than left unguarded. A
+`buildSubject` tagger is required, since the parent carries no `__typename`.
 
 ### Combining rules
 

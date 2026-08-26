@@ -81,7 +81,23 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         "graphql-middleware already supports the {fragment, resolve} form" is
         true only of the TYPE; see the FINDING above for what it actually does.
 
-[ ] E3. CASL FIELD-LEVEL PERMISSIONS — can('read', 'Post', ['title']) and
+[x] E3. DONE — createCan(...).fields(action, subject, getSubjectData?).
+        Attached as a TYPE-level PermissionsMap entry, it checks
+        ability.can(action, subject, info.fieldName) per field, so one CASL rule
+        drives every field of the type. No schema-walk change was needed: a
+        type-level entry already fans out to every field, and a Rule already
+        receives info.fieldName.
+        Subject defaults to the resolver's `parent` (falling back to the bare
+        subject name on a root field, which has no parent); a buildSubject tagger
+        is required. Deny-by-default across the type's fields, unlike the map.
+        RESOLVES THE OPEN QUESTION BELOW: it sits ALONGSIDE hand-listed field
+        rules, not replacing them — both are valid map entries and a per-field
+        entry still wins by wildcard precedence.
+        NOT used: permittedFieldsOf from @casl/ability/extra. It answers "which
+        fields MAY I read", which is the tool for MASKING (E4), not for gating.
+        Pick it up there.
+
+[ ] E3-orig. CASL FIELD-LEVEL PERMISSIONS — can('read', 'Post', ['title']) and
         permittedFieldsOf from @casl/ability/extra.
         Not an ecosystem gap so much as UNUSED CAPABILITY IN A DEPENDENCY THE
         PROJECT ALREADY HAS. CASL's `fields` argument maps 1:1 onto GraphQL
@@ -215,7 +231,9 @@ OPEN QUESTIONS
   E2. E2 is still wanted, for parent-aware field rules.
 - E5 (directives) and E6 (envelop plugin) are each a new package. Which, if
   either, is worth the maintenance surface for a solo-maintained project?
-- E3: should CASL field-level permissions REPLACE hand-listed field rules in
-  PermissionsMap, or sit alongside them as an alternative? Replacing is more
-  elegant; sitting alongside is less disruptive.
+- [ANSWERED] E3: should CASL field-level permissions REPLACE hand-listed field
+  rules in PermissionsMap, or sit alongside them as an alternative?
+  Answer: alongside. `fields()` is just another rule, so a per-field map entry
+  still overrides it by the normal wildcard precedence, and nothing existing
+  had to change.
 - E4: is null-masking a per-rule option, a global mode, or both?

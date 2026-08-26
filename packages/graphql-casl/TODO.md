@@ -39,6 +39,11 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Field permissions driven by the ability** (`ecosystem-parity` E3) —
+  `canUser.fields(action, subject)` attaches one rule to a type and decides each
+  field with `ability.can(action, subject, info.fieldName)`, so a CASL rule's
+  field list drives the map instead of being restated in it. Deny-by-default
+  across that type's fields.
 - **Error control** (`shield-parity` S6–S10) — `applyPermissions` takes
   `fallbackError` (Error, message or mapper; only replaces denials that did not
   name their own), `allowExternalErrors` and `debug`. A denial, a resolver error

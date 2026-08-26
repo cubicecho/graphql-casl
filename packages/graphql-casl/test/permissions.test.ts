@@ -700,3 +700,113 @@ describe('createCan — CASL reason plumbing', () => {
     ).rejects.toThrow('That note is locked');
   });
 });
+
+describe('createCan.fields — CASL field-level permissions', () => {
+  type FieldSubjectMap = { User: { id: string; email: string; name: string } };
+  const typedUser = createTyped<FieldSubjectMap>();
+
+  function fieldAbility(userId: string | undefined) {
+    const { can, build } = createGraphQLAbility<FieldSubjectMap>();
+    if (!userId) return build();
+    can(Actions.read, 'User', ['id', 'name']);
+    can(Actions.read, 'User', ['email'], { id: userId }); // only your own
+    return build();
+  }
+
+  const canUser = createCan<TestContext, FieldSubjectMap>(
+    async (ctx) => fieldAbility(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typedUser,
+  );
+
+  const rule = canUser.fields(Actions.read, 'User');
+
+  function infoForField(fieldName: string): GraphQLResolveInfo {
+    return { fieldName } as unknown as GraphQLResolveInfo;
+  }
+
+  it('allows a field the ability grants unconditionally', async () => {
+    await expect(
+      rule(
+        vi.fn().mockResolvedValue('Ada'),
+        { id: 'u2' },
+        {},
+        { userId: 'u1' },
+        infoForField('name'),
+      ),
+    ).resolves.toBe('Ada');
+  });
+
+  it('decides a conditioned field from the parent object', async () => {
+    // email is granted only when the User being read is your own.
+    await expect(
+      rule(
+        vi.fn().mockResolvedValue('a@b.c'),
+        { id: 'u1' },
+        {},
+        { userId: 'u1' },
+        infoForField('email'),
+      ),
+    ).resolves.toBe('a@b.c');
+    await expect(
+      rule(vi.fn(), { id: 'u2' }, {}, { userId: 'u1' }, infoForField('email')),
+    ).rejects.toThrow('Forbidden');
+  });
+
+  it('denies a field no ability rule mentions — deny by default across the type', async () => {
+    const resolve = vi.fn();
+    await expect(
+      rule(resolve, { id: 'u1' }, {}, { userId: 'u1' }, infoForField('ssn')),
+    ).rejects.toThrow('Forbidden');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('throws Not authenticated before consulting the ability', async () => {
+    await expect(rule(vi.fn(), { id: 'u1' }, {}, {}, infoForField('name'))).rejects.toThrow(
+      'Not authenticated',
+    );
+  });
+
+  it('projects the subject with getSubjectData when supplied', async () => {
+    const projected = canUser.fields(
+      Actions.read,
+      'User',
+      (parent: { owner: { id: string } }) => parent.owner,
+    );
+    await expect(
+      projected(
+        vi.fn().mockResolvedValue('a@b.c'),
+        { owner: { id: 'u1' } },
+        {},
+        { userId: 'u1' },
+        infoForField('email'),
+      ),
+    ).resolves.toBe('a@b.c');
+  });
+
+  it('falls back to the bare subject name when there is no parent object', async () => {
+    // A root field has no parent to be the subject, so the check degrades to
+    // "is this field readable at all", which `email` is (for someone).
+    await expect(
+      rule(vi.fn().mockResolvedValue('a@b.c'), null, {}, { userId: 'u1' }, infoForField('email')),
+    ).resolves.toBe('a@b.c');
+    await expect(rule(vi.fn(), null, {}, { userId: 'u1' }, infoForField('ssn'))).rejects.toThrow(
+      'Forbidden',
+    );
+  });
+
+  it('is checkable, so it composes', () => {
+    expect(isCheckableRule(rule)).toBe(true);
+    expect(rule.ruleName).toBe('can(read, User, <field>)');
+  });
+
+  it('throws at construction without a buildSubject tagger', () => {
+    const canBare = createCan<TestContext, FieldSubjectMap>(
+      async (ctx) => fieldAbility(ctx.userId),
+      (ctx) => ctx.userId != null,
+    ) as unknown as RequireCan<FieldSubjectMap>;
+    expect(() => canBare.fields(Actions.read, 'User')).toThrow(
+      /`fields` requires a `buildSubject` tagger/,
+    );
+  });
+});
