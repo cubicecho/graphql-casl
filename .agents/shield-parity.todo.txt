@@ -87,7 +87,12 @@ TIER 1 — structural (no workaround exists today)
                  string key like shield's `_shield` — a string key can collide
                  with app context fields.
 
-[ ] S5. FRAGMENTS: rule({ fragment: '... on User { id }' }).
+[!] S5. FRAGMENTS — WON'T SHIP VIA graphql-middleware. See the FINDING under E2
+        in ecosystem-parity.todo.txt: the fragment never reaches execution, so
+        the option would promise a guarantee it cannot keep. Parent-aware field
+        rules shipped without it. Re-scope to the envelop plugin (E6).
+
+[ ] S5-orig. FRAGMENTS: rule({ fragment: '... on User { id }' }).
         Shield: generator.ts emits the {fragment, resolve} /
         {fragments, resolve} middleware form when a rule declares one, forcing
         the fields a rule needs into the parent's selection set.
@@ -218,9 +223,10 @@ effective fallback error; string -> new Error(string); Error -> throw it.
 SUGGESTED ORDER
 ---------------
 1. [DONE] S4a  (memoize getAbility — trivial, no API change, N-times win)
-2. [PARTLY DONE] E1 shipped as createCan.onResult, WITHOUT needing S5/E2 — a
-   rule can await resolve() and check the result. The IDOR gap is closed.
-   S5 + E2 (fragments) still to do; they are what TODO.md item 2 needs.
+2. [DONE, differently] E1 shipped as createCan.onResult and parent-aware field
+   rules shipped as getSubjectData(args, parent) — both WITHOUT S5/E2, which
+   turned out not to be prerequisites for either. S5/E2 are re-scoped to E6
+   (envelop plugin), the only place selection-set injection can actually happen.
 3. [DONE] S2 + S3 + S13 + S15  (fallbackRule + wildcards + runtime schema
    validation; "deny by default" is now a real schema-coverage guarantee)
 4. S1 + S16  (combinators, per the design decision above)

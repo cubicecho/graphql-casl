@@ -113,16 +113,23 @@ export type BuildSubject<TSubjectMap extends Record<string, object>> = <
  * (`Partial<TSubjectMap[K]>`); annotate `getSubjectData`'s `args` parameter with
  * your generated `*Args` type to type the extraction end to end.
  *
+ * `getSubjectData` also receives the resolver's `parent`, which is what a
+ * field-level rule needs — "read `User.email` only when it is your own user" is a
+ * condition on the parent `User`, not on the field's args. Annotate it with
+ * `ParentOf<UserResolvers['email']>` to type it. See the caveat on
+ * {@link createCan} about resolvers that project by selection set.
+ *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
 export interface RequireCan<TSubjectMap extends Record<string, object>> {
   <
     K extends keyof TSubjectMap & string,
     TArgs extends Record<string, unknown> = Record<string, unknown>,
+    TParent = unknown,
   >(
     action: Action,
     subject: K,
-    getSubjectData?: (args: TArgs) => Partial<TSubjectMap[K]>,
+    getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
   ): Rule;
 
   /**
@@ -151,7 +158,7 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * Without `getSubjectData` the resolved value *is* the subject data, which is the
  * common case. Supply one to pull the subject out of a wrapper, or to authorize
  * a projection of the record. It receives each candidate individually, so a list
- * calls it once per element.
+ * calls it once per element, plus the resolver's `parent` as a second argument.
  *
  * **The resolver runs before the check.** That is inherent — the check needs the
  * result. It makes this form unsuitable for anything with side effects, so a rule
@@ -171,10 +178,11 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
 export type RequireCanOnResult<TSubjectMap extends Record<string, object>> = <
   K extends keyof TSubjectMap & string,
   TResult = unknown,
+  TParent = unknown,
 >(
   action: Action,
   subject: K,
-  getSubjectData?: (result: TResult) => Partial<TSubjectMap[K]>,
+  getSubjectData?: (result: TResult, parent: TParent) => Partial<TSubjectMap[K]>,
 ) => Rule;
 
 /**
@@ -207,10 +215,21 @@ export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
  * 4. otherwise calls the wrapped resolver.
  *
  * When `getSubjectData` and `buildSubject` are both supplied, the checked subject
- * is `buildSubject(subject, getSubjectData(args))` (e.g. a `typed()` instance);
+ * is `buildSubject(subject, getSubjectData(args, parent))` (e.g. a `typed()`
+ * instance);
  * with neither it is the bare subject-name string, which checks whether the
  * action is *possible* on that subject type rather than permitted on a specific
  * one — see {@link UnconditionedSubjectMode}.
+ *
+ * **Caveat on `parent`.** Under plain `graphql-js` execution a parent resolver
+ * returns its whole object, so a field rule reliably sees the fields it reads.
+ * That stops being true when the parent resolver *projects by the selection set*
+ * — a Prisma `select` built from `info`, or schema delegation — because a field
+ * the client did not request may simply be absent, and an absent field makes a
+ * CASL condition fail rather than error. Neither `graphql-middleware`'s
+ * `fragment` option nor anything this library can do from inside a rule fixes
+ * that: the parent has already resolved by the time a field rule runs. If your
+ * resolvers project, have the parent select the fields your rules condition on.
  *
  * `getAbility` is called at most once per context object: every rule from a given
  * factory shares the result, so a query touching many guarded fields builds the
@@ -296,7 +315,12 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   function requireCan<
     K extends keyof TSubjectMap & string,
     TArgs extends Record<string, unknown> = Record<string, unknown>,
-  >(action: Action, subject: K, getSubjectData?: (args: TArgs) => Partial<TSubjectMap[K]>): Rule {
+    TParent = unknown,
+  >(
+    action: Action,
+    subject: K,
+    getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
+  ): Rule {
     // Guards the footgun the overloads already forbid at the type level, for
     // callers reaching this via plain JS or a cast: a subject built without a
     // tagger has no `__typename`, so CASL can't classify it and the check would
@@ -316,7 +340,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       const ability = await authorize(context);
       const instance =
         getSubjectData && buildSubject
-          ? buildSubject(subject, getSubjectData(args as TArgs))
+          ? buildSubject(subject, getSubjectData(args as TArgs, parent as TParent))
           : subject;
 
       if (
@@ -342,10 +366,14 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     };
   }
 
-  requireCan.onResult = function onResult<K extends keyof TSubjectMap & string, TResult = unknown>(
+  requireCan.onResult = function onResult<
+    K extends keyof TSubjectMap & string,
+    TResult = unknown,
+    TParent = unknown,
+  >(
     action: Action,
     subject: K,
-    getSubjectData?: (result: TResult) => Partial<TSubjectMap[K]>,
+    getSubjectData?: (result: TResult, parent: TParent) => Partial<TSubjectMap[K]>,
   ): Rule {
     // The resolved value has no `__typename` of its own to rely on — GraphQL
     // resolvers routinely return plain rows — so the tagger is required, not
@@ -375,7 +403,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       const result = await resolve(parent, args, context, info);
       for (const candidate of subjectsOf(result)) {
         const data = getSubjectData
-          ? getSubjectData(candidate as TResult)
+          ? getSubjectData(candidate as TResult, parent as TParent)
           : (candidate as Partial<TSubjectMap[K]>);
         if (!ability.can(action, tag(subject, data))) {
           throw new Error('Forbidden');

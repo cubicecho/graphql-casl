@@ -37,8 +37,19 @@ function buildAbility(userId: string | undefined): TestAbility {
   return build();
 }
 
-// A stand-in resolve info object — rules never read it, so an empty cast is fine.
+// A stand-in resolve info object — most rules never read it, so an empty cast is fine.
 const info = {} as GraphQLResolveInfo;
+
+// onResult does read info (to refuse root mutation fields), so it needs a schema
+// whose mutation type is absent.
+const queryOnlySchema = new GraphQLSchema({
+  query: new GraphQLObjectType({ name: 'Query', fields: { note: { type: GraphQLString } } }),
+});
+const resultInfo = {
+  schema: queryOnlySchema,
+  parentType: queryOnlySchema.getQueryType(),
+  fieldName: 'note',
+} as unknown as GraphQLResolveInfo;
 
 describe('accept / deny', () => {
   it('accept invokes resolve and returns its value', async () => {
@@ -512,5 +523,70 @@ describe('createCan.onResult — post-execution rules', () => {
     expect(() => canBare.onResult(Actions.update, 'Note')).toThrow(
       /`onResult` requires a `buildSubject` tagger/,
     );
+  });
+});
+
+describe('createCan — parent-aware getSubjectData', () => {
+  const canUser = createCan<TestContext, ExampleSubjectMap>(
+    async (ctx) => buildAbility(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typed,
+  );
+
+  // The field-level shape: "read Note.userId only when the Note is yours" is a
+  // condition on the parent, which the args of a field rule never carry.
+  const fieldRule = canUser(
+    Actions.update,
+    'Note',
+    (_args: Record<string, never>, parent: { userId: string }) => ({ userId: parent.userId }),
+  );
+
+  it('reads the condition off the parent, not the args', async () => {
+    const resolve = vi.fn().mockResolvedValue('u1');
+    await expect(fieldRule(resolve, { userId: 'u1' }, {}, { userId: 'u1' }, info)).resolves.toBe(
+      'u1',
+    );
+  });
+
+  it('forbids when the parent belongs to someone else', async () => {
+    const resolve = vi.fn();
+    await expect(
+      fieldRule(resolve, { userId: 'someone-else' }, {}, { userId: 'u1' }, info),
+    ).rejects.toThrow('Forbidden');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a one-argument getSubjectData unchanged', async () => {
+    // The parent parameter is additive: existing single-arg extractors keep
+    // typechecking and keep behaving identically.
+    const argsRule = canUser(Actions.update, 'Note', (args: { userId: string }) => ({
+      userId: args.userId,
+    }));
+    await expect(
+      argsRule(
+        vi.fn().mockResolvedValue('ok'),
+        { userId: 'irrelevant' },
+        { userId: 'u1' },
+        { userId: 'u1' },
+        info,
+      ),
+    ).resolves.toBe('ok');
+  });
+
+  it('passes the parent to onResult extractors too', async () => {
+    const seen: unknown[] = [];
+    const rule = canUser.onResult(
+      Actions.update,
+      'Note',
+      (result: { userId: string }, parent: { org: string }) => {
+        seen.push(parent);
+        return { userId: result.userId };
+      },
+    );
+    const note = { userId: 'u1' };
+    await expect(
+      rule(vi.fn().mockResolvedValue(note), { org: 'o1' }, {}, { userId: 'u1' }, resultInfo),
+    ).resolves.toBe(note);
+    expect(seen).toEqual([{ org: 'o1' }]);
   });
 });

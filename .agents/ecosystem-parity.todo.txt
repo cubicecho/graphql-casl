@@ -53,15 +53,33 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         sibling — deny a list ITEM vs. deny the whole field); E4 below (a denied
         item in a list wants masking, not a thrown error).
 
-[ ] E2. SELECTION-SET INJECTION — a rule declares the fields it needs, and they
+[!] E2. SELECTION-SET INJECTION — BLOCKED ON THE CHOSEN MECHANISM. See FINDING.
+        FINDING (probed, 2026-08): graphql-middleware CANNOT deliver this.
+        applyMiddleware extracts a rule's `fragment` into a
+        `fragmentReplacements` ARRAY hung off the returned schema object, and
+        does nothing further with it. Probe: a rule on User.email declaring
+        `... on User { id }`, queried as `{ me { email } }` — Query.me's
+        info.fieldNodes was still `me { email }`, no `id`. The array is only
+        consumed by graphql-tools DELEGATION (v3-era mergeSchemas), not by plain
+        execution, which is how this library's consumers run.
+        Consequence: shipping a `fragment` option on `Rule` would be an unkept
+        promise — exactly the silently-inert failure mode applyPermissions now
+        rejects elsewhere. NOT SHIPPED, deliberately.
+        Parent-aware field rules shipped WITHOUT it (createCan's getSubjectData
+        now takes (args, parent)); the projecting-resolver hazard is documented
+        instead of falsely guaranteed away.
+        Real selection-set injection must happen BEFORE execution, i.e. as part
+        of the envelop/Yoga plugin (E6). Re-scope this item there.
+
+[ ] E2-orig. SELECTION-SET INJECTION — a rule declares the fields it needs, and they
         are fetched even if the client didn't request them.
         Source: graphql-authz `selectionSet: '{ status author { id } }'`;
         equivalently shield's `fragment` (see S5 in shield-parity.todo.txt).
         Two independent libraries converged on this, which is a strong signal.
-        Prerequisite for BOTH E1 and for parent-aware field rules
-        (packages/graphql-casl/TODO.md item 2). graphql-middleware already
-        supports the {fragment, resolve} middleware form; only the `Rule` type
-        blocks it here.
+        Was believed to be a prerequisite for BOTH E1 and parent-aware field
+        rules. It was neither — both shipped without it. And the claim that
+        "graphql-middleware already supports the {fragment, resolve} form" is
+        true only of the TYPE; see the FINDING above for what it actually does.
 
 [ ] E3. CASL FIELD-LEVEL PERMISSIONS — can('read', 'Post', ['title']) and
         permittedFieldsOf from @casl/ability/extra.
