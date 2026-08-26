@@ -1,11 +1,10 @@
 /**
- * The `graphql-middleware` integration layer: the {@link Rule} shape, the
+ * The `graphql-middleware` rule layer: the {@link Rule} shape, the
  * {@link PermissionsMap} assembled from rules, and the {@link accept} / {@link deny}
- * primitives.
+ * primitives. Applying a map to a schema lives in `./applyPermissions.js`.
  */
 
-import type { GraphQLResolveInfo, GraphQLSchema } from 'graphql';
-import { applyMiddleware, type IMiddlewareTypeMap } from 'graphql-middleware';
+import type { GraphQLResolveInfo } from 'graphql';
 
 type ResolveFn = (
   parent?: unknown,
@@ -95,27 +94,3 @@ export type PermissionsMap<TResolvers> = {
         >]?: Rule;
       };
 };
-
-/**
- * Applies a {@link PermissionsMap} to an executable schema via `graphql-middleware`.
- *
- * Prefer this over calling `applyMiddleware` directly: `PermissionsMap` is
- * intentionally narrower than `IMiddlewareTypeMap` so it can validate type and
- * field names, and this helper performs the single widening cast at the boundary
- * so consumers never have to.
- *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @param schema - The executable schema to guard.
- * @param permissions - The permissions map to enforce.
- * @returns The schema wrapped with the permission middleware.
- * @example
- * ```ts
- * const schema = applyPermissions<Resolvers>(makeExecutableSchema({ typeDefs, resolvers }), permissions);
- * ```
- */
-export function applyPermissions<TResolvers>(
-  schema: GraphQLSchema,
-  permissions: PermissionsMap<TResolvers>,
-): GraphQLSchema {
-  return applyMiddleware(schema, permissions as IMiddlewareTypeMap);
-}

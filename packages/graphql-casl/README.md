@@ -158,9 +158,19 @@ import { applyPermissions } from '@vantreeseba/graphql-casl';
 const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions);
 ```
 
-`applyPermissions` wraps `graphql-middleware`'s `applyMiddleware` and keeps
-`permissions` typed as a `PermissionsMap<Resolvers>`, so a mistyped type or
-field name is caught at compile time.
+`applyPermissions` keeps `permissions` typed as a `PermissionsMap<Resolvers>`, so
+a mistyped type or field name is caught at compile time. It also re-checks the map
+against the runtime schema and throws a `PermissionsError` listing **every**
+problem at once — which is what catches rules loaded from a database, written in
+plain JavaScript, or built against a schema that has since drifted.
+
+Entries that would be silently inert are rejected rather than ignored: a rule on
+an interface or union type never runs (fields resolve against the concrete object
+type), and introspection types cannot be guarded. In an authorization library, a
+rule that quietly never runs is the worst failure mode, so it is an error.
+
+Types not named in the map are left **unguarded** — the map is a whitelist of what
+to guard, not a schema-coverage guarantee.
 
 ### 5. Persisting rules (optional)
 

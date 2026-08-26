@@ -38,15 +38,17 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
 packages/
   graphql-casl/
     src/
-      index.ts          — public API entry point (re-exports + package overview)
-      schemaTypes.ts    — type helpers derived from generated Resolvers/ResolversTypes
-      rules.ts          — graphql-middleware rule layer (Rule, PermissionsMap, accept, deny)
-      ability.ts        — CASL Action/Actions + the loose AbilityLike shape
-      graphqlAbility.ts — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
-      subjects.ts       — createSubjects / createTyped
-      createCan.ts      — factory tying a CASL ability to the rule layer
+      index.ts            — public API entry point (re-exports + package overview)
+      schemaTypes.ts      — type helpers derived from generated Resolvers/ResolversTypes
+      rules.ts            — graphql-middleware rule layer (Rule, PermissionsMap, accept, deny)
+      applyPermissions.ts — validates a PermissionsMap against the schema and applies it
+      ability.ts          — CASL Action/Actions + the loose AbilityLike shape
+      graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
+      subjects.ts         — createSubjects / createTyped
+      createCan.ts        — factory tying a CASL ability to the rule layer
     test/
       permissions.test.ts                — unit tests for the rule primitives
+      applyPermissions.test.ts           — the schema walk: enforcement + validation errors
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes

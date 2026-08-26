@@ -14,7 +14,8 @@
  *
  * Modules:
  * - `schemaTypes` — type helpers derived from generated `Resolvers`/`ResolversTypes`
- * - `rules` — the `graphql-middleware` rule layer (`Rule`, `PermissionsMap`, `applyPermissions`, `accept`, `deny`)
+ * - `rules` — the `graphql-middleware` rule layer (`Rule`, `PermissionsMap`, `accept`, `deny`)
+ * - `applyPermissions` — validates a map against the schema and applies it
  * - `ability` — CASL `Action` / `Actions` / `AbilityLike`
  * - `graphqlAbility` — the schema-typed `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
  * - `subjects` — `createSubjects` / `createTyped`
@@ -25,6 +26,7 @@
 
 export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
+export { applyPermissions, PermissionsError } from './applyPermissions.js';
 export type {
   BuildSubject,
   CreateCanOptions,
@@ -41,6 +43,6 @@ export type {
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
 export type { PermissionsMap, Rule } from './rules.js';
-export { accept, applyPermissions, deny } from './rules.js';
+export { accept, deny } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped } from './subjects.js';
