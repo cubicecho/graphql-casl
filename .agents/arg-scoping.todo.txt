@@ -248,11 +248,21 @@ TASKS
         fallbackRule pairing, and the F2 warning that a bad filter fails silently
         at the data layer rather than at the GraphQL boundary.
 [x] G8. A drizzle-graphql adapter as a documented RECIPE, not a package — see
-        open question 3. Same for a Prisma-shaped one; the leaf adapter for each
-        is roughly ten lines once G1 exists.
+        open question 3. Shipped as test/recipes/drizzleGraphql.ts (tested, 21
+        cases) plus a README pointer. CORRECTION: "roughly ten lines" was wrong,
+        and so was the first version of the README recipe, which mapped `and`,
+        `or` and `not` onto AND/OR/NOT keys. See the DIALECT FINDING below. The
+        Prisma-shaped one really is ten lines and stays inline in the README.
 [ ] G9. NEEDS USER APPROVAL (posting on another project's issue tracker).
-        Close the loop on drizzle-graphql#15 (and #27, multitenant setups, which
-        is the same need wearing a different hat) once G7 exists.
+        Close the loop on drizzle-graphql#15 once G7 exists. CORRECTION: #27 was
+        listed here as "multitenant setups, the same need wearing a different
+        hat". It is not. #27 is "Support for dynamic database (for multitenant
+        setups)" — swapping the *database client* per request. Nothing to do with
+        row scoping. Do not post there.
+        BLOCKED as of 2026-08-26: main is 20 commits ahead of origin and npm
+        still serves 1.0.0, so none of scoping, the combinators, fallbackRule,
+        accessibleBy, onResult or the envelop package is published. A comment
+        pointing at the package today describes an API that is not there.
 
 
 NON-GOALS (record so they stop being re-proposed)
@@ -328,3 +338,26 @@ AS-BUILT NOTES (2026-08-26)
 - Open question 1 (non-checkable rule in `chain`'s tail position) is UNCHANGED
   and still needs a decision; scopeArgs is rejected as a combinator operand today
   exactly like .onResult.
+
+DIALECT FINDING — drizzle-graphql 0.8.5 (verified against the published tarball)
+--------------------------------------------------------------------------------
+The generated filter inputs are far tighter than a Prisma-shaped dialect, and
+this constrains the adapter, not the library:
+- `<Table>Filters` = column fields + one `OR: [<Table>FiltersOr!]`.
+  `<Table>FiltersOr` has ONLY column fields, so OR does not nest.
+- There is NO `AND` key and NO `NOT` key. Column entries are implicitly ANDed.
+- Column operators: eq ne lt lte gt gte like notLike ilike notIlike inArray
+  notInArray isNull isNotNull, plus a column-level `OR`.
+- extractFilters throws `WHERE <table>: Cannot specify both fields and 'OR' in
+  table filters!` — so a filter may carry column entries or an OR, never both.
+- An EMPTY `OR` is dropped, i.e. it matches every row. So `nothing()` cannot be
+  `{ OR: [] }`; the recipe emits a contradiction (`isNull` + `isNotNull`) on a
+  caller-named non-nullable column instead.
+Consequences: the input type accepts disjunctive normal form and nothing else,
+with no negation above the leaves. The recipe therefore keeps every filter in
+DNF as it builds — `and` distributes over `OR`, `or` flattens, `not` pushes down
+to the leaves by De Morgan — and throws on anything unrepresentable ($regex, a
+relation path, two of the same operator on one column). Because `and`
+distributes, scopeArgs needs NO custom `merge`: the default
+`adapter.and([clientFilter, scope])` stays legal even when the client sent an OR.
+
