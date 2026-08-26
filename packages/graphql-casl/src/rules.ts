@@ -49,6 +49,17 @@ export const deny: Rule = () => {
 };
 
 /**
+ * Resolver-map keys that are *not* schema fields.
+ *
+ * `typescript-resolvers` emits `__isTypeOf` on object types and `__resolveType`
+ * on interfaces and unions. They are abstract-type discriminators, not fields, so
+ * `graphql-middleware` has nothing to wrap for them — a rule attached to one is
+ * silently dead code. {@link PermissionsMap} excludes them so that mistake is a
+ * compile error instead.
+ */
+type ResolverInternalKeys = '__isTypeOf' | '__resolveType';
+
+/**
  * The permissions map applied to a schema via {@link applyPermissions}.
  *
  * Every key is validated against your generated `Resolvers`: type names come
@@ -56,6 +67,10 @@ export const deny: Rule = () => {
  * mistyped or unknown type/field is a compile error. Each type key is optional
  * and maps to either a single {@link Rule} (applied to every field of the type)
  * or a per-field map of rules.
+ *
+ * The abstract-type discriminators `__isTypeOf` and `__resolveType` are excluded
+ * from the field keys — `graphql-middleware` never wraps them, so a rule attached
+ * to one would never run.
  *
  * Because the keys are validated this is structurally narrower than
  * `graphql-middleware`'s `IMiddlewareTypeMap`; pass it through
@@ -74,7 +89,10 @@ export type PermissionsMap<TResolvers> = {
   [TypeName in keyof TResolvers]?:
     | Rule
     | {
-        [FieldName in keyof NonNullable<TResolvers[TypeName]>]?: Rule;
+        [FieldName in Exclude<
+          keyof NonNullable<TResolvers[TypeName]>,
+          ResolverInternalKeys
+        >]?: Rule;
       };
 };
 

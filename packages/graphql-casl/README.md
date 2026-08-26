@@ -140,6 +140,16 @@ export const permissions: PermissionsMap<Resolvers> = {
 > (look up by `id` **and** `userId`), derive the owner from `context` rather than
 > args, or enforce ownership in your data layer.
 
+> ⚠️ **A bare subject name does not evaluate conditions.**
+> `ability.can('update', 'Note')` asks CASL whether updating a Note is *possible
+> at all*, not whether it is permitted on a particular one. Given
+> `can('update', 'Note', { userId })`, the bare check returns `true` for every
+> caller. Omitting `getSubjectData` there is not a type error, so `createCan`
+> detects it at request time and warns once per rule; pass
+> `{ onUnconditionedSubject: 'throw' }` to make it a denial, or `'allow'` when the
+> possibility check is deliberate (a list field whose rows you filter inside the
+> resolver).
+
 ### 4. Apply to the schema
 
 ```ts
