@@ -83,6 +83,13 @@ A soundness pass, taken from the lists above:
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
 
+- **Reaching an external policy engine** (`ecosystem-parity` E12) — documented,
+  not built: a `rule()` check can await OpenFGA/Cerbos/OPA for the
+  relationship-derived permissions CASL conditions cannot express, and compose
+  with the ability-backed rules. The README covers the two things that are easy
+  to get wrong — a PDP outage must not be reported as a denial, and the pending
+  promise (not the resolved value) is what to cache per request.
+
 - **An envelop/Yoga plugin** (`ecosystem-parity` E6) —
   [`@vantreeseba/graphql-casl-envelop`](../graphql-casl-envelop) enforces the
   same map through envelop instead of `graphql-middleware`, for hosts where the

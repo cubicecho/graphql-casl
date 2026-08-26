@@ -243,7 +243,7 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
          Source: Pothos disableScopeAuth. Small, cheap, and consumers will
          otherwise hand-roll it badly (or worse, ship the hand-rolled version).
 
-[ ] E12. EXTERNAL PDP ESCAPE HATCH — OPA / Cerbos / OpenFGA / Oso.
+[x] E12. EXTERNAL PDP ESCAPE HATCH — OPA / Cerbos / OpenFGA / Oso.
          CASL cannot express relationship-derived (ReBAC / Zanzibar-style)
          permissions: "can edit any doc in a folder they own". This is the most
          common structural objection to a CASL-based approach.
@@ -252,6 +252,20 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
          a code one — a worked example of a rule that awaits a PDP, plus a note
          on caching the decision per request (S4b), neutralizes the objection at
          essentially zero cost. Highest doc-value item in this file.
+
+         DONE (2026-08) — README section "Delegating to an external policy
+         engine". Documentation only, no code: a `rule()` check awaiting an
+         OpenFGA-style check, composed with the ability-backed rules via
+         `chain` so the network call runs last. Two points made explicitly
+         because both are easy to get wrong:
+           - a PDP OUTAGE IS NOT A DENIAL. A check that throws propagates
+             unchanged rather than becoming Forbidden, so the example returns a
+             string on a negative decision and never catches. Catching and
+             returning false reports an unreachable service as "you may not".
+           - cache the PENDING PROMISE per request, not the resolved value, so
+             concurrent sibling fields share one round trip (S4b's shape).
+         Also cross-linked accessibleBy: a PDP's list-objects endpoint plays the
+         same role for list fields that accessibleBy plays for CASL rules.
 
 
 EXPLICIT NON-GOALS (record so they stop being re-proposed)
