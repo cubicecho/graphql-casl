@@ -23,7 +23,7 @@ npm install @casl/ability graphql graphql-middleware
 |---|---|
 | `createGraphQLAbility<SubjectMap>()` | Returns a CASL `AbilityBuilder` typed against your schema — `can`/`cannot` conditions are checked against each subject's fields — with `__typename` detection applied by `build()`. |
 | `buildGraphQLAbility<SubjectMap>(rules, options?)` | Rebuilds an ability from stored `GraphQLRule`s (e.g. rules persisted in a database and loaded at startup). |
-| `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. |
+| `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for subject detection. |
 | `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives. |
@@ -136,9 +136,10 @@ export const permissions: PermissionsMap<Resolvers> = {
 > (`args.userId`) therefore validates what the **client asserted**, not the real
 > record. If the resolver then targets a *different* arg (e.g. `args.id`), a
 > caller can pass their own `userId` (to pass the check) but someone else's `id`
-> — an IDOR. Make the resolver **scope by the same field the rule authorized**
-> (look up by `id` **and** `userId`), derive the owner from `context` rather than
-> args, or enforce ownership in your data layer.
+> — an IDOR. Use [`canUser.onResult`](#post-execution-rules) to authorize the
+> record the resolver actually loaded, make the resolver **scope by the same
+> field the rule authorized** (look up by `id` **and** `userId`), derive the
+> owner from `context` rather than args, or enforce ownership in your data layer.
 
 > ⚠️ **A bare subject name does not evaluate conditions.**
 > `ability.can('update', 'Note')` asks CASL whether updating a Note is *possible
@@ -149,6 +150,48 @@ export const permissions: PermissionsMap<Resolvers> = {
 > `{ onUnconditionedSubject: 'throw' }` to make it a denial, or `'allow'` when the
 > possibility check is deliberate (a list field whose rows you filter inside the
 > resolver).
+
+### Post-execution rules
+
+`canUser.onResult` runs the resolver first and checks the ability against **what
+it returned**, so conditions are evaluated on the real record rather than on what
+the client asserted. This is the direct fix for the IDOR shape above.
+
+```ts
+export const permissions: PermissionsMap<Resolvers> = {
+  Query: {
+    // authorizes the Note the resolver actually loaded, not args.id
+    note: canUser.onResult(Actions.read, Subject.Note),
+  },
+};
+```
+
+The resolved value is the subject data by default. Pass a `getSubjectData` to
+unwrap it or to authorize a projection; it receives each candidate individually,
+so a list calls it once per element.
+
+```ts
+notes: canUser.onResult(Actions.read, Subject.Note, (row: NoteRow) => ({
+  userId: row.ownerId,
+})),
+```
+
+Semantics worth knowing:
+
+- **Lists are all-or-nothing.** Every element must pass or the whole field is
+  denied. Filtering a list down to the permitted rows is a different operation.
+- **`null` passes through.** There is no subject to authorize.
+- **A tagger is required.** `onResult` needs `buildSubject` on `createCan` —
+  resolved rows carry no `__typename`, so without it CASL cannot classify them.
+  Calling `onResult` without one throws when the map is built, not at request time.
+
+> ⚠️ **The resolver runs before the check.** That is inherent — the check needs
+> the result — so this form is unsuitable for anything with side effects. A rule
+> built with `onResult` therefore **refuses to guard a root mutation field**, and
+> refuses it *before* calling the resolver, so the mutation never happens. For
+> mutations, check the arguments up front with `canUser(...)`, or write a `Rule`
+> by hand. Side-effecting *queries* (view counters and the like) are not detected
+> — the same caution applies to them.
 
 ### 4. Apply to the schema
 

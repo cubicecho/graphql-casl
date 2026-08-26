@@ -3,6 +3,7 @@
  * `graphql-middleware` {@link Rule} layer.
  */
 
+import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
 import type { Rule } from './rules.js';
 
@@ -75,6 +76,22 @@ function unconditionedMessage(action: Action, subject: string): string {
 }
 
 /**
+ * The subject candidates in a resolved value: the value itself, or each non-null
+ * element when the field resolved to a list. `null` yields none — a field that
+ * resolved to nothing has no subject to authorize.
+ */
+function subjectsOf(result: unknown): unknown[] {
+  if (result == null) return [];
+  return Array.isArray(result) ? result.filter((item) => item != null) : [result];
+}
+
+/** Whether the guarded field is a root mutation field. */
+function isMutationField(info: GraphQLResolveInfo): boolean {
+  const mutationType = info.schema.getMutationType();
+  return mutationType != null && info.parentType.name === mutationType.name;
+}
+
+/**
  * A subject tagger, typically `createTyped`'s `typed`: turns a subject name plus
  * field values into a `__typename`-tagged instance CASL can classify.
  *
@@ -98,13 +115,66 @@ export type BuildSubject<TSubjectMap extends Record<string, object>> = <
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type RequireCan<TSubjectMap extends Record<string, object>> = <
+export interface RequireCan<TSubjectMap extends Record<string, object>> {
+  <
+    K extends keyof TSubjectMap & string,
+    TArgs extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    action: Action,
+    subject: K,
+    getSubjectData?: (args: TArgs) => Partial<TSubjectMap[K]>,
+  ): Rule;
+
+  /**
+   * Builds a rule that authorizes the **resolved value** instead of the args.
+   *
+   * @see {@link RequireCanOnResult}
+   */
+  readonly onResult: RequireCanOnResult<TSubjectMap>;
+}
+
+/**
+ * Builds a rule that runs the resolver first and authorizes what it returned.
+ *
+ * The pre-execution form checks what the **client asserted** — a condition built
+ * from `args.userId` says nothing about the record the resolver actually loads,
+ * which is how a caller passes their own `userId` alongside someone else's `id`.
+ * This form has the real record in hand, so `can('read', typed('Note', note))`
+ * evaluates the ability's conditions against the row that is about to be
+ * returned. That is what CASL conditions are for.
+ *
+ * When the field resolves to a list, every element must pass or the whole field
+ * is denied. Filtering a list down to the permitted rows is a different
+ * operation, and is not what a gate does. A `null` result is returned as-is —
+ * there is no subject to authorize.
+ *
+ * Without `getSubjectData` the resolved value *is* the subject data, which is the
+ * common case. Supply one to pull the subject out of a wrapper, or to authorize
+ * a projection of the record. It receives each candidate individually, so a list
+ * calls it once per element.
+ *
+ * **The resolver runs before the check.** That is inherent — the check needs the
+ * result. It makes this form unsuitable for anything with side effects, so a rule
+ * built here refuses to guard a root mutation field, before the resolver runs
+ * rather than after. For those, check the args up front with the pre-execution
+ * form, or write a {@link Rule} by hand.
+ *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @example
+ * ```ts
+ * Query: {
+ *   // authorizes the Note the resolver actually loaded, not `args.id`
+ *   note: canUser.onResult(Actions.read, Subject.Note),
+ * },
+ * ```
+ */
+export type RequireCanOnResult<TSubjectMap extends Record<string, object>> = <
   K extends keyof TSubjectMap & string,
-  TArgs extends Record<string, unknown> = Record<string, unknown>,
+  TResult = unknown,
 >(
   action: Action,
   subject: K,
-  getSubjectData?: (args: TArgs) => Partial<TSubjectMap[K]>,
+  getSubjectData?: (result: TResult) => Partial<TSubjectMap[K]>,
 ) => Rule;
 
 /**
@@ -215,7 +285,15 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     return pending;
   }
 
-  return function requireCan<
+  /** Shared prologue: authenticate, then get the request's ability. */
+  async function authorize(context: TContext): Promise<AbilityLike> {
+    if (!isAuthenticated(context)) {
+      throw new Error('Not authenticated');
+    }
+    return resolveAbility(context);
+  }
+
+  function requireCan<
     K extends keyof TSubjectMap & string,
     TArgs extends Record<string, unknown> = Record<string, unknown>,
   >(action: Action, subject: K, getSubjectData?: (args: TArgs) => Partial<TSubjectMap[K]>): Rule {
@@ -235,10 +313,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     // Warn at most once per rule instead of once per field resolution.
     let warned = false;
     return async (resolve, parent, args, context, info) => {
-      if (!isAuthenticated(context)) {
-        throw new Error('Not authenticated');
-      }
-      const ability = await resolveAbility(context);
+      const ability = await authorize(context);
       const instance =
         getSubjectData && buildSubject
           ? buildSubject(subject, getSubjectData(args as TArgs))
@@ -265,5 +340,50 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       }
       return resolve(parent, args, context, info);
     };
+  }
+
+  requireCan.onResult = function onResult<K extends keyof TSubjectMap & string, TResult = unknown>(
+    action: Action,
+    subject: K,
+    getSubjectData?: (result: TResult) => Partial<TSubjectMap[K]>,
+  ): Rule {
+    // The resolved value has no `__typename` of its own to rely on — GraphQL
+    // resolvers routinely return plain rows — so the tagger is required, not
+    // optional as it is for the pre-execution form.
+    if (!buildSubject) {
+      throw new Error(
+        'createCan: `onResult` requires a `buildSubject` tagger (e.g. `typed` from ' +
+          '`createTyped`) to be passed to `createCan`; without it the resolved value has no ' +
+          '`__typename` and CASL cannot classify it.',
+      );
+    }
+    const tag = buildSubject;
+    return async (resolve, parent, args, context, info) => {
+      const ability = await authorize(context);
+
+      // Checked before resolving, so the mutation does not run at all. Denying a
+      // mutation after the fact would report a failure that already happened.
+      if (isMutationField(info)) {
+        throw new Error(
+          `graphql-casl: \`onResult\` cannot guard the mutation field \`${info.parentType.name}.${info.fieldName}\`. ` +
+            'It authorizes the resolved value, so the resolver — and its side effects — would ' +
+            'have to run before the check could deny it. Check the arguments up front with ' +
+            '`canUser(action, subject, getSubjectData)`, or write a `Rule` by hand.',
+        );
+      }
+
+      const result = await resolve(parent, args, context, info);
+      for (const candidate of subjectsOf(result)) {
+        const data = getSubjectData
+          ? getSubjectData(candidate as TResult)
+          : (candidate as Partial<TSubjectMap[K]>);
+        if (!ability.can(action, tag(subject, data))) {
+          throw new Error('Forbidden');
+        }
+      }
+      return result;
+    };
   };
+
+  return requireCan as RequireCan<TSubjectMap>;
 }

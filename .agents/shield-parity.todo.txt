@@ -44,7 +44,7 @@ TIER 1 — structural (no workaround exists today)
         THROWING — there is no way to ask it "would you pass?" without letting
         it run the resolver. See DESIGN DECISION below.
 
-[ ] S2. fallbackRule (whitelist mode).
+[x] S2. DONE (applyPermissions options.fallbackRule). fallbackRule (whitelist mode).
         Shield: shield.ts normalizeOptions defaults it to `allow`; setting
         `fallbackRule: deny` is how you get deny-by-default across a schema.
         Here: absent. Any type/field NOT named in the PermissionsMap is
@@ -53,7 +53,7 @@ TIER 1 — structural (no workaround exists today)
         ABILITIES, not about schema coverage. Those are different guarantees
         and the docs currently blur them.
 
-[ ] S3. Wildcard '*' field key.
+[x] S3. DONE (graphql-authz precedence, both positions). Wildcard '*' key.
         Shield: generator.ts applyRuleToType pulls rules['*'] as the per-type
         default, strips it, then validates the remaining keys against the
         schema's field map.
@@ -152,7 +152,7 @@ TIER 3 — smaller
          Shield: generator.ts applyRuleToSchema.
          Here: absent; PermissionsMap must be keyed per type.
 
-[ ] S13. RUNTIME schema validation.
+[x] S13. DONE (PermissionsError aggregates every problem). RUNTIME validation.
          Shield: generator.ts throws ValidationError naming the types/fields
          that don't exist in the schema ("It seems like you have applied rules
          to X.y fields but Shield cannot find them in your schema.").
@@ -166,7 +166,8 @@ TIER 3 — smaller
          N/A today because rules are anonymous. Becomes relevant the moment
          rules get names for caching (S4b).
 
-[ ] S15. Introspection-type exclusion (isIntrospectionType) when applying
+[x] S15. DONE (free — graphql-middleware already skips them, and the walk
+         skips them too). Introspection-type exclusion (isIntrospectionType) when applying
          rules broadly. Becomes REQUIRED the moment S2 or S3 exists, otherwise
          a fallbackRule would guard __Schema / __Type and break introspection.
 
@@ -217,10 +218,11 @@ effective fallback error; string -> new Error(string); Error -> throw it.
 SUGGESTED ORDER
 ---------------
 1. [DONE] S4a  (memoize getAbility — trivial, no API change, N-times win)
-2. S5 + E2/E1  (fragments + post-execution rules; closes the documented IDOR
-   gap AND TODO.md item 2 in one architectural move)
-3. S2 + S3 + S15  (fallbackRule + wildcards; makes "deny by default" a real
-   schema-coverage guarantee rather than a claim about abilities)
+2. [PARTLY DONE] E1 shipped as createCan.onResult, WITHOUT needing S5/E2 — a
+   rule can await resolve() and check the result. The IDOR gap is closed.
+   S5 + E2 (fragments) still to do; they are what TODO.md item 2 needs.
+3. [DONE] S2 + S3 + S13 + S15  (fallbackRule + wildcards + runtime schema
+   validation; "deny by default" is now a real schema-coverage guarantee)
 4. S1 + S16  (combinators, per the design decision above)
 5. S6-S10  (error control)
 6. S11, S12, S13/P1, S14  (the rest)
@@ -228,9 +230,9 @@ SUGGESTED ORDER
 
 OPEN QUESTIONS
 --------------
-- Do S2/S3 justify rewriting applyPermissions from a one-line cast into a real
-  schema walk (shield's generator.ts shape)? They can't be done without it.
-  That's the single biggest structural commitment in this file.
+- [ANSWERED: yes, done] Do S2/S3 justify rewriting applyPermissions from a
+  one-line cast into a real schema walk (shield's generator.ts shape)?
+  src/applyPermissions.ts is that walk. S13 fell out of it for free.
 - Should the shield-default error-masking behavior (S8) become the default here
   too? It is the safer default but it IS a breaking behavior change for anyone
   relying on internal errors surfacing.

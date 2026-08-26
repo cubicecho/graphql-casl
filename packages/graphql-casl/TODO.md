@@ -51,6 +51,16 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Post-execution rules** (`ecosystem-parity` E1) — `canUser.onResult(action,
+  subject, getSubjectData?)` runs the resolver and checks the ability against the
+  value it returned, so conditions are evaluated on the real record instead of on
+  a client-asserted arg. That closes the IDOR gap the README documents. It
+  refuses root mutation fields *before* resolving, so no side effect escapes.
+- **`applyPermissions` is a real schema walk**, not a cast: it validates the map
+  against the runtime schema (`shield-parity` S13, aggregating every problem),
+  supports `fallbackRule` (S2 / `ecosystem-parity` E9) and `'*'` wildcards in
+  either position with graphql-authz's precedence (S3 / E8), and skips
+  introspection types (S15).
 - **`__isTypeOf` / `__resolveType` are excluded from `PermissionsMap`**
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.

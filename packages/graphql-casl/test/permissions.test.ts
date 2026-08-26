@@ -1,4 +1,4 @@
-import type { GraphQLResolveInfo } from 'graphql';
+import { GraphQLObjectType, type GraphQLResolveInfo, GraphQLSchema, GraphQLString } from 'graphql';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type Action,
@@ -11,6 +11,7 @@ import {
   deny,
   type GraphQLAbility,
   type PermissionsMap,
+  type RequireCan,
   type Rule,
 } from '../src/index.js';
 
@@ -381,5 +382,135 @@ describe('PermissionsMap keys', () => {
       Note: { '*': rule, id: rule },
     };
     expect(permissions['*']).toBeDefined();
+  });
+});
+
+describe('createCan.onResult — post-execution rules', () => {
+  const canUser = createCan<TestContext, ExampleSubjectMap>(
+    async (ctx) => buildAbility(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typed,
+  );
+
+  // onResult reads info.schema/info.parentType to refuse root mutation fields,
+  // so these tests need a real-ish info object rather than the empty cast above.
+  const schema = new GraphQLSchema({
+    query: new GraphQLObjectType({
+      name: 'Query',
+      fields: { note: { type: GraphQLString } },
+    }),
+    mutation: new GraphQLObjectType({
+      name: 'Mutation',
+      fields: { updateNote: { type: GraphQLString } },
+    }),
+  });
+
+  function infoFor(typeName: 'Query' | 'Mutation', fieldName: string): GraphQLResolveInfo {
+    const parentType = typeName === 'Query' ? schema.getQueryType() : schema.getMutationType();
+    return { schema, parentType, fieldName } as unknown as GraphQLResolveInfo;
+  }
+
+  const queryInfo = infoFor('Query', 'note');
+
+  it('throws when the context is not authenticated', async () => {
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(rule(vi.fn(), null, {}, {}, queryInfo)).rejects.toThrow('Not authenticated');
+  });
+
+  it('authorizes the resolved record, not the args', async () => {
+    // The classic IDOR shape: the client asserts its own userId in args, but the
+    // resolver loads someone else's note. The pre-execution form passes here.
+    const args = { id: 'n1', userId: 'u1' };
+    const preExec = canUser(Actions.update, 'Note', (a: typeof args) => ({ userId: a.userId }));
+    await expect(
+      preExec(vi.fn().mockResolvedValue('leaked'), null, args, { userId: 'u1' }, queryInfo),
+    ).resolves.toBe('leaked');
+
+    const resolve = vi.fn().mockResolvedValue({ id: 'n1', userId: 'someone-else' });
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(rule(resolve, null, args, { userId: 'u1' }, queryInfo)).rejects.toThrow(
+      'Forbidden',
+    );
+    expect(resolve).toHaveBeenCalledOnce();
+  });
+
+  it('allows when the resolved record matches the conditions', async () => {
+    const note = { id: 'n1', userId: 'u1' };
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(vi.fn().mockResolvedValue(note), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toBe(note);
+  });
+
+  it('applies getSubjectData to each candidate', async () => {
+    const rule = canUser.onResult(
+      Actions.update,
+      'Note',
+      (row: { note: { id: string; userId: string } }) => row.note,
+    );
+    const wrapped = { note: { id: 'n1', userId: 'u1' } };
+    await expect(
+      rule(vi.fn().mockResolvedValue(wrapped), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toBe(wrapped);
+  });
+
+  it('denies the whole field when any list element fails', async () => {
+    const list = [
+      { id: 'n1', userId: 'u1' },
+      { id: 'n2', userId: 'someone-else' },
+    ];
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
+    ).rejects.toThrow('Forbidden');
+  });
+
+  it('allows a list when every element passes', async () => {
+    const list = [
+      { id: 'n1', userId: 'u1' },
+      { id: 'n2', userId: 'u1' },
+    ];
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toBe(list);
+  });
+
+  it('returns null and empty lists as-is — there is no subject to authorize', async () => {
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(vi.fn().mockResolvedValue(null), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toBeNull();
+    await expect(
+      rule(vi.fn().mockResolvedValue([]), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toEqual([]);
+  });
+
+  it('skips null elements inside a list', async () => {
+    const list = [null, { id: 'n1', userId: 'u1' }];
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
+    ).resolves.toBe(list);
+  });
+
+  it('refuses a root mutation field before the resolver runs', async () => {
+    const resolve = vi.fn();
+    const rule = canUser.onResult(Actions.update, 'Note');
+    await expect(
+      rule(resolve, null, {}, { userId: 'u1' }, infoFor('Mutation', 'updateNote')),
+    ).rejects.toThrow(/cannot guard the mutation field `Mutation.updateNote`/);
+    // The point of checking up front: the side effect never happened.
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('throws at construction without a buildSubject tagger', () => {
+    const canBare = createCan<TestContext, ExampleSubjectMap>(
+      async (ctx) => buildAbility(ctx.userId),
+      (ctx) => ctx.userId != null,
+    ) as unknown as RequireCan<ExampleSubjectMap>;
+    expect(() => canBare.onResult(Actions.update, 'Note')).toThrow(
+      /`onResult` requires a `buildSubject` tagger/,
+    );
   });
 });

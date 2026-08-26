@@ -18,7 +18,18 @@ graphql-query-complexity / graphql-depth-limit (query-cost hardening, not
 authorization); Hasura & PostGraphile RLS (database-layer, different niche).
 
 
-[ ] E1. POST-EXECUTION RULES — authorize the RESOLVED ENTITY, not the
+[x] E1. POST-EXECUTION RULES — DONE (createCan.onResult). Authorizes the
+        resolved value; lists are all-or-nothing; null passes through; requires
+        a buildSubject tagger (throws at construction without one); REFUSES root
+        mutation fields BEFORE calling the resolver, so the side effect never
+        happens. Note the analysis below was wrong on one point: this needed NO
+        architectural change and did NOT depend on E2 — the middleware shape
+        already lets a rule await resolve() and then check. Side-effecting
+        QUERIES remain undetectable and are documented as a caution.
+        Still open from this item: masking a denied list ITEM instead of denying
+        the field (see E4 / accessibleby.todo.txt).
+
+[ ] E1-orig. POST-EXECUTION RULES — authorize the RESOLVED ENTITY, not the
         client-asserted args.
         Source: graphql-authz postExecRule / PostExecutionRule. Its rules get
         (context, fieldArgs, RESULT, parent).
@@ -178,10 +189,12 @@ not as a pure deficit list.
 
 OPEN QUESTIONS
 --------------
-- E1 (post-execution rules) is architecturally the biggest item here and cannot
-  be done inside the current pre-resolver middleware shape without also doing
-  E2. Is closing the documented IDOR gap worth that? (Recommendation: yes — it
-  is currently a KNOWN limitation shipped with a warning and a test.)
+- [ANSWERED] E1 (post-execution rules) is architecturally the biggest item here
+  and cannot be done inside the current pre-resolver middleware shape without
+  also doing E2. Is closing the documented IDOR gap worth that?
+  Answer: the premise was false. A rule receives (resolve, parent, args, ctx,
+  info) and can simply await resolve() before checking, so E1 shipped WITHOUT
+  E2. E2 is still wanted, for parent-aware field rules.
 - E5 (directives) and E6 (envelop plugin) are each a new package. Which, if
   either, is worth the maintenance surface for a solo-maintained project?
 - E3: should CASL field-level permissions REPLACE hand-listed field rules in
