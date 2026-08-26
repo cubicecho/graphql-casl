@@ -29,7 +29,10 @@ accessibleBy(ability, action, subject, adapter?) -> filter | null.
      single rule, operators preserved, OR of several, allow-all, bounded
      allow-all, bounded branches, an outranked exclusion, an unconditioned
      exclusion from both directions, the row-by-row cross-check, and three
-     adapter tests.
+     adapter tests. Plus 3 integration tests in
+     test/integration/permissions.integration.test.ts: a list resolver that
+     fetches only the rows the caller may touch, an unconditioned rule, and the
+     deny-all case (which never queries at all).
   B5 CONFIRMED but MOOT — no import from '@casl/ability/extra' at all, so no
      new peer dep and no import path to document. README + AGENTS.md updated.
 

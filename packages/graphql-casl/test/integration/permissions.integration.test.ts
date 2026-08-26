@@ -9,6 +9,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   Actions,
   accept,
+  accessibleBy,
   applyPermissions,
   createCan,
   createGraphQLAbility,
@@ -221,5 +222,69 @@ describe('permissions middleware against an executable schema', () => {
     const result = await run('mutation { deleteNote(id: "n1") }', ctx);
     expect(result.errors).toBeUndefined();
     expect(result.data?.deleteNote).toBe(true);
+  });
+});
+
+/**
+ * The row-level counterpart: instead of gating the whole `notes` field, the
+ * resolver asks the ability which rows it may fetch.
+ */
+describe('accessibleBy in a list resolver', () => {
+  /** A stand-in data layer: equality leaves plus the boolean operators. */
+  function matches(row: Note, filter: unknown): boolean {
+    if (filter === null) return false;
+    const query = filter as Record<string, unknown>;
+    if (Array.isArray(query.$or)) return query.$or.some((part) => matches(row, part));
+    if (Array.isArray(query.$and)) return query.$and.every((part) => matches(row, part));
+    if (Array.isArray(query.$nor)) return !query.$nor.some((part) => matches(row, part));
+    return Object.entries(query).every(([field, value]) => row[field as keyof Note] === value);
+  }
+
+  function findNotes(filter: unknown): Note[] {
+    return filter === null ? [] : NOTES.filter((note) => matches(note, filter));
+  }
+
+  async function readableNotes(userId: string | undefined) {
+    const ability = defineAbilitiesFor(userId);
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      makeExecutableSchema({
+        typeDefs: /* GraphQL */ `
+          type Note {
+            id: ID!
+            body: String!
+          }
+          type Query {
+            notes: [Note!]!
+          }
+        `,
+        resolvers: {
+          Query: {
+            notes: () => findNotes(accessibleBy(ability, Actions.read, 'Note')),
+          },
+        },
+      }),
+      { Query: { notes: accept } },
+    );
+    const result = await graphql({ schema, source: '{ notes { id } }' });
+    expect(result.errors).toBeUndefined();
+    return (result.data?.notes as { id: string }[]).map((note) => note.id);
+  }
+
+  it('returns only the rows the caller may read', async () => {
+    // `update` is the conditioned action here, so filter on it.
+    const ability = defineAbilitiesFor('alice');
+    expect(findNotes(accessibleBy(ability, Actions.update, 'Note')).map((n) => n.id)).toEqual([
+      'n1',
+    ]);
+  });
+
+  it('returns every row when the rule is unconditioned', async () => {
+    expect(await readableNotes('alice')).toEqual(['n1', 'n2']);
+  });
+
+  it('returns nothing for a caller with no rules, without querying', async () => {
+    const ability = defineAbilitiesFor(undefined);
+    expect(accessibleBy(ability, Actions.read, 'Note')).toBeNull();
+    expect(await readableNotes(undefined)).toEqual([]);
   });
 });
