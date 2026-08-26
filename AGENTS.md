@@ -54,6 +54,10 @@ packages/
                             per-field rule lookup, and applies it via graphql-middleware
       ability.ts          — CASL Action/Actions + the loose AbilityLike shape
       accessibleBy.ts     — folds an ability into a query filter (row-level filtering)
+      conditions.ts       — the FilterAdapter union (skeleton/leaf) + the conditions walker
+      scoping.ts          — OPTIONAL subpath export `/scoping`: scopeArgs rewrites a field's
+                            filter argument instead of allowing or denying the field
+      internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       subjects.ts         — createSubjects / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
@@ -62,10 +66,12 @@ packages/
       applyPermissions.test.ts           — the schema walk: enforcement + validation errors
       combinators.test.ts                — rule(), the combinators, operand validation
       accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
+      conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       integration/permissions.integration.test.ts — end-to-end test against an executable schema
+      integration/scoping.integration.test.ts     — scopeArgs against a generated-CRUD-shaped schema
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests

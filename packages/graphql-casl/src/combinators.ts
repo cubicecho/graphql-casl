@@ -29,8 +29,9 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
       throw new Error(
         `graphql-casl: \`${combinator}()\` operand ${index} is not a checkable rule, so its ` +
           'verdict cannot be evaluated without also running the resolver. Build it with `rule()` ' +
-          'or `createCan(...)`, and note that `createCan(...).onResult` rules are never ' +
-          'combinable — they need the resolved value to decide.',
+          'or `createCan(...)`, and note that `createCan(...).onResult` and `scopeArgs(...)` ' +
+          'rules are never combinable — one needs the resolved value to decide, the other ' +
+          'decides by rewriting the arguments and calling the resolver itself.',
       );
     }
     return operand.check;

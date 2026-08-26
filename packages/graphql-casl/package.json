@@ -31,7 +31,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./scoping": {
+      "types": "./dist/scoping.d.ts",
+      "import": "./dist/scoping.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

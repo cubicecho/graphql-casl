@@ -8,6 +8,7 @@
  */
 
 import {
+  type GraphQLField,
   type GraphQLNamedType,
   type GraphQLOutputType,
   type GraphQLResolveInfo,
@@ -27,6 +28,7 @@ import {
   type IMiddlewareFieldMap,
   type IMiddlewareTypeMap,
 } from 'graphql-middleware';
+import { SCOPE_INFO, type ScopeInfo } from './internal.js';
 import { denialKindOf, type PermissionsMap, type Rule } from './rules.js';
 
 /** The wildcard key, in either the type or the field position. */
@@ -84,10 +86,16 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
   const problems: string[] = [];
   const typeMap = schema.getTypeMap();
 
-  const guardableFields = new Set<string>();
+  // Field name -> every object-type field with that name, so a `*`-keyed rule
+  // can be checked against all the fields it would actually guard.
+  const guardableFields = new Map<string, AnyField[]>();
   for (const type of Object.values(typeMap)) {
     if (isObjectType(type) && !isIntrospectionType(type)) {
-      for (const fieldName of Object.keys(type.getFields())) guardableFields.add(fieldName);
+      for (const field of Object.values(type.getFields())) {
+        const seen = guardableFields.get(field.name);
+        if (seen) seen.push(field);
+        else guardableFields.set(field.name, [field]);
+      }
     }
   }
 
@@ -100,17 +108,26 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
       if (!isRule(entry)) {
         for (const [fieldName, rule] of Object.entries(entry)) {
           if (rule === undefined || fieldName === WILDCARD) continue;
-          if (!guardableFields.has(fieldName)) {
+          const targets = guardableFields.get(fieldName);
+          if (!targets) {
             problems.push(
               `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
             );
           } else if (!isRule(rule)) {
             problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
+          } else {
+            const problem = scopeProblem(rule, `*.${fieldName}`, targets);
+            if (problem) problems.push(problem);
           }
         }
         const wildRule = entry[WILDCARD];
         if (wildRule !== undefined && !isRule(wildRule)) {
           problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
+        } else if (wildRule !== undefined && scopeTargetOf(wildRule)) {
+          problems.push(
+            'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
+              'every type. Attach the scoping rule to the fields it filters.',
+          );
         }
       }
       continue;
@@ -146,11 +163,51 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
       }
       if (!isRule(rule)) {
         problems.push(`Rule for \`${typeName}.${fieldName}\` is ${typeof rule}, not a function.`);
+        continue;
       }
+      const targets =
+        fieldName === WILDCARD ? Object.values(fields) : [fields[fieldName] as AnyField];
+      const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
+      if (problem) problems.push(problem);
     }
   }
 
   return problems;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: any field of any type is a target
+type AnyField = GraphQLField<any, any>;
+
+/** The argument an argument-scoping rule injects into, if it is one. */
+function scopeTargetOf(rule: unknown): string | undefined {
+  const info = (rule as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
+  return info?.into;
+}
+
+/**
+ * Checks that every field a scoping rule guards actually has the argument the
+ * rule injects into.
+ *
+ * This matters more than a normal typo check: a rule runs *downstream* of
+ * GraphQL's input coercion, so an injected argument is never validated. Writing
+ * a filter into an argument the field does not declare fails silently — the
+ * resolver ignores it and the field returns unscoped rows.
+ */
+function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | undefined {
+  const into = scopeTargetOf(rule);
+  if (into === undefined) return undefined;
+  const missing = targets.filter((field) => !field.args.some((arg) => arg.name === into));
+  if (missing.length === 0) return undefined;
+  const names = missing.map((field) => `\`${field.name}\``);
+  const listed =
+    names.length > 4
+      ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`
+      : names.join(', ');
+  return (
+    `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
+    `${listed} ${missing.length === 1 ? 'has' : 'have'} no such argument. ` +
+    'An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.'
+  );
 }
 
 /** Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand. */

@@ -10,11 +10,13 @@
  *
  * The filter is deliberately *not* tied to a database. The default is a
  * mongo-style tree, matching the operators CASL conditions are already written
- * in; a {@link FilterAdapter} swaps the boolean skeleton for another dialect.
+ * in; a {@link FilterAdapter} swaps the dialect — a `SkeletonAdapter` replaces
+ * the boolean combinators, a `LeafAdapter` replaces the comparisons as well.
  */
 
 import type { MongoQuery } from '@casl/ability';
 import type { Action } from './ability.js';
+import { type FilterAdapter, ruleTranslator } from './conditions.js';
 import type { GraphQLAbility } from './graphqlAbility.js';
 
 /**
@@ -32,45 +34,14 @@ export type AccessibleFilter<T> =
   | { $and: AccessibleFilter<T>[] }
   | { $nor: AccessibleFilter<T>[] };
 
-/**
- * Builds the filter dialect {@link accessibleBy} produces.
- *
- * CASL's rules are a priority-ordered switch; a query is flat boolean logic.
- * The adapter supplies the three combinators that translation needs, so the
- * fold itself stays dialect-agnostic.
- *
- * **The adapter controls the boolean skeleton, not the leaves.** A rule's
- * conditions are passed through as written, so a rule using CASL's mongo
- * operators (`{ status: { $in: [...] } }`) still yields `$in` in a Prisma-shaped
- * tree. Either write conditions in the target dialect's terms, or translate the
- * leaves inside `rule`.
- *
- * @typeParam TFilter - The filter type this dialect produces.
- */
-export interface FilterAdapter<TFilter> {
-  /**
-   * One rule's conditions as a filter. An `inverted` rule (`cannot`) must come
-   * back **negated** — it is a restriction, not a permission.
-   */
-  rule(conditions: object, inverted: boolean): TFilter;
-  /** All of these must hold. */
-  and(filters: TFilter[]): TFilter;
-  /** Any of these may hold. */
-  or(filters: TFilter[]): TFilter;
-  /** The filter that matches every row — no restriction at all. */
-  everything(): TFilter;
-}
-
-/** The default, mongo-style dialect. Single-element groups are not wrapped. */
+/** The default, mongo-style dialect. */
 const mongoAdapter: FilterAdapter<AccessibleFilter<object>> = {
   rule: (conditions, inverted) =>
     inverted
       ? { $nor: [conditions as AccessibleFilter<object>] }
       : (conditions as AccessibleFilter<object>),
-  and: (filters) =>
-    filters.length === 1 ? (filters[0] as AccessibleFilter<object>) : { $and: filters },
-  or: (filters) =>
-    filters.length === 1 ? (filters[0] as AccessibleFilter<object>) : { $or: filters },
+  and: (filters) => ({ $and: filters }),
+  or: (filters) => ({ $or: filters }),
   everything: () => ({}) as AccessibleFilter<object>,
 };
 
@@ -97,6 +68,15 @@ interface FoldableRule {
  * range covers both.
  */
 function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TFilter>) {
+  // Either adapter kind, normalized to one `(conditions, inverted)` call.
+  const translate = ruleTranslator(adapter);
+  // A one-element group is the group itself. Worth doing here rather than in
+  // each adapter: the common case is a single rule with a single condition, and
+  // wrapping it in a pointless `or` forces every dialect to support one.
+  const and = (filters: TFilter[]) =>
+    filters.length === 1 ? (filters[0] as TFilter) : adapter.and(filters);
+  const or = (filters: TFilter[]) =>
+    filters.length === 1 ? (filters[0] as TFilter) : adapter.or(filters);
   const bounds: TFilter[] = [];
   const branches: TFilter[] = [];
   let unrestricted = false;
@@ -105,23 +85,23 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
     if (rule.inverted) {
       // Nothing below an unconditioned `cannot` can be reached.
       if (!rule.conditions) break;
-      bounds.push(adapter.rule(rule.conditions, true));
+      bounds.push(translate(rule.conditions, true));
       continue;
     }
     if (!rule.conditions) {
       unrestricted = true;
       break;
     }
-    const branch = adapter.rule(rule.conditions, false);
-    branches.push(bounds.length > 0 ? adapter.and([branch, ...bounds]) : branch);
+    const branch = translate(rule.conditions, false);
+    branches.push(bounds.length > 0 ? and([branch, ...bounds]) : branch);
   }
 
   if (unrestricted) {
     if (bounds.length === 0) return adapter.everything();
-    branches.push(adapter.and(bounds));
+    branches.push(and(bounds));
   }
 
-  return branches.length > 0 ? adapter.or(branches) : null;
+  return branches.length > 0 ? or(branches) : null;
 }
 
 /**
@@ -157,6 +137,17 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * const where = accessibleBy(ability, Actions.read, 'Note', prismaFilter);
  * return where === null ? [] : prisma.note.findMany({ where });
  * ```
+ * @example A leaf adapter, which translates the comparisons too:
+ * ```ts
+ * const prismaLeaves: FilterAdapter<object> = {
+ *   leaf: ({ path, operator, value }) =>
+ *     nest(path, { $eq: { equals: value }, $in: { in: value } }[operator] ?? value),
+ *   not: (filter) => ({ NOT: filter }),
+ *   and: (filters) => ({ AND: filters }),
+ *   or: (filters) => ({ OR: filters }),
+ *   everything: () => ({}),
+ * };
+ * ```
  */
 export function accessibleBy<
   TSubjectMap extends Record<string, object>,
@@ -175,8 +166,9 @@ export function accessibleBy<
  * @param ability - The caller's ability.
  * @param action - The action to filter for, e.g. `Actions.read`.
  * @param subject - The subject name to filter, e.g. `'Note'`.
- * @param adapter - The filter dialect. The adapter controls the boolean
- * skeleton, not the leaf operators: conditions are passed through as written.
+ * @param adapter - The filter dialect. A `SkeletonAdapter` (one with `rule`)
+ * controls only the combinators and passes conditions through as written; a
+ * `LeafAdapter` (one with `leaf`) also receives each comparison individually.
  * @returns The filter, or `null` if no row is accessible.
  */
 export function accessibleBy<

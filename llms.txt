@@ -35,9 +35,10 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `resolvePermissions(schema, permissions, options?)` | The same layer without the `graphql-middleware` binding: a memoized `(typeName, fieldName) => Rule \| undefined` lookup for building another integration. |
 | `PermissionsError` | Thrown when the map names a type or field the schema lacks; aggregates every problem. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability's rules into a query filter for row-level filtering. `null` means deny-all; `{}` means no restriction. |
+| `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
-Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter`.
+Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check throws `Forbidden`, or the matched rule's `cannot(...).because('...')` reason.
 
@@ -150,6 +151,20 @@ if (filter === null) return []; // nothing is accessible
 return db.notes.find(filter);
 ```
 
+A `FilterAdapter` swaps the dialect. One with `rule(conditions, inverted)` replaces only the boolean skeleton and passes conditions through as written; one with `leaf(condition)` + `not(filter)` also receives each comparison individually (`{ path, operator, value }`, dotted keys already split), so a dialect that spells equality differently does not have to walk the conditions itself. An operator a leaf adapter cannot express must throw — dropping a clause would widen access.
+
+### 6. Scoping generated resolvers (optional)
+
+```ts
+import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
+
+const permissions = {
+  Query: { notes: scopeArgs(canUser, Actions.read, 'Note', { adapter: drizzleFilter }) },
+} satisfies PermissionsMap<Resolvers>;
+```
+
+Options: `adapter` (required), `into` (default `'where'`), `merge` (default `adapter.and([clientFilter, scope])`), `onDenyAll` (`'deny'` throws `Forbidden`, `'nothing'` injects `adapter.nothing()`). Caveats: a scoped field returns fewer rows rather than an error; injected arguments bypass GraphQL input coercion, so a wrong-dialect filter fails silently (`applyPermissions` at least checks that `into` names a real argument of the field); never merge by spreading keys, since a client `{ OR: [...] }` would escape the scope; pair it with `fallbackRule`, because scoping is not a gate.
+
 ## Key conventions
 
 - The library is schema-agnostic: type helpers (`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`) are derived from the consumer's generated `Resolvers` / `ResolversTypes` — never hardcode domain type names.
@@ -166,6 +181,9 @@ return db.notes.find(filter);
 - `src/combinators.ts` — `and` / `or` / `not` / `chain` / `race`
 - `src/applyPermissions.ts` — schema walk, wildcard precedence, error control, masking
 - `src/accessibleBy.ts` — the ability-to-query-filter fold
+- `src/conditions.ts` — the `FilterAdapter` union (skeleton/leaf) and the conditions walker
+- `src/scoping.ts` — the optional `/scoping` entry point: `scopeArgs`
+- `src/internal.ts` — symbols shared between modules that must not import each other
 - `src/ability.ts` — CASL `Action` / `Actions` / `AbilityLike`
 - `src/graphqlAbility.ts` — `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
 - `src/subjects.ts` — `createSubjects` / `createTyped`

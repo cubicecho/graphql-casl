@@ -1,6 +1,11 @@
 Argument scoping — rules that narrow a resolver's own filter (Workstream G)
 ==========================================================================
-Status: NOT STARTED. Design worked out below; nothing implemented.
+Status: SHIPPED (G1-G8), except G9 (an outward post on someone else's issue).
+Built as an OPTIONAL SUBPATH EXPORT of this package rather than a new one:
+`@vantreeseba/graphql-casl/scoping`. The walker and the widened FilterAdapter
+union live in the core (accessibleBy benefits from leaf adapters too); only
+`scopeArgs` sits behind the subpath, so nobody pays for it who does not import
+it. Design below is as-built except where the AS-BUILT notes say otherwise.
 Raised by user 2026-08-26 after reading drizzle-team/drizzle-graphql#15
 ("Strategies for authorization" — closed with no library-side answer: the
 maintainer's advice is to wrap each generated handler yourself, and the
@@ -217,34 +222,36 @@ leaving it to each rule; this is where that gets written down.
 
 TASKS
 -----
-[ ] G1. Widen FilterAdapter into the SkeletonAdapter | LeafAdapter union and add
+[x] G1. Widen FilterAdapter into the SkeletonAdapter | LeafAdapter union and add
         the conditions walker, with the '$eq'-on-nested-object and unknown-
         operator-throws behaviours above. Existing adapters must keep compiling
         unchanged — this is additive.
-[ ] G2. Unit tests for the walker: bare equality, multi-operator objects, dotted
+[x] G2. Unit tests for the walker: bare equality, multi-operator objects, dotted
         paths, nested-object equality (the one that must NOT become a path),
         $and/$or/$nor inside conditions, $elemMatch passthrough, unknown operator
         throws. Cross-check a translated filter against ability.can() row by row,
         the way accessibleBy.test.ts does — that test is what makes the fold
         trustworthy and the same argument applies here.
-[ ] G3. requireCan.scope(action, subject, options) per Part 2, including the
-        three accessibleBy states, top-level-AND merge, and onDenyAll.
-[ ] G4. Reject scope rules as combinator operands at map-build time (falls out of
+[x] G3. AS BUILT: a free function `scopeArgs(requireCan, action, subject,
+        options)` in src/scoping.ts, NOT a `requireCan.scope` method — see open
+        question 2, answered below. Everything else per Part 2.
+[x] G4. Reject scope rules as combinator operands at map-build time (falls out of
         the existing non-checkable check — verify, do not assume).
-[ ] G5. Validate `into` against the field's real arguments in collectProblems,
+[x] G5. Validate `into` against the field's real arguments in collectProblems,
         aggregated into PermissionsError like every other problem.
-[ ] G6. Integration test against a GENERATED-SHAPED schema: a `notes(where:)`
+[x] G6. Integration test against a GENERATED-SHAPED schema: a `notes(where:)`
         field whose resolver only understands `where`, proving (a) the client
         cannot widen the scope, (b) an unrestricted ability injects nothing,
         (c) deny-all denies rather than silently returning everything, and
         (d) a scoped mutation narrows its own where clause.
-[ ] G7. README section: what scoping is, the returns-fewer-rows contract, the
+[x] G7. README section: what scoping is, the returns-fewer-rows contract, the
         fallbackRule pairing, and the F2 warning that a bad filter fails silently
         at the data layer rather than at the GraphQL boundary.
-[ ] G8. A drizzle-graphql adapter as a documented RECIPE, not a package — see
+[x] G8. A drizzle-graphql adapter as a documented RECIPE, not a package — see
         open question 3. Same for a Prisma-shaped one; the leaf adapter for each
         is roughly ten lines once G1 exists.
-[ ] G9. Close the loop on drizzle-graphql#15 (and #27, multitenant setups, which
+[ ] G9. NEEDS USER APPROVAL (posting on another project's issue tracker).
+        Close the loop on drizzle-graphql#15 (and #27, multitenant setups, which
         is the same need wearing a different hat) once G7 exists.
 
 
@@ -269,19 +276,55 @@ OPEN QUESTIONS
    rejected. Allowing it in tail position only is a small, well-defined
    relaxation — but it makes `chain`'s type non-uniform, and the same argument
    applies to `.onResult`, so decide it for both at once.
-2. Does `scope` belong on requireCan (recommended: yes — it needs the ability and
-   inherits the per-request memo) or as a free function taking an ability getter,
-   which would let people use it without adopting createCan?
+2. ANSWERED: neither, quite. It is a free function that TAKES the requireCan —
+   `scopeArgs(canUser, action, subject, options)`. A method would have put the
+   optional feature back on the core surface, and a free function taking a bare
+   ability getter would have duplicated the authentication check and lost the
+   per-request memo. Taking requireCan keeps both: createCan hangs a private
+   handle (`{ authorize }`) on the returned function under a Symbol.for key in
+   src/internal.ts, and scopeArgs reads it. Passing anything else throws at
+   construction time. Cost: scoping requires adopting createCan.
 3. Ship dialect adapters, or document them? RECOMMEND DOCUMENT, at least first:
    an adapter is small once G1 exists, and shipping one means tracking another
    library's generated input shapes across versions — a maintenance liability for
    a solo-maintained project, and exactly the kind of coupling this library has
    avoided so far. Revisit if the same ten lines keep getting reinvented.
-4. Is `nothing()` expressible in every dialect? Mongo can spell it, Prisma needs a
+4. ANSWERED as designed: `nothing()` stayed OPTIONAL on the adapter, deny-all
+   still defaults to throwing, and asking for onDenyAll:'nothing' without a
+   `nothing()` throws at construction time rather than at request time.
+   Original question retained:
+   Is `nothing()` expressible in every dialect? Mongo can spell it, Prisma needs a
    field-specific trick (`{ id: { in: [] } }`), and some generated filters cannot
    spell it at all. That is why it is OPTIONAL on the adapter and why the default
    for deny-all is to throw instead. Confirm before documenting 'nothing' as a
    first-class option.
-5. Does the arg name vary enough to need `into` at all, or is 'where' plus a
+5. SHIPPED as 'where' plus a per-call override, which is what the second half of
+   this question proposed. Still worth the survey before documenting it as
+   settled:
+   Does the arg name vary enough to need `into` at all, or is 'where' plus a
    per-call override sufficient? drizzle-graphql and Prisma both use `where`;
    check two or three more generators before settling the default.
+
+
+AS-BUILT NOTES (2026-08-26)
+---------------------------
+- One design change beyond the above: `fold` in accessibleBy.ts now UNWRAPS
+  single-element and/or groups before calling the adapter. Without it the common
+  case (one rule, one condition) injected `{ OR: [ { userId: { eq: 'x' } } ] }`,
+  forcing every dialect to support OR even when there is nothing to combine. The
+  mongo adapter's own unwrapping moved into the fold, so its output is unchanged
+  and every dialect now benefits.
+- The `*.*` wildcard rejects a scoping rule outright: injecting a filter into
+  every field of every type cannot be right. A `Type.*` or `*.field` wildcard is
+  allowed but validated against every field it would actually guard, which is why
+  collectProblems now keeps a field-name -> fields map instead of a name Set.
+- `everything()` is detected by identity, not by value: scopeArgs folds through a
+  copy of the adapter whose `everything()` returns one sentinel object. Safe
+  because the fold returns `everything()` directly and never combines it.
+- Files: src/conditions.ts (walker + adapter union), src/internal.ts (shared
+  symbols), src/scoping.ts (the subpath entry point), test/conditions.test.ts,
+  test/integration/scoping.integration.test.ts. Coverage 100% stmts/funcs on all
+  three new modules.
+- Open question 1 (non-checkable rule in `chain`'s tail position) is UNCHANGED
+  and still needs a decision; scopeArgs is rejected as a combinator operand today
+  exactly like .onResult.

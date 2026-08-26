@@ -26,7 +26,7 @@
 
 export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
-export type { AccessibleFilter, FilterAdapter } from './accessibleBy.js';
+export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
 export type {
   ApplyPermissionsOptions,
@@ -35,6 +35,14 @@ export type {
 } from './applyPermissions.js';
 export { applyPermissions, PermissionsError, resolvePermissions } from './applyPermissions.js';
 export { and, chain, not, or, race } from './combinators.js';
+export type {
+  AdapterCore,
+  FilterAdapter,
+  LeafAdapter,
+  LeafCondition,
+  LeafOperator,
+  SkeletonAdapter,
+} from './conditions.js';
 export type {
   BuildSubject,
   CreateCanOptions,

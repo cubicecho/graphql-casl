@@ -9,6 +9,10 @@ The library is **schema-agnostic** — the subject names and condition types are
 derived from your own generated `Resolvers` / `ResolversTypes`, so there is no
 manual type listing.
 
+There is one optional entry point, `@vantreeseba/graphql-casl/scoping`, for
+[scoping generated resolvers](#scoping-generated-resolvers-optional): narrowing
+a field's filter argument instead of allowing or denying the field.
+
 ## Install
 
 ```bash
@@ -508,15 +512,97 @@ const where = accessibleBy(ability, Actions.read, 'Note', prismaFilter);
 return where === null ? [] : prisma.note.findMany({ where });
 ```
 
-> ⚠️ The adapter controls the boolean skeleton, **not the leaves**. Conditions
-> are passed through as written, so a rule using `{ status: { $in: [...] } }`
-> still emits `$in` inside a Prisma-shaped tree. Write conditions in the target
-> dialect's terms, or translate them in `rule`.
+That adapter is a *skeleton* adapter: it replaces the boolean operators and
+passes each rule's conditions through as written, so a rule using
+`{ status: { $in: [...] } }` still emits `$in` inside a Prisma-shaped tree.
+
+When the target dialect spells its comparisons differently, supply `leaf`
+instead of `rule` and the conditions are walked for you — one comparison at a
+time, with dotted keys already split into a path:
+
+```ts
+const drizzleFilter: FilterAdapter<object> = {
+  leaf: ({ path, operator, value }) => {
+    const op = { $eq: 'eq', $ne: 'ne', $in: 'inArray', $gt: 'gt' }[operator];
+    if (!op) throw new Error(`unsupported in this dialect: ${operator}`);
+    return { [path.join('.')]: { [op]: value } };
+  },
+  not: (filter) => ({ NOT: filter }),
+  and: (filters) => ({ AND: filters }),
+  or: (filters) => ({ OR: filters }),
+  everything: () => ({}),
+};
+```
+
+A leaf adapter must throw on an operator it cannot express — the walker does the
+same for one it does not know. Dropping a clause would silently *widen* access,
+which is the one failure mode a filter must never have.
 
 CASL evaluates rules in priority order and stops at the first match; a query has
 no such ordering. Each `can` therefore becomes an `$or` branch bounded by the
 `cannot`s that outrank it, which is why the output nests more than the rules
 suggest. Field-level rules are ignored — this answers which *rows* are reachable.
+
+### Scoping generated resolvers (optional)
+
+`accessibleBy` needs a resolver you can edit. Generated CRUD resolvers —
+drizzle-graphql, Prisma-based generators, Hasura-style layers — give you no such
+seam: `Query.notes(where:)` is written for you, and the only thing you control
+from the outside is its arguments.
+
+`scopeArgs` closes that gap. It folds the caller's ability into a filter and
+**rewrites the field's arguments** before the resolver runs, ANDing the scope
+onto whatever filter the client sent:
+
+```ts
+import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
+
+const permissions = {
+  Query: {
+    notes: scopeArgs(canUser, Actions.read, 'Note', { adapter: drizzleFilter }),
+  },
+} satisfies PermissionsMap<Resolvers>;
+```
+
+A caller who may read `{ userId: 'alice' }` notes gets
+`where: { userId: { eq: 'alice' } }`; one who sends their own
+`where: { status: { eq: 'live' } }` gets both, ANDed. A caller the ability
+restricts not at all has their arguments left untouched.
+
+It is a separate entry point, so nothing about it is loaded — or has to be
+understood — unless you import it.
+
+| Option | Default | |
+| --- | --- | --- |
+| `adapter` | *(required)* | The dialect to fold into. Skeleton or leaf. |
+| `into` | `'where'` | The argument to inject the filter into. |
+| `merge` | `adapter.and([client, scope])` | How to combine the caller's own filter with the scope. |
+| `onDenyAll` | `'deny'` | `'deny'` throws `Forbidden`; `'nothing'` injects `adapter.nothing()` so the field resolves empty. |
+
+Four things to know before reaching for it:
+
+- **A scoped field returns fewer rows, not an error.** That is the point, but a
+  caller cannot tell "no such row" from "not yours". `onDenyAll: 'deny'` is the
+  default so at least the all-or-nothing case is honest.
+- **Injected arguments bypass GraphQL's input coercion.** Rules run *downstream*
+  of validation, so a filter in the wrong dialect is not rejected — it reaches
+  the data layer as written, where it may be ignored and quietly leave the field
+  unscoped. `applyPermissions` checks that `into` names a real argument of the
+  field; matching the *shape* to the input type is on you, so test it.
+- **Don't merge by spreading keys.** The default merge is a top-level `AND` for
+  a reason: a client filter of `{ OR: [...] }` sits *beside* a spread-in scope
+  rather than under it, and the scope stops applying. Override `merge` only when
+  the dialect needs a different combining shape.
+- **A scoping rule is not a gate.** It says nothing about the fields around it
+  and it cannot be an operand of `and` / `or` / `not` / `chain` / `race` — it
+  decides by rewriting arguments and calling the resolver. Pair it with
+  `fallbackRule`.
+
+On a mutation, scoping narrows the rows the mutation touches — `archiveNotes`
+archives only your own. Note the asymmetry with `onResult`, which refuses
+mutations outright: scoping happens *before* the resolver, so nothing has
+happened yet when it decides. Keep `onDenyAll: 'deny'` there, though: a
+forbidden delete should fail, not succeed while matching nothing.
 
 ### Delegating to an external policy engine
 
