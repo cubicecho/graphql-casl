@@ -29,13 +29,14 @@ npm install @casl/ability graphql graphql-middleware
 | `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives. |
+| `resolvePermissions(schema, permissions, options?)` | The permission layer without the `graphql-middleware` binding: a per-field rule lookup for building another integration. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability into a query filter for row-level filtering, or `null` for deny-all. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
 Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
 `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`,
 `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`,
-`AbilityLike`, `AccessibleFilter`, `FilterAdapter`.
+`AbilityLike`, `AccessibleFilter`, `FilterAdapter`, `PermissionResolver`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
@@ -447,6 +448,26 @@ From highest precedence to lowest:
 
 Field names under `'*'` are still checked — against every field in the schema, so a
 typo that matches no type at all is an error.
+
+### Using the map without `graphql-middleware`
+
+`applyPermissions` is `resolvePermissions` plus `graphql-middleware`.
+`resolvePermissions` stops one step earlier and hands back the per-field lookup,
+so the same map can be enforced through another integration — an envelop plugin,
+an Apollo plugin, hand-wrapped resolvers — with identical wildcard precedence,
+`fallbackRule` coverage, error control and masking:
+
+```ts
+const permissionFor = resolvePermissions<Resolvers>(schema, permissions, options);
+
+const rule = permissionFor(info.parentType.name, info.fieldName);
+return rule
+  ? rule(resolver, root, args, context, info)
+  : resolver(root, args, context, info);
+```
+
+The map is validated up front exactly as `applyPermissions` validates it, and
+lookups are memoized, so calling it per resolver call is cheap.
 
 ### Row-level filtering
 

@@ -28,8 +28,12 @@ export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
 export type { AccessibleFilter, FilterAdapter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
-export type { ApplyPermissionsOptions, FallbackError } from './applyPermissions.js';
-export { applyPermissions, PermissionsError } from './applyPermissions.js';
+export type {
+  ApplyPermissionsOptions,
+  FallbackError,
+  PermissionResolver,
+} from './applyPermissions.js';
+export { applyPermissions, PermissionsError, resolvePermissions } from './applyPermissions.js';
 export { and, chain, not, or, race } from './combinators.js';
 export type {
   BuildSubject,

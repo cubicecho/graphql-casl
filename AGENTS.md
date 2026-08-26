@@ -42,7 +42,8 @@ packages/
       schemaTypes.ts      — type helpers derived from generated Resolvers/ResolversTypes
       rules.ts            — rule layer (Rule, CheckableRule, rule, PermissionsMap, accept, deny)
       combinators.ts      — and / or / not / chain / race over CheckableRules
-      applyPermissions.ts — validates a PermissionsMap against the schema and applies it
+      applyPermissions.ts — validates a PermissionsMap against the schema, resolves it to a
+                            per-field rule lookup, and applies it via graphql-middleware
       ability.ts          — CASL Action/Actions + the loose AbilityLike shape
       accessibleBy.ts     — folds an ability into a query filter (row-level filtering)
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility

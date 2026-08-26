@@ -287,18 +287,94 @@ function withErrorControl(
 }
 
 /**
+ * Looks up the rule guarding one field, already wrapped with the error-control
+ * and masking options. Returns `undefined` for a field left unguarded.
+ *
+ * This is the whole permission layer minus the binding to `graphql-middleware`
+ * — see {@link resolvePermissions}.
+ */
+export type PermissionResolver = (typeName: string, fieldName: string) => Rule | undefined;
+
+/**
+ * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
+ * without applying it to anything.
+ *
+ * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
+ * enforce the same map through another integration — an envelop plugin, an
+ * Apollo plugin, hand-wrapped resolvers — and get identical wildcard precedence,
+ * `fallbackRule` coverage, error control and masking, rather than a second
+ * implementation that drifts.
+ *
+ * The map is validated up front, exactly as `applyPermissions` validates it, so
+ * a mismatched map fails at wiring time rather than mid-query. Lookups are
+ * memoized, so calling this per resolver call is cheap.
+ *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @param schema - The schema the map is checked against.
+ * @param permissions - The permissions map to resolve.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
+ * @returns A lookup from type and field name to the rule guarding that field.
+ * @throws {@link PermissionsError} if the map does not line up with the schema.
+ * @example
+ * ```ts
+ * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
+ * const rule = permissionFor(info.parentType.name, info.fieldName);
+ * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
+ * ```
+ */
+export function resolvePermissions<TResolvers>(
+  schema: GraphQLSchema,
+  permissions: PermissionsMap<TResolvers>,
+  options?: ApplyPermissionsOptions,
+): PermissionResolver {
+  const raw = permissions as RawPermissions;
+  const problems = collectProblems(schema, raw);
+  if (problems.length > 0) throw new PermissionsError(problems);
+
+  const errorControl: ErrorControl = {
+    fallbackError: options?.fallbackError,
+    allowExternalErrors: options?.allowExternalErrors ?? true,
+    debug: options?.debug ?? false,
+    maskDenials: options?.maskDenials ?? false,
+  };
+  const fallbackRule = options?.fallbackRule;
+  const resolved = new Map<string, Rule | undefined>();
+
+  return (typeName, fieldName) => {
+    const key = `${typeName}.${fieldName}`;
+    const cached = resolved.get(key);
+    if (cached !== undefined || resolved.has(key)) return cached;
+
+    const type = schema.getTypeMap()[typeName];
+    // Introspection is never guarded, so even `fallbackRule: deny` leaves it
+    // working; a non-object type has no field to guard in the first place.
+    const field =
+      isObjectType(type) && !isIntrospectionType(type) ? type.getFields()[fieldName] : undefined;
+    const rule = field ? ruleForField(raw, typeName, fieldName, fallbackRule) : undefined;
+    const wrapped =
+      rule && field
+        ? withErrorControl(
+            rule,
+            errorControl,
+            errorControl.maskDenials ? maskFor(field.type) : undefined,
+          )
+        : undefined;
+
+    resolved.set(key, wrapped);
+    return wrapped;
+  };
+}
+
+/**
  * Resolves the map into the per-field middleware `graphql-middleware` consumes.
  *
  * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
- * can guard a field no map entry names. Introspection types are skipped here, so
- * even `fallbackRule: deny` leaves introspection working. Only called after
- * {@link collectProblems} returns clean.
+ * can guard a field no map entry names. Introspection types are skipped by the
+ * resolver itself, so even `fallbackRule: deny` leaves introspection working.
  */
 function resolveFieldRules(
   schema: GraphQLSchema,
-  permissions: RawPermissions,
-  fallbackRule: Rule | undefined,
-  errorControl: ErrorControl,
+  permissionFor: PermissionResolver,
 ): IMiddlewareTypeMap {
   const middleware: IMiddlewareTypeMap = {};
 
@@ -306,11 +382,9 @@ function resolveFieldRules(
     if (!isObjectType(type) || isIntrospectionType(type)) continue;
 
     const fieldRules: IMiddlewareFieldMap = {};
-    for (const [fieldName, field] of Object.entries(type.getFields())) {
-      const rule = ruleForField(permissions, type.name, fieldName, fallbackRule);
-      if (!rule) continue;
-      const mask = errorControl.maskDenials ? maskFor(field.type) : undefined;
-      fieldRules[fieldName] = withErrorControl(rule, errorControl, mask);
+    for (const fieldName of Object.keys(type.getFields())) {
+      const rule = permissionFor(type.name, fieldName);
+      if (rule) fieldRules[fieldName] = rule;
     }
 
     if (Object.keys(fieldRules).length > 0) middleware[type.name] = fieldRules;
@@ -478,17 +552,6 @@ export function applyPermissions<TResolvers>(
   permissions: PermissionsMap<TResolvers>,
   options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
-  const raw = permissions as RawPermissions;
-  const problems = collectProblems(schema, raw);
-  if (problems.length > 0) throw new PermissionsError(problems);
-  const errorControl: ErrorControl = {
-    fallbackError: options?.fallbackError,
-    allowExternalErrors: options?.allowExternalErrors ?? true,
-    debug: options?.debug ?? false,
-    maskDenials: options?.maskDenials ?? false,
-  };
-  return applyMiddleware(
-    schema,
-    resolveFieldRules(schema, raw, options?.fallbackRule, errorControl),
-  );
+  const permissionFor = resolvePermissions(schema, permissions, options);
+  return applyMiddleware(schema, resolveFieldRules(schema, permissionFor));
 }

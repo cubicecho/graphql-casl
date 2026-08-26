@@ -1,5 +1,5 @@
 import { makeExecutableSchema } from '@graphql-tools/schema';
-import { GraphQLError, type GraphQLSchema, graphql } from 'graphql';
+import { GraphQLError, type GraphQLResolveInfo, type GraphQLSchema, graphql } from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type ApplyPermissionsOptions,
@@ -13,6 +13,7 @@ import {
   PermissionsError,
   type PermissionsMap,
   type Rule,
+  resolvePermissions,
   rule,
 } from '../src/index.js';
 
@@ -656,5 +657,103 @@ describe('applyPermissions — masking denials', () => {
     const result = await graphql({ schema: maskedSchema(deny), source: '{ nullableList { id } }' });
     expect(result.data).toEqual({ nullableList: null });
     expect(result.errors).toBeUndefined();
+  });
+});
+
+describe('resolvePermissions', () => {
+  const schema = makeExecutableSchema({
+    typeDefs: /* GraphQL */ `
+      type Note {
+        id: ID!
+        body: String
+      }
+      type Query {
+        note: Note
+      }
+    `,
+    resolvers: { Query: { note: () => ({ id: 'n1', body: 'hello' }) } },
+  });
+
+  it('returns the rule guarding a field', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(schema, {
+      Query: { note: deny },
+    });
+    expect(permissionFor('Query', 'note')).toBeTypeOf('function');
+  });
+
+  it('returns undefined for an unguarded field', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(schema, {
+      Query: { note: deny },
+    });
+    expect(permissionFor('Note', 'id')).toBeUndefined();
+  });
+
+  it('applies wildcard precedence and the fallback rule', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Note: { id: accept } },
+      { fallbackRule: deny },
+    );
+    expect(permissionFor('Note', 'id')).toBe(accept);
+    expect(permissionFor('Note', 'body')).toBe(deny);
+    expect(permissionFor('Query', 'note')).toBe(deny);
+  });
+
+  it('never guards introspection, even under a fallback rule', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      {},
+      { fallbackRule: deny },
+    );
+    expect(permissionFor('__Schema', 'types')).toBeUndefined();
+  });
+
+  it('returns undefined for a field the schema does not have', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      {},
+      { fallbackRule: deny },
+    );
+    expect(permissionFor('Note', 'nope')).toBeUndefined();
+    expect(permissionFor('Nope', 'id')).toBeUndefined();
+  });
+
+  it('memoizes each lookup', () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(schema, {
+      Query: { note: deny },
+    });
+    expect(permissionFor('Query', 'note')).toBe(permissionFor('Query', 'note'));
+  });
+
+  it('validates the map up front', () => {
+    expect(() =>
+      resolvePermissions<Record<string, Record<string, unknown>>>(schema, {
+        Nope: { id: deny },
+      }),
+    ).toThrow(PermissionsError);
+  });
+
+  it('wraps the rule with the error-control options', async () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { note: deny } },
+      { fallbackError: 'Not Authorised!' },
+    );
+    const rule = permissionFor('Query', 'note');
+    await expect(
+      rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
+    ).rejects.toThrow('Not Authorised!');
+  });
+
+  it('masks a denial when asked to', async () => {
+    const permissionFor = resolvePermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { note: deny } },
+      { maskDenials: true },
+    );
+    const rule = permissionFor('Query', 'note');
+    await expect(
+      rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
+    ).resolves.toBeNull();
   });
 });
