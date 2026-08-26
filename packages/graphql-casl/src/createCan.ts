@@ -5,7 +5,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
-import { type CheckableRule, type Rule, rule } from './rules.js';
+import { type CheckableRule, denialFrom, type Rule, rule } from './rules.js';
 
 /**
  * What {@link createCan} does when a bare-subject check is made against a subject
@@ -383,7 +383,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   /** Shared prologue: authenticate, then get the request's ability. */
   async function authorize(context: TContext): Promise<AbilityLike> {
     if (!isAuthenticated(context)) {
-      throw new Error('Not authenticated');
+      throw denialFrom('Not authenticated') ?? new Error('Not authenticated');
     }
     return resolveAbility(context);
   }
@@ -531,7 +531,10 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
           : (candidate as Partial<TSubjectMap[K]>);
         const instance = tag(subject, data);
         if (!ability.can(action, instance)) {
-          throw new Error(reasonFor(ability, action, instance) ?? 'Forbidden');
+          // Marked as a denial so the error-control and masking options in
+          // `applyPermissions` can tell it apart from a rule that broke.
+          const denial = denialFrom(reasonFor(ability, action, instance) ?? false);
+          if (denial) throw denial;
         }
       }
       return result;

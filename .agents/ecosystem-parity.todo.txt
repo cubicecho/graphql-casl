@@ -108,7 +108,29 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         Pairs with E4 (mask the fields CASL says you may not read) and with E8
         (a type-level '*' whose behavior is "consult permittedFieldsOf").
 
-[ ] E4. UNAUTHORIZED -> null INSTEAD OF THROWING.
+[x] E4. DONE — applyPermissions(..., { maskDenials: true }).
+        A denied field resolves to an empty value instead of raising an error:
+        null for a nullable field, [] for a NON-NULL LIST (an empty list
+        satisfies non-null, which is exactly the [Todo!]! case the integration
+        test documents). A non-null field that is not a list has no value that
+        satisfies it, so it still throws — masking is bounded by the schema, and
+        that limit is documented rather than papered over.
+        The nullability decision is made during the SCHEMA WALK, per field, so
+        it costs nothing at request time. The mask is a factory, not a value: a
+        shared [] would be handed to every request.
+        Only DENIALS are masked. A rule that threw a bug of its own, and a
+        resolver that failed on a permitted field, both still surface — masking
+        those would report an outage as a permission decision. This is the same
+        three-way failure classification the error-control options use
+        (shield-parity S6-S9), reusing its denial marker.
+        Follow-on: createCan's `onResult` and its `Not authenticated` now throw
+        MARKED denials (denialFrom) rather than bare Errors, so they mask and
+        take a fallbackError like every other denial.
+        NOT taken from Pothos: `treatErrorsAsUnauthorized` (an error inside a
+        rule counted as a denial) — that is the opposite of `debug`, which this
+        library already ships, and it hides bugs.
+
+[ ] E4-orig. UNAUTHORIZED -> null INSTEAD OF THROWING.
         Sources: Pothos `unauthorizedResolver` (return null / [] instead of an
         error) and `treatErrorsAsUnauthorized`; envelop generic-auth
         `rejectUnauthorized: false` (protected fields fail silently, public

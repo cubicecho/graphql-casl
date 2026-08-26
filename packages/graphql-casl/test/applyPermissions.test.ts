@@ -494,3 +494,167 @@ describe('applyPermissions — a fields() rule as a type-level entry', () => {
     expect(other.errors?.[0]?.path).toEqual(['note', 'secret']);
   });
 });
+
+describe('applyPermissions — masking denials', () => {
+  /** A schema covering every field shape masking has to decide between. */
+  function maskedSchema(rule: Rule, options?: ApplyPermissionsOptions) {
+    const schema = makeExecutableSchema({
+      typeDefs: /* GraphQL */ `
+        type Todo {
+          id: ID!
+        }
+        type Query {
+          nullable: String
+          required: String!
+          list: [Todo!]!
+          nullableList: [Todo!]
+        }
+      `,
+      resolvers: {
+        Query: {
+          nullable: () => 'ok',
+          required: () => 'ok',
+          list: () => [{ id: '1' }],
+          nullableList: () => [{ id: '1' }],
+        },
+      },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { nullable: rule, required: rule, list: rule, nullableList: rule } },
+      { maskDenials: true, ...options },
+    );
+  }
+
+  it('resolves a denied nullable field to null, with no error', async () => {
+    const result = await graphql({ schema: maskedSchema(deny), source: '{ nullable }' });
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('resolves a denied non-null list to an empty list', async () => {
+    const result = await graphql({ schema: maskedSchema(deny), source: '{ list { id } }' });
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('gives each request its own masked list', async () => {
+    const schema = maskedSchema(deny);
+    const first = (await graphql({ schema, source: '{ list { id } }' })).data?.list as unknown[];
+    const second = (await graphql({ schema, source: '{ list { id } }' })).data?.list as unknown[];
+    expect(first).not.toBe(second);
+  });
+
+  it('still throws for a non-null field that is not a list', async () => {
+    const result = await graphql({ schema: maskedSchema(deny), source: '{ required }' });
+    expect(result.data).toBeNull();
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('keeps the rest of the response when one field is denied', async () => {
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      makeExecutableSchema({
+        typeDefs: /* GraphQL */ `
+          type Todo {
+            id: ID!
+          }
+          type Query {
+            list: [Todo!]!
+            nullable: String
+          }
+        `,
+        resolvers: { Query: { list: () => [{ id: '1' }], nullable: () => 'ok' } },
+      }),
+      { Query: { list: deny, nullable: accept } },
+      { maskDenials: true },
+    );
+    const result = await graphql({ schema, source: '{ list { id } nullable }' });
+    expect(result.data).toEqual({ list: [], nullable: 'ok' });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('masks a denial that named its own reason', async () => {
+    const withReason = rule(() => 'Only the owner may read this');
+    const result = await graphql({ schema: maskedSchema(withReason), source: '{ nullable }' });
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('masks a denial rather than replacing it with fallbackError', async () => {
+    const schema = maskedSchema(deny, { fallbackError: 'Not Authorised!' });
+    const result = await graphql({ schema, source: '{ nullable }' });
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('does not mask a rule that broke', async () => {
+    const broken = rule(() => {
+      throw new Error('getAbility exploded');
+    });
+    const result = await graphql({ schema: maskedSchema(broken), source: '{ nullable }' });
+    expect(result.errors?.[0]?.message).toBe('getAbility exploded');
+  });
+
+  it('does not mask an error thrown by a permitted resolver', async () => {
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      makeExecutableSchema({
+        typeDefs: `type Query { note: String }`,
+        resolvers: {
+          Query: {
+            note: () => {
+              throw new Error('database down');
+            },
+          },
+        },
+      }),
+      { Query: { note: accept } },
+      { maskDenials: true },
+    );
+    const result = await graphql({ schema, source: '{ note }' });
+    expect(result.data).toEqual({ note: null });
+    expect(result.errors?.[0]?.message).toBe('database down');
+  });
+
+  it('throws denials as before when masking is off', async () => {
+    const schema = maskedSchema(deny, { maskDenials: false });
+    const result = await graphql({ schema, source: '{ nullable }' });
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('masks a denial raised by an onResult rule', async () => {
+    type T = { Todo: { id: string } };
+    const { can, build } = createGraphQLAbility<T>();
+    can('read', 'Todo', { id: '1' });
+    const ability = build();
+    const canUser = createCan<unknown, T>(
+      async () => ability,
+      () => true,
+      createTyped<T>(),
+    );
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      makeExecutableSchema({
+        typeDefs: /* GraphQL */ `
+          type Todo {
+            id: ID!
+          }
+          type Query {
+            todo: Todo
+          }
+        `,
+        resolvers: { Query: { todo: () => ({ id: '2' }) } },
+      }),
+      { Query: { todo: canUser.onResult('read', 'Todo') } },
+      { maskDenials: true },
+    );
+    const result = await graphql({ schema, source: '{ todo { id } }' });
+    expect(result.data).toEqual({ todo: null });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('masks a denied nullable list to null', async () => {
+    const result = await graphql({ schema: maskedSchema(deny), source: '{ nullableList { id } }' });
+    expect(result.data).toEqual({ nullableList: null });
+    expect(result.errors).toBeUndefined();
+  });
+});

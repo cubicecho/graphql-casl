@@ -39,6 +39,12 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Masking denials** (`ecosystem-parity` E4) — `applyPermissions`'s
+  `maskDenials` resolves a denied field to `null`, or `[]` where the field is a
+  non-null list, instead of throwing, so one unauthorized field no longer nulls
+  the whole `data` payload through a non-null chain. Bounded by the schema: a
+  non-null non-list field still throws. Only denials are masked; rule failures
+  and resolver errors still surface.
 - **Field permissions driven by the ability** (`ecosystem-parity` E3) —
   `canUser.fields(action, subject)` attaches one rule to a type and decides each
   field with `ability.can(action, subject, info.fieldName)`, so a CASL rule's

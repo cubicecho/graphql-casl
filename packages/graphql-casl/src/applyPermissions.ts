@@ -9,12 +9,15 @@
 
 import {
   type GraphQLNamedType,
+  type GraphQLOutputType,
   type GraphQLResolveInfo,
   type GraphQLSchema,
   isEnumType,
   isInputObjectType,
   isInterfaceType,
   isIntrospectionType,
+  isListType,
+  isNonNullType,
   isObjectType,
   isScalarType,
   isUnionType,
@@ -203,6 +206,23 @@ async function resolveFallbackError(
 }
 
 /**
+ * The value a denied field is masked with, or `undefined` if it cannot be masked.
+ *
+ * A factory, not a value: `[]` handed to two requests would be the same array.
+ *
+ * Masking is bounded by the schema. A nullable field becomes `null`, and a
+ * non-null *list* becomes `[]` — an empty list satisfies non-null, which is what
+ * makes masking useful for the `[Todo!]!` shape where a thrown denial otherwise
+ * nulls the whole branch. A non-null field of any other kind has no value that
+ * satisfies it, so it keeps throwing.
+ */
+function maskFor(fieldType: GraphQLOutputType): (() => unknown) | undefined {
+  if (!isNonNullType(fieldType)) return () => null;
+  if (isListType(fieldType.ofType)) return () => [];
+  return undefined;
+}
+
+/**
  * Wraps one field's rule with the error-control options.
  *
  * Three kinds of failure arrive here as thrown errors and have to be told apart:
@@ -212,9 +232,13 @@ async function resolveFallbackError(
  * resolver errors are identified by capturing what the wrapped `resolve` threw.
  * Anything left over is a rule failure.
  */
-function withErrorControl(rule: Rule, options: ErrorControl): Rule {
+function withErrorControl(
+  rule: Rule,
+  options: ErrorControl,
+  mask: (() => unknown) | undefined,
+): Rule {
   const { fallbackError, allowExternalErrors, debug } = options;
-  if (!fallbackError && allowExternalErrors && !debug) return rule;
+  if (!fallbackError && allowExternalErrors && !debug && !mask) return rule;
 
   return async (resolve, parent, args, context, info) => {
     // Identity, not a flag: the rule may catch and rethrow, and a denial thrown
@@ -247,6 +271,10 @@ function withErrorControl(rule: Rule, options: ErrorControl): Rule {
       // bug as an authorization decision, so `debug` rethrows it untouched.
       if (denialKind === undefined && !isResolverError && debug) throw error;
 
+      // Masking replaces a decision the rule made, never a failure it suffered:
+      // a broken rule or a broken resolver still surfaces.
+      if (mask && denialKind !== undefined) return mask();
+
       // An explicit denial is the rule author's own words; only the generic
       // default is replaced.
       if (denialKind === 'explicit') throw error;
@@ -278,9 +306,11 @@ function resolveFieldRules(
     if (!isObjectType(type) || isIntrospectionType(type)) continue;
 
     const fieldRules: IMiddlewareFieldMap = {};
-    for (const fieldName of Object.keys(type.getFields())) {
+    for (const [fieldName, field] of Object.entries(type.getFields())) {
       const rule = ruleForField(permissions, type.name, fieldName, fallbackRule);
-      if (rule) fieldRules[fieldName] = withErrorControl(rule, errorControl);
+      if (!rule) continue;
+      const mask = errorControl.maskDenials ? maskFor(field.type) : undefined;
+      fieldRules[fieldName] = withErrorControl(rule, errorControl, mask);
     }
 
     if (Object.keys(fieldRules).length > 0) middleware[type.name] = fieldRules;
@@ -312,6 +342,7 @@ interface ErrorControl {
   fallbackError: FallbackError | undefined;
   allowExternalErrors: boolean;
   debug: boolean;
+  maskDenials: boolean;
 }
 
 /** Options for {@link applyPermissions}. */
@@ -380,6 +411,32 @@ export interface ApplyPermissionsOptions {
    * Note this only bypasses `fallbackError`; the rule still denied the field.
    */
   debug?: boolean;
+
+  /**
+   * Whether a denied field resolves to an empty value instead of raising an
+   * error. Defaults to `false`.
+   *
+   * A thrown denial propagates up the non-null chain: deny one field of
+   * `todos: [Todo!]!` and the *entire* `data` payload becomes `null`, so an
+   * unauthorized corner of a query destroys the authorized rest of it. Masking
+   * makes partial responses usable — the denied field comes back as `null`, or
+   * as `[]` where the field is a non-null list, and the rest of the response
+   * survives.
+   *
+   * The trade-off is that the client is no longer told *why* something is
+   * missing: "you may not read this" and "this does not exist" become the same
+   * response. That is a feature when the existence of the record is itself
+   * privileged, and a support burden otherwise.
+   *
+   * Two limits worth knowing:
+   *
+   * - A non-null field that is not a list — `id: ID!` — has no value that
+   *   satisfies it, so it still throws. Masking is bounded by the schema.
+   * - Only *denials* are masked. A rule that threw a bug of its own, or a
+   *   resolver that failed, still surfaces its error; silently nulling those
+   *   would hide outages as permission decisions.
+   */
+  maskDenials?: boolean;
 }
 
 /**
@@ -402,7 +459,8 @@ export interface ApplyPermissionsOptions {
  * generic denial error, {@link ApplyPermissionsOptions.allowExternalErrors}
  * governs whether resolver errors reach the client, and
  * {@link ApplyPermissionsOptions.debug} surfaces a rule's own failures instead of
- * reporting them as denials.
+ * reporting them as denials, and {@link ApplyPermissionsOptions.maskDenials}
+ * resolves a denied field to `null`/`[]` rather than raising an error.
  *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @param schema - The executable schema to guard.
@@ -427,6 +485,7 @@ export function applyPermissions<TResolvers>(
     fallbackError: options?.fallbackError,
     allowExternalErrors: options?.allowExternalErrors ?? true,
     debug: options?.debug ?? false,
+    maskDenials: options?.maskDenials ?? false,
   };
   return applyMiddleware(
     schema,

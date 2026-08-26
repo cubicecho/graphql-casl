@@ -371,11 +371,42 @@ Three failures reach a client as errors and the options treat them differently:
 | **Resolver error** — the field was allowed, the resolver failed | reaches the client verbatim | `allowExternalErrors: false` masks it |
 | **Rule failure** — `getAbility` threw, a check has a bug | reported as a denial | `debug: true` rethrows it untouched |
 
+A fourth option, `maskDenials`, removes the denial from the response entirely
+rather than rewording it — see [Masking denials](#masking-denials) below.
+
 > **Note for `graphql-shield` users:** `allowExternalErrors` defaults to `true`
 > here, the opposite of shield, which masks resolver errors by default. Masking
 > is the safer behaviour, but it is not what this library has done since 1.0 and
 > silently swallowing resolver errors on upgrade would be worse than leaving the
 > choice explicit. Set it to `false` deliberately.
+
+#### Masking denials
+
+A thrown denial propagates up the non-null chain. Deny one field of
+`todos: [Todo!]!` and the *whole* `data` payload becomes `null` — an
+unauthorized corner of a query destroys the authorized rest of it.
+`maskDenials` resolves a denied field to an empty value instead:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  maskDenials: true,
+});
+```
+
+| Field | Denied result |
+| --- | --- |
+| `me: User` | `null` |
+| `todos: [Todo!]` | `null` |
+| `todos: [Todo!]!` | `[]` |
+| `id: ID!` | still throws — no value satisfies it |
+
+The response carries no error at all, so "you may not read this" and "this does
+not exist" become indistinguishable. That is the point when the existence of a
+record is itself privileged, and a support burden otherwise.
+
+Only *denials* are masked. A rule that threw a bug of its own, and a resolver
+that failed on a permitted field, both still surface their errors — silently
+nulling those would hide an outage as a permission decision.
 
 #### Denial reasons from CASL
 
