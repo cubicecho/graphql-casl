@@ -34,7 +34,7 @@ export type {
   PermissionResolver,
 } from './applyPermissions.js';
 export { applyPermissions, PermissionsError, resolvePermissions } from './applyPermissions.js';
-export { and, chain, not, or, race } from './combinators.js';
+export { and, chain, not, or, race, wrap } from './combinators.js';
 export type {
   AdapterCore,
   FilterAdapter,

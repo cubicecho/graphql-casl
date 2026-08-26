@@ -279,13 +279,27 @@ NON-GOALS (record so they stop being re-proposed)
 
 OPEN QUESTIONS
 --------------
-1. Should a non-checkable rule be allowed as the LAST operand of `chain`?
-   `chain(isNotBanned, canUser.scope(...))` is the natural way to put cheap
-   checks in front of a scoped field, and the tail is the only position where a
-   resolver-wrapping rule is meaningful. Today all non-checkable operands are
-   rejected. Allowing it in tail position only is a small, well-defined
-   relaxation — but it makes `chain`'s type non-uniform, and the same argument
-   applies to `.onResult`, so decide it for both at once.
+1. ANSWERED (2026-08-26): no — `chain` keeps its invariant, and a separate
+   `wrap(...rules)` composes any rules as nested middleware instead. Each operand
+   receives the next as its `resolve`, outermost first; the last receives the
+   real resolver. Shipped in src/combinators.ts and exported from the entry point.
+   Rejected alternatives, and why:
+   - Relaxing `chain` to accept a non-checkable tail (`[...CheckableRule[], Rule]`)
+     makes its RETURN type non-uniform: it could no longer be a `CheckableRule`,
+     so `and(chain(a, b), c)` would compile or not depending on what was passed.
+     Today every operand AND every result of a combinator is checkable, full stop;
+     that invariant is worth more than the nicer spelling.
+   - The relaxation could never extend to `or`/`race` (they need speculative
+     evaluation) or `not` (inversion), so it would be a chain-only special case.
+   `wrap` needs no tuple types, always returns a plain `Rule` — so the type system
+   says plainly that you have left combinator territory — and it does something no
+   tail relaxation could: stack `scopeArgs` WITH `onResult`, narrowing the query
+   and then re-checking the rows it returned. Cost accepted: `chain(a, scoped)`
+   reads better than `wrap(a, scoped)`, and both spellings now exist for the
+   all-checkable case (docs point at `chain`, which skips the resolver nesting).
+   Knock-on change: ScopeInfo.into became a LIST, and `wrap` re-advertises every
+   scoping target beneath it, so nesting a scoping rule does not silently disable
+   the applyPermissions check that its target argument exists.
 2. ANSWERED: neither, quite. It is a free function that TAKES the requireCan —
    `scopeArgs(canUser, action, subject, options)`. A method would have put the
    optional feature back on the core surface, and a free function taking a bare

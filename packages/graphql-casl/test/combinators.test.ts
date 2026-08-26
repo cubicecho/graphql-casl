@@ -11,6 +11,7 @@ import {
   type Rule,
   race,
   rule,
+  wrap,
 } from '../src/index.js';
 
 const info = {} as GraphQLResolveInfo;
@@ -229,5 +230,93 @@ describe('combinator operand validation', () => {
   it('names nested combinators for error messages', () => {
     expect(and(accept, deny).ruleName).toBe('and(accept, deny)');
     expect(or(accept, and(accept, deny)).ruleName).toBe('or(accept, and(accept, deny))');
+  });
+});
+
+describe('wrap', () => {
+  /** A middleware that rewrites one argument on its way through. */
+  const rewriting =
+    (name: string, value: unknown): Rule =>
+    async (resolve, parent, args, context, info) =>
+      resolve(parent, { ...(args as object), [name]: value }, context, info);
+
+  it('nests rules so each receives the next as its resolver', async () => {
+    const order: string[] = [];
+    const step =
+      (name: string): Rule =>
+      async (resolve, parent, args, context, info) => {
+        order.push(`${name}:in`);
+        const result = await resolve(parent, args, context, info);
+        order.push(`${name}:out`);
+        return result;
+      };
+    const resolve = vi.fn().mockResolvedValue('ok');
+
+    await expect(wrap(step('a'), step('b'))(resolve, 'p', 'a', {}, info)).resolves.toBe('ok');
+    expect(order).toEqual(['a:in', 'b:in', 'b:out', 'a:out']);
+  });
+
+  it('applies operands left to right, outermost first', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await wrap(rewriting('x', 1), rewriting('y', 2))(resolve, 'p', {}, {}, info);
+    expect(resolve).toHaveBeenCalledWith('p', { x: 1, y: 2 }, {}, info);
+  });
+
+  it('lets a later rule see an earlier rule′s rewritten arguments', async () => {
+    const seen: unknown[] = [];
+    const observe: Rule = async (resolve, parent, args, context, i) => {
+      seen.push(args);
+      return resolve(parent, args, context, i);
+    };
+    await wrap(rewriting('scope', 'mine'), observe)(vi.fn(), 'p', { own: true }, {}, info);
+    expect(seen).toEqual([{ own: true, scope: 'mine' }]);
+  });
+
+  it('stops at a rule that denies, leaving the rest unrun', async () => {
+    const resolve = vi.fn();
+    const later = vi.fn();
+    const spy: Rule = async (r, p, a, c, i) => {
+      later();
+      return r(p, a, c, i);
+    };
+    await expect(wrap(deny, spy)(resolve, null, null, {}, info)).rejects.toThrow('Forbidden');
+    expect(later).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('accepts rules the combinators reject', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    expect(() => and(accept, handWritten)).toThrow();
+    await expect(wrap(accept, handWritten)(resolve, 'p', 'a', {}, info)).resolves.toBe('ok');
+  });
+
+  it('points at itself when a combinator is handed a wrapping rule', () => {
+    expect(() => and(accept, handWritten)).toThrow(/Compose those with `wrap\(\)` instead/);
+  });
+
+  it('is never checkable, so it cannot be a combinator operand', () => {
+    expect(isCheckableRule(wrap(accept, deny))).toBe(false);
+    expect(() => chain(accept, wrap(accept))).toThrow(/operand 1 is not a checkable rule/);
+  });
+
+  it('substitutes its own context and info for a rule that drops them', async () => {
+    const context = { user: 'u1' };
+    const forgetful: Rule = async (resolve, parent, args) => resolve(parent, args);
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await wrap(forgetful, accept)(resolve, 'p', 'a', context, info);
+    expect(resolve).toHaveBeenCalledWith('p', 'a', context, info);
+  });
+
+  it('works with a single rule', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(wrap(accept)(resolve, 'p', 'a', {}, info)).resolves.toBe('ok');
+    await expect(wrap(deny)(resolve, 'p', 'a', {}, info)).rejects.toThrow('Forbidden');
+  });
+
+  it('rejects an empty call and a non-function operand', () => {
+    expect(() => wrap()).toThrow(/needs at least one rule/);
+    expect(() => wrap(accept, undefined as unknown as Rule)).toThrow(
+      /operand 1 is undefined, not a rule/,
+    );
   });
 });

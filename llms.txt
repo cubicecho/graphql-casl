@@ -29,13 +29,14 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
 | `rule(check, opts?)` | Wraps a predicate `(parent, args, ctx, info) => boolean \| string \| Error` into a combinable rule. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. `and`/`or` evaluate in parallel; `chain`/`race` short-circuit. A rule that needs the resolver to decide is rejected as an operand when the map is built. |
+| `wrap(...rules)` | Nests any rules as middleware — each receives the next as its `resolve`, outermost first. The escape hatch for rules the combinators reject (`onResult`, `scopeArgs`, hand-written middleware). Returns a plain `Rule`, so it is never itself a combinator operand. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives; both are combinable. |
 | `isCheckableRule(value)` | Whether a rule can be a combinator operand. |
 | `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `maskDenials`. |
 | `resolvePermissions(schema, permissions, options?)` | The same layer without the `graphql-middleware` binding: a memoized `(typeName, fieldName) => Rule \| undefined` lookup for building another integration. |
 | `PermissionsError` | Thrown when the map names a type or field the schema lacks; aggregates every problem. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability's rules into a query filter for row-level filtering. `null` means deny-all; `{}` means no restriction. |
-| `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable. |
+| `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable; compose it with `wrap`. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
 Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`.
@@ -159,11 +160,11 @@ A `FilterAdapter` swaps the dialect. One with `rule(conditions, inverted)` repla
 import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
 
 const permissions = {
-  Query: { notes: scopeArgs(canUser, Actions.read, 'Note', { adapter: drizzleFilter }) },
+  Query: { notes: scopeArgs(canUser, Actions.read, 'Note', { adapter: drizzleFilters }) },
 } satisfies PermissionsMap<Resolvers>;
 ```
 
-Options: `adapter` (required), `into` (default `'where'`), `merge` (default `adapter.and([clientFilter, scope])`), `onDenyAll` (`'deny'` throws `Forbidden`, `'nothing'` injects `adapter.nothing()`). Caveats: a scoped field returns fewer rows rather than an error; injected arguments bypass GraphQL input coercion, so a wrong-dialect filter fails silently (`applyPermissions` at least checks that `into` names a real argument of the field); never merge by spreading keys, since a client `{ OR: [...] }` would escape the scope; pair it with `fallbackRule`, because scoping is not a gate.
+Options: `adapter` (required), `into` (default `'where'`), `merge` (default `adapter.and([clientFilter, scope])`), `onDenyAll` (`'deny'` throws `Forbidden`, `'nothing'` injects `adapter.nothing()`). Caveats: a scoped field returns fewer rows rather than an error; injected arguments bypass GraphQL input coercion, so a wrong-dialect filter fails silently (`applyPermissions` at least checks that `into` names a real argument of the field); never merge by spreading keys, since a client `{ OR: [...] }` would escape the scope; pair it with `fallbackRule`, because scoping is not a gate, or put a gate in front of it with `wrap(isNotBanned, scoped)`. `wrap` also stacks scoping with `onResult`, which no combinator can express.
 
 ## Key conventions
 
@@ -178,7 +179,7 @@ Options: `adapter` (required), `into` (default `'where'`), `merge` (default `ada
 - `src/index.ts` — public API entry point (re-exports + package overview)
 - `src/schemaTypes.ts` — type helpers derived from generated Resolvers/ResolversTypes
 - `src/rules.ts` — the rule layer (`Rule`, `CheckableRule`, `PermissionsMap`, `rule`, `accept`, `deny`)
-- `src/combinators.ts` — `and` / `or` / `not` / `chain` / `race`
+- `src/combinators.ts` — `and` / `or` / `not` / `chain` / `race`, plus `wrap`
 - `src/applyPermissions.ts` — schema walk, wildcard precedence, error control, masking
 - `src/accessibleBy.ts` — the ability-to-query-filter fold
 - `src/conditions.ts` — the `FilterAdapter` union (skeleton/leaf) and the conditions walker

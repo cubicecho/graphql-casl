@@ -9,15 +9,19 @@ import { type GraphQLSchema, graphql } from 'graphql';
 import { describe, expect, it } from 'vitest';
 import {
   Actions,
+  accept,
   and,
   applyPermissions,
   createCan,
   createGraphQLAbility,
+  createTyped,
   deny,
   type FilterAdapter,
   type GraphQLAbility,
   PermissionsError,
   type PermissionsMap,
+  rule,
+  wrap,
 } from '../../src/index.js';
 import { scopeArgs } from '../../src/scoping.js';
 
@@ -328,5 +332,69 @@ describe('validation of the injected argument', () => {
 
   it('accepts a scope rule under a field wildcard when every match fits', () => {
     expect(() => schemaWith({ '*': { notes: scopedNotes } })).not.toThrow();
+  });
+});
+
+describe('wrap, composing a scoping rule with rules that cannot be combined', () => {
+  const typed = createTyped<AppSubjectMap>();
+  const canTagged = createCan<Context, AppSubjectMap>(
+    async (context) => abilityFor(context.userId),
+    (context) => Boolean(context.userId),
+    typed,
+  );
+  const isNotBanned = rule(
+    (_parent, _args, context: Context) => context.userId !== 'mallory' || 'Account suspended',
+    { name: 'isNotBanned' },
+  );
+
+  it('gates the field first, then scopes it', async () => {
+    const schema = schemaWith({ Query: { notes: wrap(isNotBanned, scopedNotes) } });
+
+    const allowed = await run(schema, '{ notes { id } }', 'alice');
+    expect(allowed.errors).toBeUndefined();
+    expect(allowed.data?.notes).toEqual([{ id: 'n1' }, { id: 'n2' }]);
+
+    const banned = await run(schema, '{ notes { id } }', 'mallory');
+    expect(banned.errors?.[0]?.message).toBe('Account suspended');
+  });
+
+  it('does not run the scoping rule when the gate denies', async () => {
+    const schema = schemaWith({ Query: { notes: wrap(deny, scopedNotes) } });
+    seenArgs = undefined;
+    const result = await run(schema, '{ notes { id } }', 'alice');
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+    expect(seenArgs).toBeUndefined();
+  });
+
+  it('re-checks the scoped result, which no combinator could express', async () => {
+    // Both operands decide by running the resolver, so neither is a legal
+    // operand of `and`/`chain`. `wrap` nests them: the query is narrowed to
+    // alice′s rows, then each returned row is authorized for `update`.
+    const schema = schemaWith({
+      Query: { notes: wrap(scopedNotes, canTagged.onResult(Actions.update, 'Note')) },
+    });
+
+    const readable = await run(schema, '{ notes { id } }', 'admin');
+    expect(readable.errors?.[0]?.message).toBe('Forbidden');
+
+    const scopedThenChecked = await run(schema, '{ notes { id } }', 'alice');
+    expect(scopedThenChecked.errors?.[0]?.message).toBe('Forbidden');
+    // The inner rule saw the *scoped* rows, not all three.
+    expect(seenArgs).toEqual({ where: { userId: { eq: 'alice' } } });
+  });
+
+  it('still validates the injected argument through the wrapper', () => {
+    const nested = wrap(
+      accept,
+      scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }),
+    );
+    expect(() => schemaWith({ Query: { notes: nested } })).toThrow(PermissionsError);
+    expect(() => schemaWith({ Query: { notes: nested } })).toThrow(/argument named `filter`/);
+  });
+
+  it('still refuses a wrapped scoping rule under the `*.*` wildcard', () => {
+    expect(() => schemaWith({ '*': { '*': wrap(accept, scopedNotes) } })).toThrow(
+      /rewrites a field argument/,
+    );
   });
 });

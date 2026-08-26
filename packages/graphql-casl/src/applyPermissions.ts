@@ -123,7 +123,7 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
         const wildRule = entry[WILDCARD];
         if (wildRule !== undefined && !isRule(wildRule)) {
           problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
-        } else if (wildRule !== undefined && scopeTargetOf(wildRule)) {
+        } else if (wildRule !== undefined && scopeTargetsOf(wildRule).length > 0) {
           problems.push(
             'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
               'every type. Attach the scoping rule to the fields it filters.',
@@ -178,10 +178,10 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
 // biome-ignore lint/suspicious/noExplicitAny: any field of any type is a target
 type AnyField = GraphQLField<any, any>;
 
-/** The argument an argument-scoping rule injects into, if it is one. */
-function scopeTargetOf(rule: unknown): string | undefined {
+/** The arguments an argument-scoping rule injects into. Empty if it is not one. */
+function scopeTargetsOf(rule: unknown): readonly string[] {
   const info = (rule as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
-  return info?.into;
+  return info?.into ?? [];
 }
 
 /**
@@ -194,20 +194,21 @@ function scopeTargetOf(rule: unknown): string | undefined {
  * resolver ignores it and the field returns unscoped rows.
  */
 function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | undefined {
-  const into = scopeTargetOf(rule);
-  if (into === undefined) return undefined;
-  const missing = targets.filter((field) => !field.args.some((arg) => arg.name === into));
-  if (missing.length === 0) return undefined;
-  const names = missing.map((field) => `\`${field.name}\``);
-  const listed =
-    names.length > 4
-      ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`
-      : names.join(', ');
-  return (
-    `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
-    `${listed} ${missing.length === 1 ? 'has' : 'have'} no such argument. ` +
-    'An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.'
-  );
+  for (const into of scopeTargetsOf(rule)) {
+    const missing = targets.filter((field) => !field.args.some((arg) => arg.name === into));
+    if (missing.length === 0) continue;
+    const names = missing.map((field) => `\`${field.name}\``);
+    const listed =
+      names.length > 4
+        ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`
+        : names.join(', ');
+    return (
+      `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
+      `${listed} ${missing.length === 1 ? 'has' : 'have'} no such argument. ` +
+      'An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.'
+    );
+  }
+  return undefined;
 }
 
 /** Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand. */

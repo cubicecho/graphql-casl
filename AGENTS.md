@@ -49,7 +49,8 @@ packages/
       index.ts            — public API entry point (re-exports + package overview)
       schemaTypes.ts      — type helpers derived from generated Resolvers/ResolversTypes
       rules.ts            — rule layer (Rule, CheckableRule, rule, PermissionsMap, accept, deny)
-      combinators.ts      — and / or / not / chain / race over CheckableRules
+      combinators.ts      — and / or / not / chain / race over CheckableRules, plus wrap,
+                            which nests any rules as middleware
       applyPermissions.ts — validates a PermissionsMap against the schema, resolves it to a
                             per-field rule lookup, and applies it via graphql-middleware
       ability.ts          — CASL Action/Actions + the loose AbilityLike shape
@@ -64,14 +65,18 @@ packages/
     test/
       permissions.test.ts                — unit tests for the rule primitives
       applyPermissions.test.ts           — the schema walk: enforcement + validation errors
-      combinators.test.ts                — rule(), the combinators, operand validation
+      combinators.test.ts                — rule(), the combinators, wrap, operand validation
       accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       integration/permissions.integration.test.ts — end-to-end test against an executable schema
-      integration/scoping.integration.test.ts     — scopeArgs against a generated-CRUD-shaped schema
+      integration/scoping.integration.test.ts     — scopeArgs (and wrap) against a
+                                                    generated-CRUD-shaped schema
+      recipes/drizzleGraphql.ts          — copy-paste FilterAdapter for drizzle-graphql's
+                                           generated filters; a recipe, not a public export
+      recipes/drizzleGraphql.test.ts     — its tests, incl. the legal-filter assertion
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests

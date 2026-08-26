@@ -32,6 +32,7 @@ npm install @casl/ability graphql graphql-middleware
 | `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
 | `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. |
+| `wrap` | Nests any rules as middleware, including ones the combinators reject. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives. |
 | `resolvePermissions(schema, permissions, options?)` | The permission layer without the `graphql-middleware` binding: a per-field rule lookup for building another integration. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability into a query filter for row-level filtering, or `null` for deny-all. |
@@ -308,10 +309,29 @@ Mutation: {
 Combinators return combinable rules, so they nest.
 
 Two kinds of rule coexist, and only one is combinable. A hand-written middleware
-`Rule` and a `canUser.onResult(...)` rule both need to run the resolver to reach
-a verdict, so they cannot be one branch of an `or`. Passing one to a combinator
-throws **when the permissions map is built**, naming the operand's position —
-never silently at request time.
+`Rule`, a `canUser.onResult(...)` rule and a `scopeArgs(...)` rule all reach
+their verdict by running the resolver — one needs the resolved value, one
+rewrites the arguments first — so none of them can be one branch of an `or`.
+Passing one to a combinator throws **when the permissions map is built**, naming
+the operand's position — never silently at request time.
+
+`wrap(...rules)` is the way to compose those. It never asks an operand for a
+verdict; it just nests them, so each receives the next as its `resolve` and the
+last receives the real resolver:
+
+```ts
+Query: {
+  // isNotBanned runs first; if it passes, the scoping rule narrows `where`
+  notes: wrap(isNotBanned, scopeArgs(canUser, Actions.read, 'Note', { adapter })),
+}
+```
+
+Order is left to right, outermost first, and a rule that never calls its
+`resolve` stops there. `wrap` returns a plain `Rule`, never a combinable one —
+a wrapper's verdict is only knowable by running it — so a `wrap` cannot itself
+be an operand of `and` / `or` / `not` / `chain` / `race`. When every operand
+*is* combinable, use `chain` instead: same meaning, no resolver nesting, and the
+result stays combinable.
 
 ### 4. Apply to the schema
 
@@ -607,10 +627,12 @@ Four things to know before reaching for it:
   a reason: a client filter of `{ OR: [...] }` sits *beside* a spread-in scope
   rather than under it, and the scope stops applying. Override `merge` only when
   the dialect needs a different combining shape.
-- **A scoping rule is not a gate.** It says nothing about the fields around it
+- **A scoping rule is not a gate.** It says nothing about the fields around it,
   and it cannot be an operand of `and` / `or` / `not` / `chain` / `race` — it
   decides by rewriting arguments and calling the resolver. Pair it with
-  `fallbackRule`.
+  `fallbackRule`, or put a gate in front of it with `wrap(isNotBanned, scoped)`.
+  `wrap` also stacks scoping with `onResult`, so a field can be narrowed *and*
+  have the rows it returns re-checked.
 
 On a mutation, scoping narrows the rows the mutation touches — `archiveNotes`
 archives only your own. Note the asymmetry with `onResult`, which refuses
@@ -726,6 +748,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | --- | --- |
 | `rule(name, opts)(async (parent, args, ctx, info) => …)` | `rule(check, { name })` — same arguments, same `true` / `false` / `string` / `Error` return contract |
 | `and` / `or` / `not` / `chain` / `race` | same names, same semantics: `and`/`or` evaluate in parallel, `chain`/`race` short-circuit, `not(rule, error?)` |
+| — | `wrap(...rules)` has no shield equivalent: it nests rules as middleware, so rules that decide by running the resolver can still be composed |
 | `allow` / `deny` | `accept` / `deny` |
 | `fallbackRule: deny` | same option |
 | `'*'` field key | `'*'` in **either** position, with [documented precedence](#wildcards) |

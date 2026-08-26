@@ -83,9 +83,10 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  *
  * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
  * arguments and calling the resolver, so it cannot be an operand of `and` /
- * `or` / `not` / `chain` / `race`. Pair it with `fallbackRule` — a scoped field
- * is not an authenticated-only field, and scoping alone says nothing about the
- * fields *around* it.
+ * `or` / `not` / `chain` / `race`. Use `wrap` to put a gate in front of it —
+ * `wrap(isNotBanned, scopeArgs(...))` — or to stack it with `onResult`. Pair it
+ * with `fallbackRule` too: a scoped field is not an authenticated-only field,
+ * and scoping alone says nothing about the fields *around* it.
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @typeParam TFilter - The dialect's filter type.
@@ -175,7 +176,7 @@ export function scopeArgs<
     return resolve(parent, withArg(args, into, combined), context, info);
   };
 
-  const info: ScopeInfo = { into };
+  const info: ScopeInfo = { into: [into] };
   Object.defineProperty(scoped, SCOPE_INFO, { value: info });
   return scoped;
 }

@@ -1,8 +1,13 @@
 /**
  * Logic combinators over {@link CheckableRule}s: `and`, `or`, `not`, `chain` and
  * `race`. Each returns a `CheckableRule`, so combinators nest freely.
+ *
+ * {@link wrap} sits apart from those: it composes *any* rules, including ones
+ * that decide by running the resolver, and returns a plain {@link Rule}.
  */
 
+import type { GraphQLResolveInfo } from 'graphql';
+import { SCOPE_INFO, type ScopeInfo } from './internal.js';
 import {
   type Check,
   type CheckableRule,
@@ -29,9 +34,9 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
       throw new Error(
         `graphql-casl: \`${combinator}()\` operand ${index} is not a checkable rule, so its ` +
           'verdict cannot be evaluated without also running the resolver. Build it with `rule()` ' +
-          'or `createCan(...)`, and note that `createCan(...).onResult` and `scopeArgs(...)` ' +
-          'rules are never combinable — one needs the resolved value to decide, the other ' +
-          'decides by rewriting the arguments and calling the resolver itself.',
+          'or `createCan(...)`. `createCan(...).onResult` and `scopeArgs(...)` rules are never ' +
+          'combinable — one needs the resolved value to decide, the other decides by rewriting ' +
+          'the arguments and calling the resolver itself. Compose those with `wrap()` instead.',
       );
     }
     return operand.check;
@@ -174,4 +179,97 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
     },
     { name: label('not', [operand]) },
   );
+}
+
+/**
+ * Composes rules as nested middleware: each one receives the next as its
+ * `resolve`, and the last receives the field's real resolver.
+ *
+ * This is the escape hatch from the combinators' one restriction. `and`, `or`,
+ * `not`, `chain` and `race` all need to ask an operand for a verdict *without*
+ * side effects, so they accept only {@link CheckableRule}s. `wrap` never asks —
+ * it just nests — so it accepts anything, including the two rules that decide by
+ * running the resolver: `createCan(...).onResult` and `scopeArgs(...)`.
+ *
+ * ```ts
+ * Query: {
+ *   notes: wrap(isNotBanned, scopeArgs(canUser, Actions.read, 'Note', { adapter })),
+ * }
+ * ```
+ *
+ * `isNotBanned` runs first. If it passes it calls what it thinks is the
+ * resolver, which is really the scoping rule, which narrows `where` and calls
+ * the resolver for real. Stacking works in both directions, so a field can be
+ * scoped *and* have its result re-checked:
+ *
+ * ```ts
+ * Query: {
+ *   notes: wrap(scopeArgs(canUser, Actions.read, 'Note', { adapter }),
+ *               canUser.onResult(Actions.read, 'Note')),
+ * }
+ * ```
+ *
+ * The result is a plain `Rule`, never a `CheckableRule`, even when every operand
+ * happens to be checkable — a wrapper's verdict is only knowable by running it.
+ * So a `wrap` cannot itself be an operand of `and` / `or` / `not` / `chain` /
+ * `race`. When every operand *is* checkable, prefer {@link chain}: it means the
+ * same thing, costs no resolver nesting, and stays combinable.
+ *
+ * Order matters and is left to right, outermost first. A rule that never calls
+ * its `resolve` stops the chain there, exactly as it would if it were the only
+ * rule on the field.
+ *
+ * @param rules - The rules to nest, outermost first. At least one.
+ * @example
+ * ```ts
+ * Mutation: { publish: wrap(chain(isAuthenticated, isNotBanned), auditTrail) }
+ * ```
+ */
+export function wrap(...rules: Rule[]): Rule {
+  if (rules.length === 0) {
+    throw new Error('graphql-casl: `wrap()` needs at least one rule.');
+  }
+  for (const [index, operand] of rules.entries()) {
+    if (typeof operand !== 'function') {
+      throw new Error(
+        `graphql-casl: \`wrap()\` operand ${index} is ${typeof operand}, not a rule.`,
+      );
+    }
+  }
+
+  const composed = rules.reduceRight<Rule>(
+    (next, current) => (resolve, parent, args, context, info) =>
+      current(
+        // What `current` believes is the resolver. `context` and `info` are
+        // ambient — a middleware that calls `resolve(parent, args)` and drops
+        // them would otherwise starve every rule beneath it — so they fall back
+        // to this rule's own. `parent` and `args` pass through verbatim, since
+        // rewriting those is the whole point of a wrapping rule.
+        (nextParent, nextArgs, nextContext, nextInfo) =>
+          next(resolve, nextParent, nextArgs, nextContext ?? context, nextInfo ?? info),
+        parent,
+        args,
+        context,
+        info,
+      ),
+    (resolve, parent, args, context, info) =>
+      resolve(parent, args, context, info as GraphQLResolveInfo),
+  );
+
+  // Argument-scoping rules advertise the argument they inject into so
+  // `applyPermissions` can check the field declares it. Nesting one must not
+  // hide it, so the composed rule re-advertises every target beneath it.
+  const targets = [
+    ...new Set(
+      rules.flatMap(
+        (operand) =>
+          (operand as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO]?.into ?? [],
+      ),
+    ),
+  ];
+  if (targets.length > 0) {
+    const info: ScopeInfo = { into: targets };
+    Object.defineProperty(composed, SCOPE_INFO, { value: info });
+  }
+  return composed;
 }

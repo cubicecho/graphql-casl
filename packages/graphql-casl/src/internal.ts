@@ -21,6 +21,11 @@ export const SCOPE_INFO: unique symbol = Symbol.for('graphql-casl.scopeInfo') as
 
 /** What an argument-scoping rule advertises about itself. */
 export interface ScopeInfo {
-  /** The argument name the filter is injected into. */
-  readonly into: string;
+  /**
+   * The argument names filters are injected into. A list rather than one name
+   * because `wrap()` composes rules into a single map entry, and the mark has
+   * to survive that — otherwise nesting a scoping rule inside a wrapper would
+   * silently switch off the check that its target argument exists.
+   */
+  readonly into: readonly string[];
 }
