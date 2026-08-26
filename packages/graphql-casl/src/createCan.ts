@@ -5,7 +5,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
-import type { Rule } from './rules.js';
+import { type CheckableRule, type Rule, rule } from './rules.js';
 
 /**
  * What {@link createCan} does when a bare-subject check is made against a subject
@@ -130,7 +130,7 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
     action: Action,
     subject: K,
     getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
-  ): Rule;
+  ): CheckableRule;
 
   /**
    * Builds a rule that authorizes the **resolved value** instead of the args.
@@ -159,6 +159,10 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * common case. Supply one to pull the subject out of a wrapper, or to authorize
  * a projection of the record. It receives each candidate individually, so a list
  * calls it once per element, plus the resolver's `parent` as a second argument.
+ *
+ * A rule built this way is **not** a {@link CheckableRule}: its verdict requires
+ * the resolved value, so it cannot be evaluated speculatively and the
+ * combinators reject it as an operand.
  *
  * **The resolver runs before the check.** That is inherent — the check needs the
  * result. It makes this form unsuitable for anything with side effects, so a rule
@@ -199,7 +203,7 @@ export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
 >(
   action: Action,
   subject: K,
-) => Rule;
+) => CheckableRule;
 
 /**
  * Factory that returns a `requireCan(action, subject, getSubjectData?)` rule
@@ -320,7 +324,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     action: Action,
     subject: K,
     getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
-  ): Rule {
+  ): CheckableRule {
     // Guards the footgun the overloads already forbid at the type level, for
     // callers reaching this via plain JS or a cast: a subject built without a
     // tagger has no `__typename`, so CASL can't classify it and the check would
@@ -336,34 +340,38 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     // only exists per request — so this can't be checked at construction time.
     // Warn at most once per rule instead of once per field resolution.
     let warned = false;
-    return async (resolve, parent, args, context, info) => {
-      const ability = await authorize(context);
-      const instance =
-        getSubjectData && buildSubject
-          ? buildSubject(subject, getSubjectData(args as TArgs, parent as TParent))
-          : subject;
+    // A pre-execution check reaches its verdict without the resolver, so this is
+    // a `rule()` rather than raw middleware — which is what makes it usable as an
+    // operand of `and` / `or` / `not` / `chain` / `race`.
+    return rule(
+      async (parent, args, context) => {
+        if (!isAuthenticated(context as TContext)) return new Error('Not authenticated');
+        const ability = await resolveAbility(context as TContext);
+        const instance =
+          getSubjectData && buildSubject
+            ? buildSubject(subject, getSubjectData(args as TArgs, parent as TParent))
+            : subject;
 
-      if (
-        !getSubjectData &&
-        onUnconditionedSubject !== 'allow' &&
-        isUnconditionedCheck(ability, action, subject)
-      ) {
-        if (onUnconditionedSubject === 'throw') {
-          throw new Error(unconditionedMessage(action, subject));
+        if (
+          !getSubjectData &&
+          onUnconditionedSubject !== 'allow' &&
+          isUnconditionedCheck(ability, action, subject)
+        ) {
+          if (onUnconditionedSubject === 'throw') {
+            return new Error(unconditionedMessage(action, subject));
+          }
+          if (!warned) {
+            warned = true;
+            console.warn(unconditionedMessage(action, subject));
+          }
         }
-        if (!warned) {
-          warned = true;
-          console.warn(unconditionedMessage(action, subject));
-        }
-      }
 
-      // `instance` is an opaque subject value or name here; the ability's `can`
-      // is narrowly overloaded, so check through the loose AbilityLike shape.
-      if (!ability.can(action, instance)) {
-        throw new Error('Forbidden');
-      }
-      return resolve(parent, args, context, info);
-    };
+        // `instance` is an opaque subject value or name here; the ability's `can`
+        // is narrowly overloaded, so check through the loose AbilityLike shape.
+        return ability.can(action, instance);
+      },
+      { name: `can(${action}, ${subject})` },
+    );
   }
 
   requireCan.onResult = function onResult<

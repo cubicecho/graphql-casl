@@ -39,6 +39,12 @@ A soundness pass, taken from the lists above:
 - **`getAbility` is memoized per context** (`shield-parity` S4a) — one ability
   per request shared across every rule from a factory, instead of one rebuild
   per guarded field.
+- **Combinable rules and combinators** (`shield-parity` S1 + S16) — `rule(check)`
+  wraps a predicate into a `CheckableRule`, and `and` / `or` / `not` / `chain` /
+  `race` compose them. `createCan`'s pre-execution rules and `accept` / `deny`
+  are checkable, so they compose too. A rule that needs the resolver to decide
+  (hand-written middleware, `onResult`) is rejected as an operand when the map is
+  built, not at request time.
 - **Parent-aware field rules.** `getSubjectData` now receives `(args, parent)`,
   so a field rule can condition on the parent object (`User.email` only when it
   is your own user) through the `createCan` builder instead of a hand-written

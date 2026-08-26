@@ -34,7 +34,19 @@ equivalent layer carries ~16 features this has no answer for.
 TIER 1 — structural (no workaround exists today)
 ------------------------------------------------
 
-[ ] S1. LOGIC COMBINATORS: and / or / not / chain / race.
+[x] S1. DONE, via the additive CheckableRule design below. `rule(check, {name})`
+        wraps a predicate; and/or/not/chain/race combine them. and+chain throw
+        the first failure, or+race the last; and+or evaluate in parallel,
+        chain+race short-circuit. Non-checkable operands (hand-written
+        middleware, createCan(...).onResult) are rejected at CONSTRUCTION time,
+        naming the operand's position. createCan's pre-execution rules are now
+        CheckableRules, so they compose. Errors raised INSIDE a check propagate
+        rather than becoming denials (see S9).
+        Behaviour change worth noting: `deny` now rejects rather than throwing
+        synchronously, since every rule() rule is async. Equivalent under
+        graphql-middleware, which awaits.
+
+[ ] S1-orig. LOGIC COMBINATORS: and / or / not / chain / race.
         Shield: constructors.ts + rules.ts (RuleAnd/RuleOr/RuleNot/RuleChain/
         RuleRace). `and`/`or` evaluate in parallel; `chain`/`race` sequentially
         (chain = short-circuiting and, race = short-circuiting or);
@@ -109,7 +121,13 @@ TIER 1 — structural (no workaround exists today)
 TIER 2 — error control
 ----------------------
 
-[ ] S6. Rules return boolean | string | Error (IRuleResult).
+[~] S6. PARTLY DONE. A `rule()` check returns boolean | string | Error, and an
+        Error is thrown as-is — so a check CAN now carry a GraphQLError with
+        extensions and a code. What is still missing is the surrounding error
+        CONTROL: fallbackError (S7), masking (S8), debug (S9), CASL reason (S10).
+        createCan still denies with a hardcoded Error('Forbidden').
+
+[ ] S6-orig. Rules return boolean | string | Error (IRuleResult).
         Shield: rules.ts Rule#resolve normalizes string -> new Error(string).
         Here: rules must THROW. No per-rule custom message, no GraphQLError
         with extensions / error code.
@@ -176,14 +194,20 @@ TIER 3 — smaller
          rules broadly. Becomes REQUIRED the moment S2 or S3 exists, otherwise
          a fallbackRule would guard __Schema / __Type and break introspection.
 
-[ ] S16. allow / deny usable as combinator operands.
+[x] S16. DONE — accept/deny are CheckableRules built with rule().
+
+[ ] S16-orig. allow / deny usable as combinator operands.
          Here: accept / deny exist and behave correctly, but they're plain
          middleware, so they cannot be operands of S1's combinators. Falls out
          of the DESIGN DECISION below for free.
 
 
-DESIGN DECISION (recorded — do not relitigate)
-----------------------------------------------
+DESIGN DECISION (recorded — do not relitigate) — NOW IMPLEMENTED
+----------------------------------------------------------------
+Shipped as described, with two deviations: `fragment` was dropped from the
+options (it cannot work — see the FINDING under E2 in ecosystem-parity), and
+`cache` is deferred to S4b. Otherwise as written.
+
 For S1, the user chose the ADDITIVE `CheckableRule` approach over redefining
 `Rule` as a shield-style predicate:
 
@@ -229,7 +253,7 @@ SUGGESTED ORDER
    (envelop plugin), the only place selection-set injection can actually happen.
 3. [DONE] S2 + S3 + S13 + S15  (fallbackRule + wildcards + runtime schema
    validation; "deny by default" is now a real schema-coverage guarantee)
-4. S1 + S16  (combinators, per the design decision above)
+4. [DONE] S1 + S16  (combinators, per the design decision above)
 5. S6-S10  (error control)
 6. S11, S12, S13/P1, S14  (the rest)
 

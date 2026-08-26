@@ -33,19 +33,113 @@ export type Rule = (
 ) => Promise<any>;
 
 /**
- * An always-pass {@link Rule}: invokes the wrapped resolver unconditionally.
- * Use for public fields that need no authorization.
+ * What a {@link Check} may return.
+ *
+ * `true` allows the field. `false` denies it with the default `Forbidden`
+ * error, a `string` denies it with that message, and an `Error` is thrown as-is
+ * — so a check can supply its own `GraphQLError` with extensions and a code.
  */
-export const accept: Rule = (resolve, parent, args, context, info) =>
-  resolve(parent, args, context, info);
+export type RuleResult = boolean | string | Error;
 
 /**
- * An always-fail {@link Rule}: throws `Forbidden` without invoking the resolver.
- * Use to block a field for every caller.
+ * The predicate behind a {@link CheckableRule}: the standard resolver arguments
+ * *without* `resolve`, answering "may this field be resolved?".
+ *
+ * Because it cannot call the resolver, a check can be evaluated speculatively —
+ * which is what lets {@link CheckableRule}s be combined.
  */
-export const deny: Rule = () => {
-  throw new Error('Forbidden');
-};
+export type Check = (
+  parent: unknown,
+  args: unknown,
+  // biome-ignore lint/suspicious/noExplicitAny: accepts any concrete context type
+  context: any,
+  info: GraphQLResolveInfo,
+) => RuleResult | Promise<RuleResult>;
+
+/**
+ * A {@link Rule} that also exposes its decision as a standalone {@link Check}.
+ *
+ * A plain `Rule` denies by *throwing*, and the only way to ask it for a verdict
+ * is to run it — which lets it call the resolver. A `CheckableRule` can be asked
+ * without that side effect, so it can be an operand of `and` / `or` / `not` /
+ * `chain` / `race`.
+ *
+ * Both forms remain valid map entries. Rules built by {@link rule}, by
+ * `createCan`, and the {@link accept} / {@link deny} primitives are checkable;
+ * hand-written middleware and `createCan(...).onResult` rules are not, because
+ * they need the resolver to reach their decision.
+ */
+export interface CheckableRule extends Rule {
+  /** The decision, callable without running the resolver. */
+  readonly check: Check;
+  /** A label used in combinator error messages. May be empty. */
+  readonly ruleName: string;
+}
+
+/**
+ * Normalizes a {@link RuleResult} into the error to throw, or `undefined` when
+ * the check passed. Internal — shared with the combinators, not re-exported from
+ * the package entry point.
+ */
+export function denialFrom(result: RuleResult): Error | undefined {
+  if (result === true) return undefined;
+  if (result === false) return new Error('Forbidden');
+  if (typeof result === 'string') return new Error(result);
+  return result;
+}
+
+/**
+ * Wraps a {@link Check} into a {@link CheckableRule} — a rule usable directly in
+ * a `PermissionsMap` *and* as an operand of the combinators.
+ *
+ * The check runs before the resolver; a denial throws and the resolver never
+ * runs. An error raised *inside* the check propagates unchanged rather than
+ * being converted into a denial, so a broken check is not silently mistaken for
+ * a legitimate `Forbidden`.
+ *
+ * @param check - The predicate. See {@link RuleResult} for what it may return.
+ * @param options - `name` labels the rule in combinator error messages.
+ * @example
+ * ```ts
+ * const isSelf = rule(
+ *   (parent, args: { id: string }, ctx) =>
+ *     args.id === ctx.userId || 'You may only read your own profile',
+ *   { name: 'isSelf' },
+ * );
+ * ```
+ */
+export function rule(check: Check, options?: { name?: string }): CheckableRule {
+  const middleware: Rule = async (resolve, parent, args, context, info) => {
+    const denial = denialFrom(await check(parent, args, context, info));
+    if (denial) throw denial;
+    return resolve(parent, args, context, info);
+  };
+  return Object.assign(middleware, {
+    check,
+    ruleName: options?.name ?? check.name ?? '',
+  }) as CheckableRule;
+}
+
+/**
+ * Narrows a {@link Rule} to a {@link CheckableRule}. The combinators use this to
+ * reject an un-combinable operand at construction time rather than at request
+ * time.
+ */
+export function isCheckableRule(value: unknown): value is CheckableRule {
+  return typeof value === 'function' && typeof (value as CheckableRule).check === 'function';
+}
+
+/**
+ * An always-pass {@link CheckableRule}: invokes the wrapped resolver
+ * unconditionally. Use for public fields that need no authorization.
+ */
+export const accept: CheckableRule = rule(() => true, { name: 'accept' });
+
+/**
+ * An always-fail {@link CheckableRule}: denies with `Forbidden` without invoking
+ * the resolver. Use to block a field for every caller.
+ */
+export const deny: CheckableRule = rule(() => false, { name: 'deny' });
 
 /**
  * Resolver-map keys that are *not* schema fields.

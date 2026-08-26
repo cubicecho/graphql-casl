@@ -28,6 +28,7 @@ export type { AbilityLike, Action } from './ability.js';
 export { Actions } from './ability.js';
 export type { ApplyPermissionsOptions } from './applyPermissions.js';
 export { applyPermissions, PermissionsError } from './applyPermissions.js';
+export { and, chain, not, or, race } from './combinators.js';
 export type {
   BuildSubject,
   CreateCanOptions,
@@ -43,7 +44,7 @@ export type {
   GraphQLRule,
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
-export type { PermissionsMap, Rule, Wildcard } from './rules.js';
-export { accept, deny } from './rules.js';
+export type { Check, CheckableRule, PermissionsMap, Rule, RuleResult, Wildcard } from './rules.js';
+export { accept, deny, isCheckableRule, rule } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped } from './subjects.js';

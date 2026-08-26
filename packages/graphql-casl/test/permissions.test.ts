@@ -4,12 +4,15 @@ import {
   type Action,
   Actions,
   accept,
+  and,
   createCan,
   createGraphQLAbility,
   createSubjects,
   createTyped,
   deny,
   type GraphQLAbility,
+  isCheckableRule,
+  or,
   type PermissionsMap,
   type RequireCan,
   type Rule,
@@ -58,8 +61,15 @@ describe('accept / deny', () => {
     expect(resolve).toHaveBeenCalledWith('parent', 'args', {}, info);
   });
 
-  it('deny always throws Forbidden', () => {
-    expect(() => deny(vi.fn(), null, null, {}, info)).toThrow('Forbidden');
+  it('deny always rejects with Forbidden without resolving', async () => {
+    const resolve = vi.fn();
+    await expect(deny(resolve, null, null, {}, info)).rejects.toThrow('Forbidden');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('both are checkable, so they can be combinator operands', () => {
+    expect(isCheckableRule(accept)).toBe(true);
+    expect(isCheckableRule(deny)).toBe(true);
   });
 });
 
@@ -588,5 +598,50 @@ describe('createCan — parent-aware getSubjectData', () => {
       rule(vi.fn().mockResolvedValue(note), { org: 'o1' }, {}, { userId: 'u1' }, resultInfo),
     ).resolves.toBe(note);
     expect(seen).toEqual([{ org: 'o1' }]);
+  });
+});
+
+describe('createCan — combinability', () => {
+  const canUser = createCan<TestContext, ExampleSubjectMap>(
+    async (ctx) => buildAbility(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typed,
+  );
+
+  it('produces checkable rules that combine', async () => {
+    const r = canUser(Actions.read, 'Note');
+    expect(isCheckableRule(r)).toBe(true);
+    // Org is denied for everyone by buildAbility, Note is readable — so `or`
+    // passes and `and` does not.
+    await expect(
+      or(canUser(Actions.read, 'Org'), r)(
+        vi.fn().mockResolvedValue('ok'),
+        null,
+        {},
+        { userId: 'u1' },
+        info,
+      ),
+    ).resolves.toBe('ok');
+    await expect(
+      and(canUser(Actions.read, 'Org'), r)(vi.fn(), null, {}, { userId: 'u1' }, info),
+    ).rejects.toThrow('Forbidden');
+  });
+
+  it('surfaces Not authenticated through a combinator', async () => {
+    await expect(and(canUser(Actions.read, 'Note'))(vi.fn(), null, {}, {}, info)).rejects.toThrow(
+      'Not authenticated',
+    );
+  });
+
+  it('labels itself with the action and subject', () => {
+    expect(canUser(Actions.read, 'Note').ruleName).toBe('can(read, Note)');
+  });
+
+  it('refuses an onResult rule as a combinator operand', () => {
+    // Its verdict needs the resolved value, so it cannot be evaluated as one
+    // branch of an `or` without running the resolver.
+    expect(() => and(canUser.onResult(Actions.read, 'Note'), accept)).toThrow(
+      /operand 0 is not a checkable rule/,
+    );
   });
 });

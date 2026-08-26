@@ -26,12 +26,15 @@ npm install @casl/ability graphql graphql-middleware
 | `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for subject detection. |
 | `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
+| `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
+| `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
-Type helpers: `PermissionsMap`, `Rule`, `SubjectName`, `SubjectMap`, `ArgsOf`,
-`ParentOf`, `ContextOf`, `Action`, `GraphQLAbility`, `GraphQLAbilities`,
-`GraphQLRule`, `GraphQLAbilityOptions`, `AbilityLike`.
+Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
+`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`,
+`GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`,
+`AbilityLike`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
@@ -228,6 +231,53 @@ export const permissions: PermissionsMap<Resolvers> = {
 > `fragment` option does not help either — it populates a `fragmentReplacements`
 > array for graphql-tools delegation and never reaches plain execution. Have the
 > parent resolver select the fields your rules condition on.
+
+### Combining rules
+
+`rule(check)` turns a predicate into a rule. A check returns `true` to allow,
+`false` to deny with `Forbidden`, a `string` to deny with that message, or an
+`Error` to throw as-is — so it can carry a `GraphQLError` with a code and
+extensions:
+
+```ts
+import { rule } from '@vantreeseba/graphql-casl';
+
+const isNotBanned = rule(
+  (_parent, _args, ctx: Context) => !ctx.user?.banned || 'Your account is suspended',
+  { name: 'isNotBanned' },
+);
+```
+
+An error raised *inside* a check propagates unchanged rather than becoming a
+denial, so a broken check is never mistaken for a legitimate `Forbidden`.
+
+Rules built by `rule()` or `createCan(...)`, plus `accept` and `deny`, are
+**combinable**: their verdict can be asked for without running the resolver, so
+they work as operands of the combinators.
+
+| Combinator | Passes when | Evaluation | Error on failure |
+| --- | --- | --- | --- |
+| `and(...rules)` | every operand passes | parallel, all evaluated | the **first** failing operand's |
+| `chain(...rules)` | every operand passes | sequential, stops at first failure | the failing operand's |
+| `or(...rules)` | any operand passes | parallel, all evaluated | the **last** operand's |
+| `race(...rules)` | any operand passes | sequential, stops at first pass | the **last** operand's |
+| `not(rule, error?)` | the operand fails | — | `error`, else `Forbidden` |
+
+```ts
+Mutation: {
+  publish: and(canUser(Actions.update, Subject.Note), isNotBanned),
+  // askOpenFga only runs once the cheap checks have passed
+  archive: chain(isNotBanned, canUser(Actions.delete, Subject.Note), askOpenFga),
+}
+```
+
+Combinators return combinable rules, so they nest.
+
+Two kinds of rule coexist, and only one is combinable. A hand-written middleware
+`Rule` and a `canUser.onResult(...)` rule both need to run the resolver to reach
+a verdict, so they cannot be one branch of an `or`. Passing one to a combinator
+throws **when the permissions map is built**, naming the operand's position —
+never silently at request time.
 
 ### 4. Apply to the schema
 
