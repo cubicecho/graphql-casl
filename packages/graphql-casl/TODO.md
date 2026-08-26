@@ -83,6 +83,11 @@ A soundness pass, taken from the lists above:
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
 
+- **A `graphql-shield` migration guide** (`shield-parity`) — the concept-mapping
+  table plus the three differences that bite, chief among them that
+  `allowExternalErrors` defaults to `true` here and `false` in shield, so a map
+  ported verbatim starts surfacing resolver errors shield was masking.
+
 - **Reaching an external policy engine** (`ecosystem-parity` E12) — documented,
   not built: a `rule()` check can await OpenFGA/Cerbos/OPA for the
   relationship-derived permissions CASL conditions cannot express, and compose

@@ -31,6 +31,20 @@ lines: a `Rule` type alias, `accept`, `deny`, `PermissionsMap`, and an
 equivalent layer carries ~16 features this has no answer for.
 
 
+MIGRATION GUIDE — DONE (2026-08)
+--------------------------------
+README section "Coming from graphql-shield": the shield-concept -> here table
+(constructors, combinators, options, validation), the three things that differ
+enough to bite, and a worked before/after showing what the port buys.
+The one that MUST stay documented: allowExternalErrors defaults to TRUE here and
+FALSE in shield, so a map ported verbatim starts leaking resolver errors that
+shield was masking. Also recorded there: `deny` rejects rather than throwing
+synchronously (every rule() rule is async), and there is no `fragment` option
+(S5 — the option cannot keep its promise under graphql-middleware).
+Still absent and named as absent rather than papered over: per-rule caching
+(S4b), inputRule (S11).
+
+
 TIER 1 — structural (no workaround exists today)
 ------------------------------------------------
 
