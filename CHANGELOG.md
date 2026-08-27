@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/cubicecho/graphql-casl/compare/v1.1.0...v1.2.0) (2026-08-27)
+
+
+### Features
+
+* fold the envelop plugin into graphql-casl as a /envelop subpath export ([cd86e70](https://github.com/cubicecho/graphql-casl/commit/cd86e7049b37f5db5dda4f047c6441548d4c5aa0))
+
 # [1.1.0](https://github.com/cubicecho/graphql-casl/compare/v1.0.0...v1.1.0) (2026-08-27)
 
 
