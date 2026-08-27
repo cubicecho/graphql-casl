@@ -33,11 +33,65 @@ npm install @envelop/core @envelop/on-resolve
 will not install them unless you ask for them. The package itself has no runtime
 dependencies.
 
+### Generating the types
+
+Every type helper is keyed off your schema's generated `Resolvers` /
+`ResolversTypes` — that is where subject names and condition fields come from,
+and it is why a typo'd type or field name is a compile error rather than a rule
+that silently never matches. Generate them with
+[GraphQL Code Generator](https://the-guild.dev/graphql/codegen):
+
+```ts
+// codegen.ts
+import type { CodegenConfig } from '@graphql-codegen/cli';
+
+export default {
+  schema: './schema.graphql',
+  generates: {
+    'src/__generated__/resolvers.ts': {
+      plugins: [
+        'typescript',
+        'typescript-resolvers',
+        '@vantreeseba/graphql-casl-codegen', // optional, see below
+      ],
+    },
+  },
+} satisfies CodegenConfig;
+```
+
+`typescript` + `typescript-resolvers` are all this library requires. The optional
+[`@vantreeseba/graphql-casl-codegen`](../graphql-casl-codegen) plugin appends the
+`AppSubjectMap`, `Subject` and `typed` bindings that
+[step 1](#1-build-abilities) otherwise writes by hand, so the subject list tracks
+the schema instead of being maintained alongside it.
+
+Codegen is not a requirement — `SubjectMap` only needs types of that *shape*, so
+a hand-written `Resolvers`/`ResolversTypes` pair works too. It is just far easier
+to keep generated ones honest.
+
 ## Quick start
 
 A todo API where callers may read any todo but update only their own. This is
 the whole shape; each step is expanded under [Usage](#usage).
 [`test/example.test.ts`](./test/example.test.ts) is this same example, under test.
+
+```graphql
+type Query {
+  todos: [Todo!]!
+  health: String!
+}
+type Mutation {
+  # ownerId is an argument so the rule can check ownership before the resolver runs
+  setDone(id: ID!, ownerId: ID!, done: Boolean!): Todo
+  deleteAllTodos: Boolean
+}
+type Todo {
+  id: ID!
+  ownerId: ID!
+  title: String!
+  done: Boolean!
+}
+```
 
 ```ts
 import { makeExecutableSchema } from '@graphql-tools/schema';
@@ -113,6 +167,40 @@ name ship guarded rather than open ([Apply to the schema](#4-apply-to-the-schema
 and `canUser.onResult` so conditions are checked against the record the resolver
 loaded rather than the arguments the client sent
 ([Post-execution rules](#post-execution-rules)).
+
+### What a caller sees
+
+Those rules, as responses — every row is asserted in
+[`test/example.test.ts`](./test/example.test.ts):
+
+| Request | Caller | Result |
+| --- | --- | --- |
+| `{ health }` | anyone | `{ "health": "ok" }` — `accept` skips the auth check entirely |
+| `{ todos { id } }` | anonymous | `Not authenticated` |
+| `{ todos { id } }` | alice | both todos |
+| `setDone(id: "t1", ownerId: "alice")` | alice | succeeds — the condition matches her ability |
+| `setDone(id: "t2", ownerId: "bob")` | alice | `Forbidden`, **and the resolver never ran** |
+| `deleteAllTodos` | anyone | `Forbidden` — `deny` never passes |
+
+A denial is an ordinary GraphQL error, so it arrives alongside whatever else
+resolved:
+
+```json
+{
+  "data": { "setDone": null },
+  "errors": [{ "message": "Forbidden", "path": ["setDone"] }]
+}
+```
+
+One sharp edge is visible in row two. `todos` is `[Todo!]!`, so a denial there
+has no `null` to land on and bubbles to the root — `data` comes back `null` and
+an authorized `health` in the same query is destroyed with it. That is standard
+GraphQL non-null propagation rather than anything this library does, and
+[`maskDenials`](#masking-denials) is the way out.
+
+Both messages are replaceable: see [Error control](#error-control) for
+`GraphQLError`s with codes, and
+[Denial reasons from CASL](#denial-reasons-from-casl) for per-rule messages.
 
 ## Concepts
 
@@ -313,6 +401,7 @@ Everything past the four steps, in rough order of how often it comes up.
 | [Enforcing the map through envelop](#enforcing-the-map-through-envelop-optional) | Yoga, Apollo 4+, a gateway, or any schema you don't own |
 | [Delegating to an external policy engine](#delegating-to-an-external-policy-engine) | Permissions are relationship-derived — OpenFGA, Cerbos, OPA, Oso |
 | [Persisting rules](#persisting-rules-optional) | Rules live in a database rather than in code |
+| [Testing your permissions](#testing-your-permissions) | You want the rules covered, including the argument-forging case |
 
 ### Post-execution rules
 
@@ -903,6 +992,54 @@ await db.savePermissionRules(build().rules);
 const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();
 const ability = buildGraphQLAbility<AppSubjectMap>(rules);
 ```
+
+### Testing your permissions
+
+A guarded schema is just a schema, so rules are testable with `graphql()` and a
+plain object for the context — no server, no transport, no mocking of this
+library:
+
+```ts
+import { makeExecutableSchema } from '@graphql-tools/schema';
+import { graphql } from 'graphql';
+import { expect, it } from 'vitest';
+
+const schema = applyPermissions<Resolvers>(
+  makeExecutableSchema({ typeDefs, resolvers }),
+  permissions,
+);
+
+const run = (source: string, ctx: Context) => graphql({ schema, source, contextValue: ctx });
+
+it('refuses to complete someone else’s todo', async () => {
+  const result = await run(
+    'mutation { setDone(id: "t2", ownerId: "bob", done: true) { id } }',
+    { userId: 'alice' },
+  );
+
+  expect(result.errors?.[0]?.message).toBe('Forbidden');
+});
+```
+
+Three assertions are worth making that a passing/failing check alone does not
+cover:
+
+- **That the resolver never ran.** A rule that denies *after* the side effect
+  has already happened still reports `Forbidden`, so asserting the error is not
+  enough — assert the data is unchanged too.
+- **The forged-argument case.** Pass your own owner id alongside another user's
+  record id. The gate passes, so what you are testing is that the resolver
+  scoped its lookup by the field the rule authorized. This is the
+  [IDOR shape](#3-declare-the-permissions-map), and it is the test most worth
+  having.
+- **The anonymous case for every public field.** `accept` and a missing map
+  entry behave identically until you add `fallbackRule: deny`, at which point
+  only the explicit `accept` still answers.
+
+Because `applyPermissions` validates the map against the schema as it wraps it,
+building the schema in a test is itself a check: a rule naming a field that no
+longer exists throws a `PermissionsError` before any query runs. A single test
+that only constructs the guarded schema will catch a whole class of drift.
 
 ## Coming from `graphql-shield`
 
