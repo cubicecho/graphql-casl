@@ -1,6 +1,6 @@
 {
   "name": "@vantreeseba/graphql-casl-envelop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Envelop/Yoga plugin that enforces a @vantreeseba/graphql-casl permissions map, without graphql-middleware.",
   "keywords": [
     "graphql",
