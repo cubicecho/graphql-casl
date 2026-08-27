@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/cubicecho/graphql-casl/compare/v1.2.0...v1.2.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **release:** publish each workspace in its own npm invocation ([1b0e9fc](https://github.com/cubicecho/graphql-casl/commit/1b0e9fc68748305667a8151ab347d30f737eae72))
+
 # [1.2.0](https://github.com/cubicecho/graphql-casl/compare/v1.1.0...v1.2.0) (2026-08-27)
 
 
