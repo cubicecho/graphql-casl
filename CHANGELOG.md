@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/cubicecho/graphql-casl/compare/v1.2.1...v1.3.0) (2026-08-27)
+
+
+### Features
+
+* add subjectsOf, a zero-argument replacement for createSubjects ([eb06d54](https://github.com/cubicecho/graphql-casl/commit/eb06d54bb68d8b04075dbba546da61d364b28b48))
+
 ## [1.2.1](https://github.com/cubicecho/graphql-casl/compare/v1.2.0...v1.2.1) (2026-08-27)
 
 
