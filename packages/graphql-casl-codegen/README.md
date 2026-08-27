@@ -55,9 +55,12 @@ export const typed = createTyped<AppSubjectMap>();
 export const ability = () => createGraphQLAbility<AppSubjectMap>();
 ```
 
-Root operation types (`Query`/`Mutation`/`Subscription`) and introspection types
-are excluded; subjects are sorted for deterministic output. `createCan` stays in
-your app code because it needs your `Context` and auth function.
+Object, interface and union types all become subjects — `typescript-resolvers`
+emits resolver entries for interfaces and unions too, so `SubjectMap` includes
+them and the generated `Subject` const must match it. Root operation types
+(`Query`/`Mutation`/`Subscription`) and introspection types are excluded, and
+subjects are sorted for deterministic output. `createCan` stays in your app code
+because it needs your `Context` and auth function.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 # @vantreeseba/graphql-casl
 
-A [`graphql-middleware`](https://github.com/dimagi/graphql-middleware) plugin for
+A [`graphql-middleware`](https://github.com/maticzav/graphql-middleware) plugin for
 defining [CASL](https://casl.js.org/) permission rules that apply to your GraphQL
 resolvers. Declare rules per type/field in a `PermissionsMap`; each rule runs
 before the underlying resolver and throws if the request is not allowed.
@@ -32,6 +32,87 @@ npm install @envelop/core @envelop/on-resolve
 `@envelop/core` and `@envelop/on-resolve` are *optional* peer dependencies, so npm
 will not install them unless you ask for them. The package itself has no runtime
 dependencies.
+
+## Quick start
+
+A todo API where callers may read any todo but update only their own. This is
+the whole shape; each step is expanded under [Usage](#usage).
+[`test/example.test.ts`](./test/example.test.ts) is this same example, under test.
+
+```ts
+import { makeExecutableSchema } from '@graphql-tools/schema';
+import {
+  Actions,
+  accept,
+  applyPermissions,
+  createCan,
+  createGraphQLAbility,
+  createSubjects,
+  createTyped,
+  deny,
+  type PermissionsMap,
+  type SubjectMap,
+} from '@vantreeseba/graphql-casl';
+import type {
+  MutationSetDoneArgs,
+  Resolvers,
+  ResolversTypes,
+} from './__generated__/resolvers.js';
+
+interface Context {
+  userId?: string;
+}
+
+// Subjects are derived from your generated types — no domain names hand-listed.
+type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
+const typed = createTyped<AppSubjectMap>();
+const Subject = createSubjects<AppSubjectMap>()({ Todo: 'Todo' } as const);
+
+// 1. What each caller may do.
+function abilitiesFor(userId: string | undefined) {
+  const { can, build } = createGraphQLAbility<AppSubjectMap>();
+  if (!userId) return build(); // no rules ⇒ anonymous callers can do nothing
+  can(Actions.read, Subject.Todo);
+  can(Actions.update, Subject.Todo, { ownerId: userId }); // only your own
+  return build();
+}
+
+// 2. Bind abilities and the auth check to your context.
+const canUser = createCan<Context, AppSubjectMap>(
+  async (ctx) => abilitiesFor(ctx.userId),
+  (ctx) => ctx.userId != null,
+  typed, // tags subjects with __typename so conditions can be checked
+);
+
+// 3. Say which rule guards which field.
+const permissions: PermissionsMap<Resolvers> = {
+  Query: {
+    todos: canUser(Actions.read, Subject.Todo),
+    health: accept, // public
+  },
+  Mutation: {
+    setDone: canUser(Actions.update, Subject.Todo, (args: MutationSetDoneArgs) => ({
+      ownerId: args.ownerId,
+    })),
+    deleteAllTodos: deny, // nobody, ever
+  },
+};
+
+// 4. Apply the map to the schema (`typeDefs` and `resolvers` are your own).
+const schema = applyPermissions<Resolvers>(
+  makeExecutableSchema({ typeDefs, resolvers }),
+  permissions,
+);
+```
+
+An anonymous caller gets `Not authenticated`; a signed-in one gets `Forbidden`
+on someone else's todo, and `health` answers either way.
+
+Two things to reach for next: `fallbackRule: deny` so fields the map doesn't
+name ship guarded rather than open ([Apply to the schema](#4-apply-to-the-schema)),
+and `canUser.onResult` so conditions are checked against the record the resolver
+loaded rather than the arguments the client sent
+([Post-execution rules](#post-execution-rules)).
 
 ## Concepts
 
@@ -72,9 +153,12 @@ can('read', 'Note', { version: { $gt: 2 }, title: { $ne: '' } });
 
 Operators are CASL's mongo set (`$eq`, `$ne`, `$in`, `$nin`, `$gt`, `$gte`,
 `$lt`, `$lte`, …). Conditions are plain JSON, so you can store rules in a database
-and rehydrate with `buildGraphQLAbility` (see [Persisting rules](#5-persisting-rules-optional)).
+and rehydrate with `buildGraphQLAbility` (see [Persisting rules](#persisting-rules-optional)).
 
 ## Usage
+
+The four steps below are the quick start above, one piece at a time.
+Everything past step 4 is optional depth — see [Guides](#guides).
 
 ### 1. Build abilities
 
@@ -173,11 +257,69 @@ export const permissions: PermissionsMap<Resolvers> = {
 > possibility check is deliberate (a list field whose rows you filter inside the
 > resolver).
 
+### 4. Apply to the schema
+
+```ts
+import { applyPermissions } from '@vantreeseba/graphql-casl';
+
+const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions);
+```
+
+`applyPermissions` keeps `permissions` typed as a `PermissionsMap<Resolvers>`, so
+a mistyped type or field name is caught at compile time. It also re-checks the map
+against the runtime schema and throws a `PermissionsError` listing **every**
+problem at once — which is what catches rules loaded from a database, written in
+plain JavaScript, or built against a schema that has since drifted.
+
+Entries that would be silently inert are rejected rather than ignored: a rule on
+an interface or union type never runs (fields resolve against the concrete object
+type), and introspection types cannot be guarded. In an authorization library, a
+rule that quietly never runs is the worst failure mode, so it is an error.
+
+Types not named in the map are left **unguarded** — the map is a whitelist of what
+to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
+field added to the schema later ships protected rather than open:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  fallbackRule: deny, // deny by default; the map is now the allow-list
+});
+```
+
+Introspection is never guarded, so `fallbackRule: deny` does not break it.
+
+> **Note:** the "deny by default" that CASL gives you is about *abilities* — an
+> action with no matching rule is denied. That is a different guarantee from
+> *schema coverage*, which is what `fallbackRule` provides. You want both.
+
+`fallbackRule` is one of five options. The other four govern what a denial looks
+like to the client — see [Error control](#error-control).
+
+## Guides
+
+Everything past the four steps, in rough order of how often it comes up.
+
+| Guide | Use it when |
+| --- | --- |
+| [Post-execution rules](#post-execution-rules) | The condition belongs to the record the resolver loads, not to the client's arguments |
+| [Field-level rules](#field-level-rules) | A single field of a type needs its own rule |
+| [Field permissions from the ability](#field-permissions-from-the-ability) | The ability already lists fields (`can('read', 'User', ['id'])`) and you don't want to restate them |
+| [Combining rules](#combining-rules) | A field needs more than one check — `and` / `or` / `not` / `chain` / `race` / `wrap` |
+| [Error control](#error-control) | `Forbidden` isn't enough: you need codes, masking, or a look at what actually broke |
+| [Wildcards](#wildcards) | One rule should cover a whole type, or one field across every type |
+| [Row-level filtering](#row-level-filtering) | A list should return fewer rows rather than be denied outright |
+| [Scoping generated resolvers](#scoping-generated-resolvers-optional) | The resolver is generated and you can only reach its arguments |
+| [Using the map without `graphql-middleware`](#using-the-map-without-graphql-middleware) | You're building your own integration |
+| [Enforcing the map through envelop](#enforcing-the-map-through-envelop-optional) | Yoga, Apollo 4+, a gateway, or any schema you don't own |
+| [Delegating to an external policy engine](#delegating-to-an-external-policy-engine) | Permissions are relationship-derived — OpenFGA, Cerbos, OPA, Oso |
+| [Persisting rules](#persisting-rules-optional) | Rules live in a database rather than in code |
+
 ### Post-execution rules
 
 `canUser.onResult` runs the resolver first and checks the ability against **what
 it returned**, so conditions are evaluated on the real record rather than on what
-the client asserted. This is the direct fix for the IDOR shape above.
+the client asserted. This is the direct fix for the IDOR shape warned about in
+[step 3](#3-declare-the-permissions-map).
 
 ```ts
 export const permissions: PermissionsMap<Resolvers> = {
@@ -345,41 +487,6 @@ be an operand of `and` / `or` / `not` / `chain` / `race`. When every operand
 *is* combinable, use `chain` instead: same meaning, no resolver nesting, and the
 result stays combinable.
 
-### 4. Apply to the schema
-
-```ts
-import { applyPermissions } from '@vantreeseba/graphql-casl';
-
-const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions);
-```
-
-`applyPermissions` keeps `permissions` typed as a `PermissionsMap<Resolvers>`, so
-a mistyped type or field name is caught at compile time. It also re-checks the map
-against the runtime schema and throws a `PermissionsError` listing **every**
-problem at once — which is what catches rules loaded from a database, written in
-plain JavaScript, or built against a schema that has since drifted.
-
-Entries that would be silently inert are rejected rather than ignored: a rule on
-an interface or union type never runs (fields resolve against the concrete object
-type), and introspection types cannot be guarded. In an authorization library, a
-rule that quietly never runs is the worst failure mode, so it is an error.
-
-Types not named in the map are left **unguarded** — the map is a whitelist of what
-to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
-field added to the schema later ships protected rather than open:
-
-```ts
-const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
-  fallbackRule: deny, // deny by default; the map is now the allow-list
-});
-```
-
-Introspection is never guarded, so `fallbackRule: deny` does not break it.
-
-> **Note:** the "deny by default" that CASL gives you is about *abilities* — an
-> action with no matching rule is denied. That is a different guarantee from
-> *schema coverage*, which is what `fallbackRule` provides. You want both.
-
 ### Error control
 
 By default a denial throws `Error('Forbidden')`, which carries no code and tells
@@ -485,79 +592,6 @@ From highest precedence to lowest:
 Field names under `'*'` are still checked — against every field in the schema, so a
 typo that matches no type at all is an error.
 
-### Using the map without `graphql-middleware`
-
-`applyPermissions` is `resolvePermissions` plus `graphql-middleware`.
-`resolvePermissions` stops one step earlier and hands back the per-field lookup,
-so the same map can be enforced through another integration — the envelop entry
-point below, an Apollo plugin, hand-wrapped resolvers — with identical wildcard
-precedence, `fallbackRule` coverage, error control and masking:
-
-```ts
-const permissionFor = resolvePermissions<Resolvers>(schema, permissions, options);
-
-const rule = permissionFor(info.parentType.name, info.fieldName);
-return rule
-  ? rule(resolver, root, args, context, info)
-  : resolver(root, args, context, info);
-```
-
-The map is validated up front exactly as `applyPermissions` validates it, and
-lookups are memoized, so calling it per resolver call is cheap.
-
-The envelop integration below is this pattern, already written.
-
-### Enforcing the map through envelop (optional)
-
-`applyPermissions` wraps a schema up front, which needs a schema you own and can
-replace. That is awkward on Apollo Server 4+, on federated gateways, and anywhere
-the schema is built or swapped for you. `useGraphQLCasl` hooks resolvers as
-[envelop](https://the-guild.dev/graphql/envelop) hands them over, so the same map
-works wherever envelop does: GraphQL Yoga, Apollo with the envelop integration,
-Hive Gateway, `graphql-ws`.
-
-```ts
-import { createYoga } from 'graphql-yoga';
-import { deny } from '@vantreeseba/graphql-casl';
-import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
-
-const yoga = createYoga({
-  schema,
-  plugins: [
-    useGraphQLCasl<Resolvers>({
-      permissions,
-      fallbackRule: deny,   // every option `applyPermissions` takes
-      maskDenials: true,
-    }),
-  ],
-});
-```
-
-`options.permissions` is the map; every other key is an
-[`ApplyPermissionsOptions`](#error-control) field. Wildcard precedence,
-`fallbackRule` coverage, error control and masking all behave exactly as they do
-under `applyPermissions` — the plugin calls `resolvePermissions` rather than
-reimplementing any of it. Beyond that:
-
-- **The map is validated when the schema arrives**, not on the first query that
-  touches the offending field, so a map naming a type or field the schema does
-  not have throws a `PermissionsError` while the server is being built. A schema
-  swapped at runtime is re-validated and re-resolved.
-- **Introspection is never guarded**, even under `fallbackRule: deny`.
-- **A field with no resolver of its own is guarded too** — the default resolver
-  is wrapped like any other, which is what makes a `canUser.fields(...)` rule on
-  a plain object type work.
-- **Each field is wrapped once**, however many times it resolves.
-
-| | `applyPermissions` | `useGraphQLCasl` |
-|---|---|---|
-| Mechanism | wraps the schema via `graphql-middleware` | wraps resolvers via envelop |
-| Needs a schema you can replace | yes | no |
-| Works outside envelop | yes | no |
-| Dynamic / swapped schemas | re-wrap yourself | handled |
-
-Use one or the other, not both — two layers would run every rule twice.
-
 ### Row-level filtering
 
 A rule is a gate: it allows or denies a whole field. That is the wrong shape for
@@ -653,6 +687,9 @@ onto whatever filter the client sent:
 
 ```ts
 import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
+// `drizzleFilters` is a copyable recipe, not an export — see
+// test/recipes/drizzleGraphql.ts, and the note under Row-level filtering.
+import { drizzleFilters } from './drizzleFilters.js';
 
 const permissions = {
   Query: {
@@ -704,6 +741,79 @@ archives only your own. Note the asymmetry with `onResult`, which refuses
 mutations outright: scoping happens *before* the resolver, so nothing has
 happened yet when it decides. Keep `onDenyAll: 'deny'` there, though: a
 forbidden delete should fail, not succeed while matching nothing.
+
+### Using the map without `graphql-middleware`
+
+`applyPermissions` is `resolvePermissions` plus `graphql-middleware`.
+`resolvePermissions` stops one step earlier and hands back the per-field lookup,
+so the same map can be enforced through another integration — the envelop entry
+point below, an Apollo plugin, hand-wrapped resolvers — with identical wildcard
+precedence, `fallbackRule` coverage, error control and masking:
+
+```ts
+const permissionFor = resolvePermissions<Resolvers>(schema, permissions, options);
+
+const rule = permissionFor(info.parentType.name, info.fieldName);
+return rule
+  ? rule(resolver, root, args, context, info)
+  : resolver(root, args, context, info);
+```
+
+The map is validated up front exactly as `applyPermissions` validates it, and
+lookups are memoized, so calling it per resolver call is cheap.
+
+The envelop integration below is this pattern, already written.
+
+### Enforcing the map through envelop (optional)
+
+`applyPermissions` wraps a schema up front, which needs a schema you own and can
+replace. That is awkward on Apollo Server 4+, on federated gateways, and anywhere
+the schema is built or swapped for you. `useGraphQLCasl` hooks resolvers as
+[envelop](https://the-guild.dev/graphql/envelop) hands them over, so the same map
+works wherever envelop does: GraphQL Yoga, Apollo with the envelop integration,
+Hive Gateway, `graphql-ws`.
+
+```ts
+import { createYoga } from 'graphql-yoga';
+import { deny } from '@vantreeseba/graphql-casl';
+import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
+
+const yoga = createYoga({
+  schema,
+  plugins: [
+    useGraphQLCasl<Resolvers>({
+      permissions,
+      fallbackRule: deny,   // every option `applyPermissions` takes
+      maskDenials: true,
+    }),
+  ],
+});
+```
+
+`options.permissions` is the map; every other key is an
+[`ApplyPermissionsOptions`](#error-control) field. Wildcard precedence,
+`fallbackRule` coverage, error control and masking all behave exactly as they do
+under `applyPermissions` — the plugin calls `resolvePermissions` rather than
+reimplementing any of it. Beyond that:
+
+- **The map is validated when the schema arrives**, not on the first query that
+  touches the offending field, so a map naming a type or field the schema does
+  not have throws a `PermissionsError` while the server is being built. A schema
+  swapped at runtime is re-validated and re-resolved.
+- **Introspection is never guarded**, even under `fallbackRule: deny`.
+- **A field with no resolver of its own is guarded too** — the default resolver
+  is wrapped like any other, which is what makes a `canUser.fields(...)` rule on
+  a plain object type work.
+- **Each field is wrapped once**, however many times it resolves.
+
+| | `applyPermissions` | `useGraphQLCasl` |
+|---|---|---|
+| Mechanism | wraps the schema via `graphql-middleware` | wraps resolvers via envelop |
+| Needs a schema you can replace | yes | no |
+| Works outside envelop | yes | no |
+| Dynamic / swapped schemas | re-wrap yourself | handled |
+
+Use one or the other, not both — two layers would run every rule twice.
 
 ### Delegating to an external policy engine
 
@@ -775,7 +885,7 @@ them one by one.
 [opa]: https://www.openpolicyagent.org
 [oso]: https://www.osohq.com
 
-### 5. Persisting rules (optional)
+### Persisting rules (optional)
 
 Rules are plain JSON, so they can be stored in a database and loaded/cached at
 startup. Read `builder.rules` (or `ability.rules`) to persist them, and rebuild

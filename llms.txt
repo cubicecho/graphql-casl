@@ -1,6 +1,6 @@
 # @vantreeseba/graphql-casl
 
-> A [`graphql-middleware`](https://github.com/dimagi/graphql-middleware) plugin for defining [CASL](https://casl.js.org/) permission rules that apply to GraphQL resolvers. Declare rules per type/field in a `PermissionsMap`; each rule runs before the underlying resolver and throws if the request is not allowed. The library is **schema-agnostic** — subject names and condition types are derived from your own generated `Resolvers` / `ResolversTypes`, so there is no manual type listing.
+> A [`graphql-middleware`](https://github.com/maticzav/graphql-middleware) plugin for defining [CASL](https://casl.js.org/) permission rules that apply to GraphQL resolvers. Declare rules per type/field in a `PermissionsMap`; each rule runs before the underlying resolver and throws if the request is not allowed. The library is **schema-agnostic** — subject names and condition types are derived from your own generated `Resolvers` / `ResolversTypes`, so there is no manual type listing.
 
 ## Install
 
@@ -118,7 +118,7 @@ export const permissions: PermissionsMap<Resolvers> = {
     deleteNotes: deny,        // nobody, ever
     updateNotes: and(
       isNotBanned,
-      canUser<MutationUpdateNotesArgs>(Actions.update, Subject.Note, (args) => ({
+      canUser(Actions.update, Subject.Note, (args: MutationUpdateNotesArgs) => ({
         userId: args.where?.userId?.eq,
       })),
     ),
@@ -161,6 +161,7 @@ A `FilterAdapter` swaps the dialect. One with `rule(conditions, inverted)` repla
 import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
 
 const permissions = {
+  // drizzleFilters is a copyable recipe (test/recipes/drizzleGraphql.ts), not an export
   Query: { notes: scopeArgs(canUser, Actions.read, 'Note', { adapter: drizzleFilters }) },
 } satisfies PermissionsMap<Resolvers>;
 ```
@@ -210,5 +211,5 @@ const yoga = createYoga({
 - [README.md](./README.md) — full usage documentation
 - [AGENTS.md](./AGENTS.md) — project guidance, conventions, and structure
 - [CASL documentation](https://casl.js.org/) — the underlying authorization library
-- [graphql-middleware](https://github.com/dimagi/graphql-middleware) — the middleware layer this plugin builds on
+- [graphql-middleware](https://github.com/maticzav/graphql-middleware) — the middleware layer this plugin builds on
 - API reference — generated with `npm run docs` (TypeDoc + Markdown plugin), published to the repository's GitHub Wiki on every push to `main`
