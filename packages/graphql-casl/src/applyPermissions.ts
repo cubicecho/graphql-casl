@@ -358,10 +358,11 @@ export type PermissionResolver = (typeName: string, fieldName: string) => Rule |
  * without applying it to anything.
  *
  * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
- * enforce the same map through another integration — an envelop plugin, an
- * Apollo plugin, hand-wrapped resolvers — and get identical wildcard precedence,
+ * enforce the same map through another integration — an Apollo plugin,
+ * hand-wrapped resolvers — and get identical wildcard precedence,
  * `fallbackRule` coverage, error control and masking, rather than a second
- * implementation that drifts.
+ * implementation that drifts. The `@vantreeseba/graphql-casl/envelop` entry
+ * point is exactly that, already written.
  *
  * The map is validated up front, exactly as `applyPermissions` validates it, so
  * a mismatched map fails at wiring time rather than mid-query. Lookups are

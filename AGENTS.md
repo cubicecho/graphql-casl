@@ -7,12 +7,11 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
 - **`packages/graphql-casl`** — the runtime: a `graphql-middleware` plugin for
   defining [CASL](https://casl.js.org/) permission rules on resolvers. Rules are
   declared per type/field in a `PermissionsMap` and enforced before the resolver runs.
+  Two optional subpath exports ride along: `/scoping` (`scopeArgs`) and
+  `/envelop` (`useGraphQLCasl`, for hosts where the schema cannot be wrapped up
+  front — Apollo Server 4+, federation, dynamically swapped schemas).
 - **`packages/graphql-casl-codegen`** — a GraphQL Code Generator plugin that emits
   subject bindings (`SubjectMap`, `Subject`, `typed`, `ability`) from a schema.
-- **`packages/graphql-casl-envelop`** — an envelop/Yoga plugin that enforces the
-  same `PermissionsMap` through envelop instead of `graphql-middleware`, for
-  hosts where the schema cannot be wrapped up front (Apollo Server 4+,
-  federation, dynamically swapped schemas).
 
 ## Specifications
 
@@ -30,13 +29,14 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
 - **API docs:** TypeDoc (`npm run docs`) — `packages/graphql-casl/docs/api/`
   (generated, not committed; CI publishes them to the GitHub Wiki on `main`)
 - **graphql-casl peer deps:** `@casl/ability >=6`, `graphql >=16`, `graphql-middleware >=6`;
-  no runtime dependencies
+  no runtime dependencies. `@envelop/core >=5` and `@envelop/on-resolve >=7` are
+  **optional** peers (`peerDependenciesMeta`) — npm installs them only for
+  consumers who import `/envelop`, which is how that entry point can have a real
+  runtime requirement without the main entry point growing a dependency. Keep it
+  that way: `src/index.ts` must never import `src/envelop.ts`, or `dist/index.d.ts`
+  would reference `@envelop/core` for everyone
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
-- **graphql-casl-envelop peer deps:** `@envelop/core >=5`, `graphql >=16`,
-  `@vantreeseba/graphql-casl >=1`; it does have one runtime dependency,
-  `@envelop/on-resolve` (the official envelop helper for wrapping resolvers) —
-  the zero-dependency rule above is the *runtime* package's
 - **Releases:** a single, repo-wide version via root `semantic-release` (one `v${version}`
   tag); `@semantic-release/exec` publishes every workspace together
 
@@ -58,6 +58,8 @@ packages/
       conditions.ts       — the FilterAdapter union (skeleton/leaf) + the conditions walker
       scoping.ts          — OPTIONAL subpath export `/scoping`: scopeArgs rewrites a field's
                             filter argument instead of allowing or denying the field
+      envelop.ts          — OPTIONAL subpath export `/envelop`: useGraphQLCasl enforces the
+                            same map through envelop instead of graphql-middleware
       internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       subjects.ts         — createSubjects / createTyped
@@ -71,6 +73,7 @@ packages/
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
+      envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit
       integration/permissions.integration.test.ts — end-to-end test against an executable schema
       integration/scoping.integration.test.ts     — scopeArgs (and wrap) against a
                                                     generated-CRUD-shaped schema
@@ -80,9 +83,6 @@ packages/
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests
-  graphql-casl-envelop/
-    src/index.ts        — useGraphQLCasl: resolvePermissions + @envelop/on-resolve
-    test/plugin.test.ts — end-to-end tests through envelop's testkit
 vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a single instance
 ```
 

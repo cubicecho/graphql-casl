@@ -102,12 +102,13 @@ A soundness pass, taken from the lists above:
   to get wrong — a PDP outage must not be reported as a denial, and the pending
   promise (not the resolved value) is what to cache per request.
 
-- **An envelop/Yoga plugin** (`ecosystem-parity` E6) —
-  [`@vantreeseba/graphql-casl-envelop`](../graphql-casl-envelop) enforces the
-  same map through envelop instead of `graphql-middleware`, for hosts where the
-  schema cannot be wrapped up front (Apollo Server 4+, federation, dynamically
-  swapped schemas). It shares `resolvePermissions` with `applyPermissions`, so
-  the two integrations cannot drift.
+- **An envelop/Yoga plugin** (`ecosystem-parity` E6) — the `/envelop` subpath
+  export ([`src/envelop.ts`](./src/envelop.ts)) enforces the same map through
+  envelop instead of `graphql-middleware`, for hosts where the schema cannot be
+  wrapped up front (Apollo Server 4+, federation, dynamically swapped schemas).
+  It shares `resolvePermissions` with `applyPermissions`, so the two integrations
+  cannot drift. It shipped briefly as a separate `@vantreeseba/graphql-casl-envelop`
+  package and was folded back in before that package was ever published.
 
 Note on fragments (`shield-parity` S5 / `ecosystem-parity` E2): the earlier plan
 was to gate parent-aware rules behind fragment support, so the fields a rule
@@ -119,5 +120,5 @@ by graphql-tools *delegation*, not by plain execution. Shipping a `fragment`
 option would therefore be an unkept promise, which is the failure mode this
 library refuses everywhere else. Parent-aware rules shipped without it, with the
 projecting-resolver caveat documented instead. Real selection-set injection has
-to happen before execution — i.e. as part of the envelop plugin work
-(`ecosystem-parity` E6).
+to happen before execution — i.e. as part of the `/envelop` entry point
+(`ecosystem-parity` E6), which sees resolvers early enough to do it.

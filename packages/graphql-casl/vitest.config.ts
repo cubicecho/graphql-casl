@@ -3,7 +3,9 @@ import { defineConfig } from 'vitest/config';
 // graphql throws "another module or realm" when it is loaded more than once.
 // Under vitest's SSR loader the package can be pulled in as both CJS and ESM,
 // so dedupe it to a single instance and inline it (plus the graphql-tools /
-// middleware packages that also import it) through vitest's transform.
+// middleware / envelop packages that also import it) through vitest's transform:
+// an externalized dependency gets the CJS build while the inlined source gets
+// the ESM one — two realms, one schema.
 export default defineConfig({
   resolve: {
     dedupe: ['graphql'],
@@ -11,7 +13,7 @@ export default defineConfig({
   test: {
     server: {
       deps: {
-        inline: ['graphql', /@graphql-tools\//, 'graphql-middleware'],
+        inline: ['graphql', /@graphql-tools\//, /@envelop\//, 'graphql-middleware'],
       },
     },
     coverage: {

@@ -1,5 +1,8 @@
 import { createTestkit } from '@envelop/testing';
 import { makeExecutableSchema } from '@graphql-tools/schema';
+import type { ExecutionResult } from 'graphql';
+import { describe, expect, it } from 'vitest';
+import { useGraphQLCasl } from '../src/envelop.js';
 import {
   Actions,
   accept,
@@ -10,10 +13,7 @@ import {
   PermissionsError,
   type PermissionsMap,
   rule,
-} from '@vantreeseba/graphql-casl';
-import type { ExecutionResult } from 'graphql';
-import { describe, expect, it } from 'vitest';
-import { useGraphQLCasl } from '../src/index.js';
+} from '../src/index.js';
 
 type M = { Note: { id: string; userId: string; body: string; secret: string } };
 

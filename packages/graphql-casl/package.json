@@ -1,7 +1,7 @@
 {
   "name": "@vantreeseba/graphql-casl",
   "version": "1.1.0",
-  "description": "GraphQL middleware plugin for defining CASL permission rules on resolvers.",
+  "description": "GraphQL middleware plugin for defining CASL permission rules on resolvers, with optional argument scoping and an envelop/Yoga integration.",
   "keywords": [
     "graphql",
     "graphql-middleware",
@@ -13,7 +13,9 @@
     "abac",
     "resolvers",
     "middleware",
-    "typescript"
+    "typescript",
+    "envelop",
+    "graphql-yoga"
   ],
   "type": "module",
   "repository": {
@@ -36,6 +38,10 @@
       "types": "./dist/scoping.d.ts",
       "import": "./dist/scoping.js"
     },
+    "./envelop": {
+      "types": "./dist/envelop.d.ts",
+      "import": "./dist/envelop.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -55,11 +61,24 @@
   },
   "peerDependencies": {
     "@casl/ability": ">=6",
+    "@envelop/core": ">=5",
+    "@envelop/on-resolve": ">=7",
     "graphql": ">=16",
     "graphql-middleware": ">=6"
   },
+  "peerDependenciesMeta": {
+    "@envelop/core": {
+      "optional": true
+    },
+    "@envelop/on-resolve": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@casl/ability": "^7.0.0",
+    "@envelop/core": "^5.6.0",
+    "@envelop/on-resolve": "^7.0.0",
+    "@envelop/testing": "^10.2.0",
     "@graphql-tools/schema": "^10.0.33",
     "graphql": "^16.14.0",
     "graphql-middleware": "^6.1.35"

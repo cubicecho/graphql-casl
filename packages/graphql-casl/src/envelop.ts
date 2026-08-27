@@ -1,23 +1,27 @@
 /**
- * `@vantreeseba/graphql-casl-envelop` — enforce a `PermissionsMap` through
- * [envelop](https://the-guild.dev/graphql/envelop) instead of
- * `graphql-middleware`.
+ * The envelop integration — the optional entry point,
+ * `@vantreeseba/graphql-casl/envelop`.
  *
- * `applyPermissions` wraps a schema up front, which needs a schema you own and
- * can replace. That is awkward on Apollo Server 4+, on federated gateways, and
- * anywhere the schema is built or swapped for you. This plugin hooks resolvers
- * as envelop hands them over, so the same map works wherever envelop does —
- * GraphQL Yoga, Apollo with the envelop integration, Hive Gateway, `graphql-ws`.
+ * `applyPermissions` wraps a schema up front, which needs a schema you own
+ * and can replace. That is awkward on Apollo Server 4+, on federated gateways,
+ * and anywhere the schema is built or swapped for you. {@link useGraphQLCasl}
+ * hooks resolvers as [envelop](https://the-guild.dev/graphql/envelop) hands them
+ * over, so the same map works wherever envelop does — GraphQL Yoga, Apollo with
+ * the envelop integration, Hive Gateway, `graphql-ws`.
  *
  * The permission logic itself is not reimplemented here: the plugin calls
- * `resolvePermissions` from the runtime package, so wildcard precedence,
- * `fallbackRule` coverage, error control, masking and map validation behave
- * exactly as they do under `applyPermissions`.
+ * {@link resolvePermissions}, so wildcard precedence, `fallbackRule` coverage,
+ * error control, masking and map validation behave exactly as they do under
+ * `applyPermissions`.
+ *
+ * `@envelop/core` and `@envelop/on-resolve` are **optional** peer dependencies —
+ * they are only needed by consumers who import this entry point, which is why
+ * the main entry point still has no runtime dependencies of its own.
  *
  * @example
  * ```ts
  * import { createYoga } from 'graphql-yoga';
- * import { useGraphQLCasl } from '@vantreeseba/graphql-casl-envelop';
+ * import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
  *
  * const yoga = createYoga({
  *   schema,
@@ -30,13 +34,13 @@
 
 import type { Plugin } from '@envelop/core';
 import { useOnResolve } from '@envelop/on-resolve';
+import type { GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
   type PermissionResolver,
-  type PermissionsMap,
   resolvePermissions,
-} from '@vantreeseba/graphql-casl';
-import type { GraphQLSchema } from 'graphql';
+} from './applyPermissions.js';
+import type { PermissionsMap } from './rules.js';
 
 /**
  * Options for {@link useGraphQLCasl}: the permissions map, plus every option

@@ -165,8 +165,15 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         Worth noting graphql-authz explicitly advertises "doesn't mutate the
         executable schema" as a benefit — applyPermissions does mutate it.
 
-        DONE (2026-08) — shipped as packages/graphql-casl-envelop,
+        DONE (2026-08) — shipped as the optional subpath export
+        `@vantreeseba/graphql-casl/envelop` (packages/graphql-casl/src/envelop.ts),
         `useGraphQLCasl({ permissions, ...applyPermissionsOptions })`.
+          - It was briefly a separate package, packages/graphql-casl-envelop,
+            and was folded into the runtime as a subpath export (2026-08-27)
+            before that package was ever published. @envelop/core and
+            @envelop/on-resolve became OPTIONAL peer deps of the runtime, so the
+            main entry point keeps its zero-runtime-dependency property and only
+            consumers who import /envelop install them.
           - Built on @envelop/on-resolve, NOT on wrapExecuteFn and NOT on
             graphql-middleware. That hook hands over each field's resolver as
             execution reaches it, which is what lets the same PermissionsMap run

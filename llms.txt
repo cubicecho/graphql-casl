@@ -10,9 +10,9 @@ npm install @vantreeseba/graphql-casl
 npm install @casl/ability graphql graphql-middleware
 ```
 
-Requires `@casl/ability >=6`, `graphql >=16`, and `graphql-middleware >=6` as peer dependencies. TypeScript 5, ESM only. No runtime dependencies.
+Requires `@casl/ability >=6`, `graphql >=16`, and `graphql-middleware >=6` as peer dependencies. `@envelop/core >=5` and `@envelop/on-resolve >=7` are **optional** peer dependencies, installed only by consumers who import the `/envelop` entry point. TypeScript 5, ESM only. No runtime dependencies.
 
-Two optional sibling packages: `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings) and `@vantreeseba/graphql-casl-envelop` (enforces the same map through envelop instead of `graphql-middleware`).
+One optional sibling package, `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings), plus two optional entry points on the runtime itself: `@vantreeseba/graphql-casl/scoping` (rewrites a field's filter argument instead of allowing or denying it) and `@vantreeseba/graphql-casl/envelop` (enforces the same map through envelop instead of `graphql-middleware`).
 
 ## Public API
 
@@ -37,9 +37,10 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `PermissionsError` | Thrown when the map names a type or field the schema lacks; aggregates every problem. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability's rules into a query filter for row-level filtering. `null` means deny-all; `{}` means no restriction. |
 | `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable; compose it with `wrap`. |
+| `useGraphQLCasl<Resolvers>(options)` | **Subpath export `@vantreeseba/graphql-casl/envelop`.** An envelop `Plugin` that enforces the same `PermissionsMap` by wrapping resolvers as envelop hands them over, instead of wrapping the schema with `graphql-middleware`. `options.permissions` is the map; every other key is an `ApplyPermissionsOptions` field. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
-Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`.
+Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`. From `/envelop`: `GraphQLCaslPluginOptions`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check throws `Forbidden`, or the matched rule's `cannot(...).because('...')` reason.
 
@@ -166,6 +167,19 @@ const permissions = {
 
 Options: `adapter` (required), `into` (default `'where'`), `merge` (default `adapter.and([clientFilter, scope])`), `onDenyAll` (`'deny'` throws `Forbidden`, `'nothing'` injects `adapter.nothing()`). Caveats: a scoped field returns fewer rows rather than an error; injected arguments bypass GraphQL input coercion, so a wrong-dialect filter fails silently (`applyPermissions` at least checks that `into` names a real argument of the field); never merge by spreading keys, since a client `{ OR: [...] }` would escape the scope; pair it with `fallbackRule`, because scoping is not a gate, or put a gate in front of it with `wrap(isNotBanned, scoped)`. `wrap` also stacks scoping with `onResult`, which no combinator can express.
 
+### 7. Enforcing the map through envelop (optional)
+
+```ts
+import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
+
+const yoga = createYoga({
+  schema,
+  plugins: [useGraphQLCasl<Resolvers>({ permissions, fallbackRule: deny, maskDenials: true })],
+});
+```
+
+`applyPermissions` wraps a schema up front, which needs a schema you own and can replace — awkward on Apollo Server 4+, on federated gateways, and anywhere the schema is built or swapped for you. This plugin hooks resolvers as envelop hands them over, so the same map works wherever envelop does (Yoga, Apollo with the envelop integration, Hive Gateway, `graphql-ws`). It calls `resolvePermissions` rather than reimplementing anything, so wildcard precedence, `fallbackRule` coverage, error control and masking are identical. The map is validated when the schema arrives rather than on the first query that touches the offending field, and a schema swapped at runtime is re-validated; introspection is never guarded; a field with no resolver of its own is guarded too (the default resolver is wrapped, which is what makes `requireCan.fields(...)` work); each field is wrapped once however many times it resolves. Use this **or** `applyPermissions`, never both — two layers would run every rule twice.
+
 ## Key conventions
 
 - The library is schema-agnostic: type helpers (`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`) are derived from the consumer's generated `Resolvers` / `ResolversTypes` — never hardcode domain type names.
@@ -184,6 +198,7 @@ Options: `adapter` (required), `into` (default `'where'`), `merge` (default `ada
 - `src/accessibleBy.ts` — the ability-to-query-filter fold
 - `src/conditions.ts` — the `FilterAdapter` union (skeleton/leaf) and the conditions walker
 - `src/scoping.ts` — the optional `/scoping` entry point: `scopeArgs`
+- `src/envelop.ts` — the optional `/envelop` entry point: `useGraphQLCasl`
 - `src/internal.ts` — symbols shared between modules that must not import each other
 - `src/ability.ts` — CASL `Action` / `Actions` / `AbilityLike`
 - `src/graphqlAbility.ts` — `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
