@@ -8,7 +8,7 @@
       "@semantic-release/exec",
       {
         "prepareCmd": "npm version ${nextRelease.version} --workspaces --no-git-tag-version --allow-same-version",
-        "publishCmd": "npm publish --workspaces"
+        "publishCmd": "npm publish -w packages/graphql-casl && npm publish -w packages/graphql-casl-codegen"
       }
     ],
     [
