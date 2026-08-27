@@ -18,12 +18,12 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vantreeseba/graphql-casl.git",
+    "url": "git+https://github.com/cubicecho/graphql-casl.git",
     "directory": "packages/graphql-casl"
   },
-  "homepage": "https://github.com/vantreeseba/graphql-casl#readme",
+  "homepage": "https://github.com/cubicecho/graphql-casl#readme",
   "bugs": {
-    "url": "https://github.com/vantreeseba/graphql-casl/issues"
+    "url": "https://github.com/cubicecho/graphql-casl/issues"
   },
   "license": "MIT",
   "author": "Benjamin Van Treese <vantreeseba@gmail.com>",
