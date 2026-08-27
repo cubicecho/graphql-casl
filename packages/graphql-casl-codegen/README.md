@@ -1,8 +1,8 @@
 # @vantreeseba/graphql-casl-codegen
 
 A [GraphQL Code Generator](https://the-guild.dev/graphql/codegen) plugin that
-emits [`@vantreeseba/graphql-casl`](../graphql-casl) subject bindings derived
-from your schema, so you never hand-list domain type names.
+emits the [`@vantreeseba/graphql-casl`](../graphql-casl) subject bindings for
+your generated resolver types, so you never hand-write them.
 
 ## Install
 
@@ -63,6 +63,14 @@ soon as `typescript-resolvers` picks it up.
 `createCan` stays in your app code because it needs your `Context` and auth
 function.
 
+### Upgrading from an older generated file
+
+Before `subjectsOf`, the plugin emitted `Subject` as a const object listing every
+type name, built by the now-deprecated `createSubjects`. Those files keep working
+— nothing about them is broken, and `createSubjects` is still exported. Rerun
+codegen to pick up the shorter form; no other change is needed, because
+`Subject.Todo` means the same thing either way.
+
 ## Configuration
 
 All options are optional strings:
@@ -71,7 +79,7 @@ All options are optional strings:
 |---|---|---|
 | `importPath` | `@vantreeseba/graphql-casl` | Module the generated code imports from. |
 | `subjectMapTypeName` | `AppSubjectMap` | Name of the generated subject-map type. |
-| `subjectConstName` | `Subject` | Name of the generated subject-name const. |
+| `subjectConstName` | `Subject` | Name of the generated subject-name namespace. |
 | `typedName` | `typed` | Name of the generated `typed` tagger. |
 | `abilityName` | `ability` | Name of the generated ability factory. |
 | `resolversTypeName` | `Resolvers` | Name of the `Resolvers` type to reference. |

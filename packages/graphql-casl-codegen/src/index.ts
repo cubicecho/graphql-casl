@@ -1,6 +1,7 @@
 /**
- * A GraphQL Code Generator plugin that emits `@vantreeseba/graphql-casl` subject
- * bindings derived from your schema, so you never hand-list domain type names.
+ * A GraphQL Code Generator plugin that emits the `@vantreeseba/graphql-casl`
+ * subject bindings for your generated resolver types, so you never hand-write
+ * them.
  *
  * Run it after `typescript` + `typescript-resolvers` in the same output file (it
  * references the `Resolvers` / `ResolversTypes` they emit). It generates:
@@ -21,7 +22,7 @@ export interface GraphqlCaslPluginConfig {
   importPath?: string;
   /** Name of the generated subject-map type. Default `AppSubjectMap`. */
   subjectMapTypeName?: string;
-  /** Name of the generated subject-name const. Default `Subject`. */
+  /** Name of the generated subject-name namespace. Default `Subject`. */
   subjectConstName?: string;
   /** Name of the generated `typed` tagger. Default `typed`. */
   typedName?: string;
