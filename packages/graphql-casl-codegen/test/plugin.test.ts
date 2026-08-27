@@ -17,28 +17,35 @@ async function run(config: Parameters<typeof plugin>[2]) {
 }
 
 describe('graphql-casl codegen plugin', () => {
-  it('emits subject bindings for object types only', async () => {
+  it('emits the four subject bindings', async () => {
     const { prepend, content } = await run({});
 
     expect(prepend).toContain(
-      "import { createGraphQLAbility, createSubjects, createTyped, type SubjectMap } from '@vantreeseba/graphql-casl';",
+      "import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '@vantreeseba/graphql-casl';",
     );
     expect(content).toContain('export type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;');
-    // object types, sorted; root + introspection types excluded
-    expect(content).toMatch(/Note: 'Note',/);
-    expect(content).toMatch(/Org: 'Org',/);
-    expect(content).toMatch(/User: 'User',/);
-    expect(content).not.toMatch(/Query:/);
-    expect(content).not.toMatch(/Mutation:/);
+    expect(content).toContain('export const Subject = subjectsOf<AppSubjectMap>();');
     expect(content).toContain('export const typed = createTyped<AppSubjectMap>();');
     expect(content).toContain(
       'export const ability = () => createGraphQLAbility<AppSubjectMap>();',
     );
   });
 
-  it('includes interface and union subjects (matching SubjectMap) but not scalars/enums/inputs', async () => {
-    // typescript-resolvers emits Resolvers entries for interfaces & unions, so
-    // SubjectMap includes them — the Subject const must too, or it won't compile.
+  it('emits no hand-listed subject names', async () => {
+    // `subjectsOf` reads the names from `AppSubjectMap` at the type level, so no
+    // name from the schema is ever written into the output.
+    const { content } = await run({});
+
+    for (const name of ['User', 'Note', 'Org', 'Query', 'Mutation']) {
+      expect(content).not.toMatch(new RegExp(`${name}: '${name}'`));
+    }
+  });
+
+  it('emits identical output regardless of the schema', async () => {
+    // The whole emission is derived from `Resolvers`/`ResolversTypes` types, not
+    // from the schema, so which types exist cannot change it. This is what makes
+    // the output immune to schema drift: interfaces, unions and newly added types
+    // become subjects via `SubjectMap` without regenerating anything here.
     const withComposites = buildSchema(`
       scalar DateTime
       enum Role { ADMIN USER }
@@ -49,17 +56,14 @@ describe('graphql-casl codegen plugin', () => {
       union SearchResult = User | Note
       type Query { node(id: ID!): Node, search(f: NoteFilter): [SearchResult!]! }
     `);
-    const out = (await plugin(withComposites, [], {})) as Types.ComplexPluginOutput;
-    const content = out.content ?? '';
+    const minimal = buildSchema('type Query { ok: Boolean }');
 
-    expect(content).toMatch(/Node: 'Node',/); // interface
-    expect(content).toMatch(/SearchResult: 'SearchResult',/); // union
-    expect(content).toMatch(/User: 'User',/);
-    expect(content).toMatch(/Note: 'Note',/);
-    // scalars, enums, and input types are not subjects
-    expect(content).not.toMatch(/DateTime:/);
-    expect(content).not.toMatch(/Role:/);
-    expect(content).not.toMatch(/NoteFilter:/);
+    const [a, b, c] = (await Promise.all(
+      [schema, withComposites, minimal].map((s) => plugin(s, [], {})),
+    )) as Types.ComplexPluginOutput[];
+
+    expect(b.content).toBe(a.content);
+    expect(c.content).toBe(a.content);
   });
 
   it('honors config overrides', async () => {
@@ -72,17 +76,10 @@ describe('graphql-casl codegen plugin', () => {
 
     expect(prepend[0]).toContain("from '#auth'");
     expect(content).toContain('export type SubjectsMap = SubjectMap<Resolvers, ResolversTypes>;');
-    expect(content).toContain('export const S = createSubjects<SubjectsMap>()(');
+    expect(content).toContain('export const S = subjectsOf<SubjectsMap>();');
     expect(content).toContain(
       'export const makeAbility = () => createGraphQLAbility<SubjectsMap>();',
     );
-  });
-
-  it('emits an empty subject map for a schema with no object types', async () => {
-    // only a root type exists, so no subjects are listed
-    const minimal = buildSchema('type Query { ok: Boolean }');
-    const out = (await plugin(minimal, [], {})) as Types.ComplexPluginOutput;
-    expect(out.content).toContain('createSubjects<AppSubjectMap>()({} as const)');
   });
 
   it('validate accepts valid (string / undefined / absent) config', async () => {

@@ -6,11 +6,11 @@ import {
   applyPermissions,
   createCan,
   createGraphQLAbility,
-  createSubjects,
   createTyped,
   type GraphQLAbility,
   type PermissionsMap,
   type SubjectMap,
+  subjectsOf,
 } from '@vantreeseba/graphql-casl';
 import type { MutationUpdateNoteArgs, Resolvers, ResolversTypes } from './__generated__/resolvers.js';
 
@@ -19,7 +19,7 @@ type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
 type AppAbility = GraphQLAbility<AppSubjectMap>;
 
 const typed = createTyped<AppSubjectMap>();
-const Subject = createSubjects<AppSubjectMap>()({ User: 'User', Note: 'Note' } as const);
+const Subject = subjectsOf<AppSubjectMap>();
 
 function defineAbilitiesFor(userId: string | undefined): AppAbility {
   const { can, build } = createGraphQLAbility<AppSubjectMap>();

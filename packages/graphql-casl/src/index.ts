@@ -4,7 +4,7 @@
  * Everything here is schema-agnostic: pass your own generated `Resolvers` /
  * `ResolversTypes` to the type helpers and you get a fully-derived subject
  * union without any manual type listing. The runtime helpers (`createCan`,
- * `createTyped`, `createSubjects`, `accept`, `deny`) are bound to your app's
+ * `createTyped`, `subjectsOf`, `accept`, `deny`) are bound to your app's
  * context shape and ability builder at call time.
  *
  * Abilities are statically typed: derive a {@link GraphQLAbility} from your
@@ -18,7 +18,7 @@
  * - `applyPermissions` — validates a map against the schema and applies it
  * - `ability` — CASL `Action` / `Actions` / `AbilityLike`
  * - `graphqlAbility` — the schema-typed `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
- * - `subjects` — `createSubjects` / `createTyped`
+ * - `subjects` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
  * - `createCan` — the factory tying abilities to rules
  *
  * @packageDocumentation
@@ -63,4 +63,4 @@ export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
 export type { Check, CheckableRule, PermissionsMap, Rule, RuleResult, Wildcard } from './rules.js';
 export { accept, deny, isCheckableRule, rule } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
-export { createSubjects, createTyped } from './subjects.js';
+export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';

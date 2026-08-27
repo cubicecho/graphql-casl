@@ -26,7 +26,7 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `requireCan.onResult(action, subject, getSubjectData?)` | Post-execution rule: runs the resolver and checks the ability against the value it returned. Refuses root mutation fields before resolving. |
 | `requireCan.fields(action, subject)` | One rule for a whole type; decides each field with `ability.can(action, subject, info.fieldName)`. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for CASL's runtime subject detection. |
-| `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
+| `subjectsOf<SubjectMap>()` | Returns a `Subject` namespace of typo-proof subject names, read from the map. Optional — bare string literals are checked identically. |
 | `rule(check, opts?)` | Wraps a predicate `(parent, args, ctx, info) => boolean \| string \| Error` into a combinable rule. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. `and`/`or` evaluate in parallel; `chain`/`race` short-circuit. A rule that needs the resolver to decide is rejected as an operand when the map is built. |
 | `wrap(...rules)` | Nests any rules as middleware — each receives the next as its `resolve`, outermost first. The escape hatch for rules the combinators reject (`onResult`, `scopeArgs`, hand-written middleware). Returns a plain `Rule`, so it is never itself a combinator operand. |
@@ -52,10 +52,10 @@ A failed authentication check throws `Not authenticated`; a failed ability check
 import {
   Actions,
   createGraphQLAbility,
-  createSubjects,
   createTyped,
   type GraphQLAbility,
   type SubjectMap,
+  subjectsOf,
 } from '@vantreeseba/graphql-casl';
 import type { Resolvers, ResolversTypes } from './__generated__/resolvers.js';
 
@@ -63,10 +63,7 @@ type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
 type AppAbility = GraphQLAbility<AppSubjectMap>;
 
 export const typed = createTyped<AppSubjectMap>();
-export const Subject = createSubjects<AppSubjectMap>()({
-  User: 'User',
-  Note: 'Note',
-} as const);
+export const Subject = subjectsOf<AppSubjectMap>();
 
 export function defineAbilitiesFor(userId: string | undefined): AppAbility {
   const { can, cannot, build } = createGraphQLAbility<AppSubjectMap>();
@@ -185,7 +182,7 @@ const yoga = createYoga({
 
 - The library is schema-agnostic: type helpers (`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`) are derived from the consumer's generated `Resolvers` / `ResolversTypes` — never hardcode domain type names.
 - Runtime subject detection uses `__typename`, applied by `createGraphQLAbility().build()`, so consumers tag plain objects with `createTyped()` rather than CASL's `subject()`.
-- `createCan` / `createSubjects` / `createTyped` are factories bound to the consumer's context shape and ability builder — keep auth/ability logic out of the library core.
+- `createCan` / `subjectsOf` / `createTyped` are factories bound to the consumer's context shape and ability builder — keep auth/ability logic out of the library core.
 - Only *denials* are masked or reworded. A rule that failed with a bug of its own and a resolver that failed on a permitted field both keep their own errors, so an outage is never reported as a permission decision.
 - `allowExternalErrors` defaults to `true` — the opposite of `graphql-shield`, which masks resolver errors by default.
 
@@ -203,7 +200,7 @@ const yoga = createYoga({
 - `src/internal.ts` — symbols shared between modules that must not import each other
 - `src/ability.ts` — CASL `Action` / `Actions` / `AbilityLike`
 - `src/graphqlAbility.ts` — `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
-- `src/subjects.ts` — `createSubjects` / `createTyped`
+- `src/subjects.ts` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
 - `src/createCan.ts` — the factory tying a CASL ability to the rule layer
 
 ## Optional

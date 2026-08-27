@@ -103,7 +103,7 @@ function unconditionedMessage(action: Action, subject: string): string {
  * element when the field resolved to a list. `null` yields none — a field that
  * resolved to nothing has no subject to authorize.
  */
-function subjectsOf(result: unknown): unknown[] {
+function subjectCandidates(result: unknown): unknown[] {
   if (result == null) return [];
   return Array.isArray(result) ? result.filter((item) => item != null) : [result];
 }
@@ -526,7 +526,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       }
 
       const result = await resolve(parent, args, context, info);
-      for (const candidate of subjectsOf(result)) {
+      for (const candidate of subjectCandidates(result)) {
         const data = getSubjectData
           ? getSubjectData(candidate as TResult, parent as TParent)
           : (candidate as Partial<TSubjectMap[K]>);

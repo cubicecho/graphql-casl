@@ -6,7 +6,7 @@
  *
  *   1. the domain model + request context
  *   2. a CASL ability built per request
- *   3. createTyped / createSubjects to tag and name subjects
+ *   3. createTyped / subjectsOf to tag and name subjects
  *   4. createCan to turn abilities into field rules
  *   5. a PermissionsMap + applyPermissions to guard the schema
  *
@@ -24,12 +24,12 @@ import {
   applyPermissions,
   createCan,
   createGraphQLAbility,
-  createSubjects,
   createTyped,
   deny,
   type GraphQLAbility,
   type PermissionsMap,
   type SubjectMap,
+  subjectsOf,
 } from '../src/index.js';
 // These come from `graphql-codegen` in a real project — see example.codegen.ts.
 import type { MutationSetDoneArgs, Resolvers, ResolversTypes, Todo } from './example.codegen.js';
@@ -72,9 +72,12 @@ function defineAbilitiesFor(userId: string | undefined): AppAbility {
 // 3. Subjects: a typed tagger + a const of subject names ---------------------
 
 // `typed` tags plain objects with __typename so CASL can classify them at
-// runtime; `Subject` gives autocompleted, typo-proof subject-name literals.
+// runtime; `Subject` gives autocompleted, typo-proof subject-name literals,
+// read straight off AppSubjectMap so there is no list to maintain. Both are
+// optional conveniences — the bare name `'Todo'` is checked just as strictly,
+// which is why the ability above uses it directly.
 const typed = createTyped<AppSubjectMap>();
-const Subject = createSubjects<AppSubjectMap>()({ Todo: 'Todo' } as const);
+const Subject = subjectsOf<AppSubjectMap>();
 
 // 4. createCan: bind the ability + auth check into a rule builder ------------
 

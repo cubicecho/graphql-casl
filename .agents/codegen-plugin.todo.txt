@@ -19,6 +19,9 @@ What shipped
     export const typed = createTyped<AppSubjectMap>();
     export const ability = () => createGraphQLAbility<AppSubjectMap>();
   Excludes root op types + introspection (__*); sorts names; all names configurable.
+  SUPERSEDED: the Subject line now emits `subjectsOf<AppSubjectMap>()`, which reads
+  the names off the map at the type level. The plugin no longer inspects the schema
+  at all, so the exclusion/sorting logic above is gone — see src/subjects.ts.
   createCan stays in app code (needs Context + auth fn) — intentionally NOT generated.
 - Tests: packages/graphql-casl-codegen/test/plugin.test.ts (output + config + validate).
 - Docs: root README (monorepo overview), packages/graphql-casl-codegen/README.md,

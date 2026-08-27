@@ -37,30 +37,31 @@ export default config;
 
 ### Generated output
 
-For a schema with `User`, `Note`, and `Org` object types, the plugin appends:
+The plugin appends:
 
 ```ts
-import { createGraphQLAbility, createSubjects, createTyped, type SubjectMap } from '@vantreeseba/graphql-casl';
+import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '@vantreeseba/graphql-casl';
 
 export type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
 
-export const Subject = createSubjects<AppSubjectMap>()({
-  Note: 'Note',
-  Org: 'Org',
-  User: 'User',
-} as const);
+export const Subject = subjectsOf<AppSubjectMap>();
 
 export const typed = createTyped<AppSubjectMap>();
 
 export const ability = () => createGraphQLAbility<AppSubjectMap>();
 ```
 
-Object, interface and union types all become subjects — `typescript-resolvers`
-emits resolver entries for interfaces and unions too, so `SubjectMap` includes
-them and the generated `Subject` const must match it. Root operation types
-(`Query`/`Mutation`/`Subscription`) and introspection types are excluded, and
-subjects are sorted for deterministic output. `createCan` stays in your app code
-because it needs your `Context` and auth function.
+No type name from your schema is written into that output: every binding hangs
+off `AppSubjectMap`, which derives the names from `Resolvers` / `ResolversTypes`
+at the type level. Object, interface and union types all become subjects —
+`typescript-resolvers` emits resolver entries for interfaces and unions too, so
+`SubjectMap` includes them — while root operation types
+(`Query`/`Mutation`/`Subscription`), introspection types, scalars, enums and
+inputs are not. Adding a type to the schema makes `Subject.NewType` available as
+soon as `typescript-resolvers` picks it up.
+
+`createCan` stays in your app code because it needs your `Context` and auth
+function.
 
 ## Configuration
 

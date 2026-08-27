@@ -16,6 +16,7 @@ import {
   type PermissionsMap,
   type RequireCan,
   type Rule,
+  subjectsOf,
 } from '../src/index.js';
 
 // An example subject map — in a real app this comes from SubjectMap<Resolvers, ResolversTypes>.
@@ -155,6 +156,39 @@ describe('createSubjects', () => {
     const Subject = createSubjects<ExampleSubjectMap>()({ Note: 'Note', Org: 'Org' } as const);
     expect(Subject.Note).toBe('Note');
     expect(Subject.Org).toBe('Org');
+  });
+});
+
+describe('subjectsOf', () => {
+  const Subject = subjectsOf<ExampleSubjectMap>();
+
+  it('answers every subject name with itself, with nothing declared', () => {
+    expect(Subject.Note).toBe('Note');
+    expect(Subject.Org).toBe('Org');
+  });
+
+  it('produces names CASL accepts as bare subjects', () => {
+    const ability = buildAbility('u1');
+    expect(ability.can(Actions.read, Subject.Note)).toBe(true);
+    expect(ability.can(Actions.update, typed(Subject.Note, { userId: 'u1' }))).toBe(true);
+    expect(ability.can(Actions.update, typed(Subject.Note, { userId: 'u2' }))).toBe(false);
+  });
+
+  it('reads symbol properties as undefined so ordinary object handling is safe', () => {
+    // A Proxy that answered symbols with a string would make the object look
+    // thenable/iterable and break `await`, spreads and inspection.
+    const asRecord = Subject as unknown as Record<symbol, unknown>;
+    expect(asRecord[Symbol.toPrimitive]).toBeUndefined();
+    expect(asRecord[Symbol.iterator]).toBeUndefined();
+    expect(() => String(`${Subject.Note}`)).not.toThrow();
+  });
+
+  it('is not enumerable — property access is the only supported operation', () => {
+    // Documented limitation: the names live only in the type, so there is
+    // nothing to enumerate at runtime.
+    expect(Object.keys(Subject)).toEqual([]);
+    expect({ ...Subject }).toEqual({});
+    expect(JSON.stringify(Subject)).toBe('{}');
   });
 });
 

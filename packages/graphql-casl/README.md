@@ -101,11 +101,11 @@ import {
   applyPermissions,
   createCan,
   createGraphQLAbility,
-  createSubjects,
   createTyped,
   deny,
   type PermissionsMap,
   type SubjectMap,
+  subjectsOf,
 } from '@vantreeseba/graphql-casl';
 import type {
   MutationSetDoneArgs,
@@ -120,7 +120,7 @@ interface Context {
 // Subjects are derived from your generated types — no domain names hand-listed.
 type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
 const typed = createTyped<AppSubjectMap>();
-const Subject = createSubjects<AppSubjectMap>()({ Todo: 'Todo' } as const);
+const Subject = subjectsOf<AppSubjectMap>();
 
 // 1. What each caller may do.
 function abilitiesFor(userId: string | undefined) {
@@ -210,7 +210,7 @@ Both messages are replaceable: see [Error control](#error-control) for
 | `buildGraphQLAbility<SubjectMap>(rules, options?)` | Rebuilds an ability from stored `GraphQLRule`s (e.g. rules persisted in a database and loaded at startup). |
 | `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args; `requireCan.fields(...)` guards every field of a type from the ability's field lists. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for subject detection. |
-| `createSubjects<SubjectMap>()` | Validates a subject-name const object against your schema's domain types. |
+| `subjectsOf<SubjectMap>()` | Returns a `Subject` namespace of typo-proof subject names, read from the map. Optional — bare string literals are checked identically. |
 | `rule(check, opts?)` | Wraps a predicate into a rule that is also combinable. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. |
 | `wrap` | Nests any rules as middleware, including ones the combinators reject. |
@@ -259,10 +259,10 @@ fields, and `build()` wires `__typename` subject detection for you.
 import {
   Actions,
   createGraphQLAbility,
-  createSubjects,
   createTyped,
   type GraphQLAbility,
   type SubjectMap,
+  subjectsOf,
 } from '@vantreeseba/graphql-casl';
 import type { Resolvers, ResolversTypes } from './__generated__/resolvers.js';
 
@@ -270,10 +270,7 @@ export type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
 export type AppAbility = GraphQLAbility<AppSubjectMap>;
 
 export const typed = createTyped<AppSubjectMap>();
-export const Subject = createSubjects<AppSubjectMap>()({
-  User: 'User',
-  Note: 'Note',
-} as const);
+export const Subject = subjectsOf<AppSubjectMap>();
 
 export function defineAbilitiesFor(userId: string | undefined): AppAbility {
   const { can, build } = createGraphQLAbility<AppSubjectMap>();
@@ -283,6 +280,14 @@ export function defineAbilitiesFor(userId: string | undefined): AppAbility {
   return build();
 }
 ```
+
+`Subject` is a convenience, not a requirement. Every API that takes a subject
+name accepts the bare string literal and checks it just as strictly, so
+`can(Actions.read, 'Note')` is equivalent to `can(Actions.read, Subject.Note)`
+and a misspelled `'Note'` is a compile error either way. Use `subjectsOf` when
+you want the autocomplete and a rename anchor; skip it otherwise. It takes no
+argument — the names come from `AppSubjectMap`, so there is no list to keep in
+step with the schema.
 
 ### 2. Bind `createCan` to your context
 

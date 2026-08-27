@@ -6,7 +6,7 @@
  * references the `Resolvers` / `ResolversTypes` they emit). It generates:
  *
  * - `AppSubjectMap` — `SubjectMap<Resolvers, ResolversTypes>`
- * - `Subject` — the subject-name const, auto-listed from the schema's object types
+ * - `Subject` — a `subjectsOf` namespace of subject names, derived from the map
  * - `typed` — a `createTyped` tagger bound to `AppSubjectMap`
  * - `ability` — a `createGraphQLAbility` factory bound to `AppSubjectMap`
  *
@@ -14,7 +14,6 @@
  */
 
 import type { PluginFunction, PluginValidateFn } from '@graphql-codegen/plugin-helpers';
-import { type GraphQLSchema, isInterfaceType, isObjectType, isUnionType } from 'graphql';
 
 /** Configuration for the {@link plugin}. Every field has a sensible default. */
 export interface GraphqlCaslPluginConfig {
@@ -44,44 +43,13 @@ const DEFAULTS = {
   resolversTypesName: 'ResolversTypes',
 } satisfies Required<GraphqlCaslPluginConfig>;
 
-/**
- * The schema's domain subject names: object, interface, and union types,
- * excluding the root operation types (Query/Mutation/Subscription) and
- * introspection types (`__*`), sorted for deterministic output.
- *
- * This mirrors the runtime `SubjectName<Resolvers>` derivation (every `Resolvers`
- * key that is not a root operation or a scalar) — `typescript-resolvers` emits
- * resolver entries for interfaces and unions too (via `__resolveType`), so
- * `SubjectMap` includes them and the generated `Subject` const must as well, or
- * `createSubjects`'s all-keys constraint would fail to compile.
- */
-function subjectNames(schema: GraphQLSchema): string[] {
-  const roots = new Set(
-    [schema.getQueryType(), schema.getMutationType(), schema.getSubscriptionType()]
-      .filter((type): type is NonNullable<typeof type> => type != null)
-      .map((type) => type.name),
-  );
-  const typeMap = schema.getTypeMap();
-  return Object.keys(typeMap)
-    .filter((name) => {
-      if (name.startsWith('__') || roots.has(name)) return false;
-      const type = typeMap[name];
-      return isObjectType(type) || isInterfaceType(type) || isUnionType(type);
-    })
-    .sort();
-}
-
-export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (schema, _documents, config) => {
+export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _documents, config) => {
   const opts = { ...DEFAULTS, ...config };
-  const names = subjectNames(schema);
-
-  const subjectEntries = names.map((name) => `  ${name}: '${name}',`).join('\n');
-  const subjectBody = subjectEntries ? `{\n${subjectEntries}\n}` : '{}';
 
   const content = [
     `export type ${opts.subjectMapTypeName} = SubjectMap<${opts.resolversTypeName}, ${opts.resolversTypesName}>;`,
     '',
-    `export const ${opts.subjectConstName} = createSubjects<${opts.subjectMapTypeName}>()(${subjectBody} as const);`,
+    `export const ${opts.subjectConstName} = subjectsOf<${opts.subjectMapTypeName}>();`,
     '',
     `export const ${opts.typedName} = createTyped<${opts.subjectMapTypeName}>();`,
     '',
@@ -91,7 +59,7 @@ export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (schema, _documen
 
   return {
     prepend: [
-      `import { createGraphQLAbility, createSubjects, createTyped, type SubjectMap } from '${opts.importPath}';`,
+      `import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '${opts.importPath}';`,
     ],
     content,
   };

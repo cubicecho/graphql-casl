@@ -62,7 +62,7 @@ packages/
                             same map through envelop instead of graphql-middleware
       internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
-      subjects.ts         — createSubjects / createTyped
+      subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
     test/
       permissions.test.ts                — unit tests for the rule primitives
@@ -101,7 +101,7 @@ vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a sing
   conditions via a `__typename`-tagged subject tuple. There is no untyped ability path
 - Rules are plain JSON: persist `builder.rules` / `ability.rules` and rehydrate with
   `buildGraphQLAbility(rules)` (for DB-backed, cached-at-startup authorization)
-- `createCan` / `createSubjects` / `createTyped` are factories bound to the
+- `createCan` / `subjectsOf` / `createTyped` are factories bound to the
   consumer's context shape and ability builder — keep auth/ability logic out of
   the library core
 - `accept` and `deny` are the always-pass / always-fail rule primitives
