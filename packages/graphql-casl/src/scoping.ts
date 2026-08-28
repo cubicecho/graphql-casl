@@ -13,7 +13,7 @@
  * resolver runs, ANDing the scope onto whatever filter the client sent. The
  * resolver is untouched; it simply receives a narrower `where`.
  *
- * Two things to be clear-eyed about before using it:
+ * Three things to be clear-eyed about before using it:
  *
  * 1. **A scoped field returns fewer rows, not an error.** That is the point,
  *    but it means a caller cannot tell "no such row" from "not yours".
@@ -22,6 +22,14 @@
  *    rejected — it reaches the data layer as written, where it may be ignored
  *    and quietly widen access. Match the adapter to the schema's actual input
  *    type, and test it.
+ * 3. **It scopes the field you name, not the graph below it.** The rewrite
+ *    reaches the rows *that* field resolves. A generated *relation* field —
+ *    `Note.author`, `User.notes` — resolves through its own path and may
+ *    ignore an injected filter entirely, handing back rows the scope would
+ *    have excluded while reporting success. Scope each relation field in its
+ *    own right, put a rule on it, or push the scope into the data layer (row-
+ *    level security, a per-request scoped client), where nothing can route
+ *    around it.
  *
  * @packageDocumentation
  */

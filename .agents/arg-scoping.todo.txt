@@ -1,6 +1,6 @@
 Argument scoping — rules that narrow a resolver's own filter (Workstream G)
 ==========================================================================
-Status: SHIPPED (G1-G8), except G9 (an outward post on someone else's issue).
+Status: SHIPPED (G1-G8). G9 (an outward post) DROPPED by the user 2026-08-27.
 Built as an OPTIONAL SUBPATH EXPORT of this package rather than a new one:
 `@vantreeseba/graphql-casl/scoping`. The walker and the widened FilterAdapter
 union live in the core (accessibleBy benefits from leaf adapters too); only
@@ -253,16 +253,25 @@ TASKS
         and so was the first version of the README recipe, which mapped `and`,
         `or` and `not` onto AND/OR/NOT keys. See the DIALECT FINDING below. The
         Prisma-shaped one really is ten lines and stays inline in the README.
-[ ] G9. NEEDS USER APPROVAL (posting on another project's issue tracker).
-        Close the loop on drizzle-graphql#15 once G7 exists. CORRECTION: #27 was
-        listed here as "multitenant setups, the same need wearing a different
-        hat". It is not. #27 is "Support for dynamic database (for multitenant
-        setups)" — swapping the *database client* per request. Nothing to do with
-        row scoping. Do not post there.
-        BLOCKED as of 2026-08-26: main is 20 commits ahead of origin and npm
-        still serves 1.0.0, so none of scoping, the combinators, fallbackRule,
-        accessibleBy, onResult or the envelop package is published. A comment
-        pointing at the package today describes an API that is not there.
+[-] G9. DROPPED by user decision, 2026-08-27. Nothing is to be posted on any
+        issue tracker, upstream or fork. The findings the draft carried are
+        already recorded here (the DIALECT FINDING below, and the coercion trap
+        under G3), so nothing is lost by dropping it. Kept as a record so this
+        is not re-proposed.
+        Earlier history: the task was "close the loop on drizzle-graphql#15".
+        CORRECTION 1: #27 was listed here as "multitenant setups, the same need
+        wearing a different hat". It is not. #27 is "Support for dynamic
+        database (for multitenant setups)" — swapping the *database client* per
+        request. Nothing to do with row scoping.
+        CORRECTION 2 (2026-08-27): the issue the user originally pointed at —
+        "issue 37" — is on THEIR FORK, cubicecho/drizzle-graphql, whose issue
+        numbering is unrelated to upstream's. Upstream #15 is "Strategies for
+        authorization"; fork #15 is about string-array columns. The fork's
+        relevant issues are #37 (row-level scoping hook — the tracking issue,
+        with #43 folded into it), #39 (authorize/onResolve hook, closed as out
+        of scope in favour of a middleware layer, naming fallbackRule: deny),
+        and #20 (Boolean filter tree: AND/NOT/OR — the same dialect limitation
+        recorded below, written up independently and in more detail).
 
 
 NON-GOALS (record so they stop being re-proposed)
@@ -374,4 +383,24 @@ to the leaves by De Morgan — and throws on anything unrepresentable ($regex, a
 relation path, two of the same operator on one column). Because `and`
 distributes, scopeArgs needs NO custom `merge`: the default
 `adapter.and([clientFilter, scope])` stays legal even when the client sent an OR.
+
+
+REACH FINDING — scopeArgs cannot cover relation fields (drizzle-graphql)
+--------------------------------------------------------------------------------
+Recorded 2026-08-27 from cubicecho/drizzle-graphql#37, where the user
+reproduced it against 5.6.0. Injecting a `where` from a resolver-level wrapper
+is SILENTLY IGNORED on generated *relation* fields under the default config:
+the layer reports success while returning another tenant's rows. Root fields are
+unaffected — the argument really is the seam there.
+
+This bounds what /scoping can honestly claim: it is a ROOT-FIELD mechanism. A
+consumer who scopes `todos` but lets a client walk `activityType { habits }`
+has not scoped their data, and nothing in this library can see that traversal,
+because the relation loader never consults the field's arguments. Pair scopeArgs
+with a rule on the relation field (denying it, or authorizing the parent), or
+push scoping into the data layer (Postgres RLS via drizzleExecutorKey is the
+alternative the fork's #43 comment names).
+
+Not a bug in scopeArgs and not fixable here — it is why the fork tracks a
+library-side hook (#37) rather than treating a middleware layer as sufficient.
 

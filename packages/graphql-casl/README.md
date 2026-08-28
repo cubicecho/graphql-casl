@@ -809,7 +809,7 @@ understood — unless you import it.
 | `merge` | `adapter.and([client, scope])` | How to combine the caller's own filter with the scope. |
 | `onDenyAll` | `'deny'` | `'deny'` throws `Forbidden`; `'nothing'` injects `adapter.nothing()` so the field resolves empty. |
 
-Four things to know before reaching for it:
+Five things to know before reaching for it:
 
 - **A scoped field returns fewer rows, not an error.** That is the point, but a
   caller cannot tell "no such row" from "not yours". `onDenyAll: 'deny'` is the
@@ -823,6 +823,14 @@ Four things to know before reaching for it:
   a reason: a client filter of `{ OR: [...] }` sits *beside* a spread-in scope
   rather than under it, and the scope stops applying. Override `merge` only when
   the dialect needs a different combining shape.
+- **It scopes the field you name, not the graph below it.** `scopeArgs` rewrites
+  one field's arguments, so it reaches exactly the rows *that* field resolves.
+  A generated *relation* field — `Note.author`, `User.notes` — resolves through
+  its own path and may ignore an injected filter entirely, handing back rows the
+  scope would have excluded while reporting success. drizzle-graphql does this
+  under its default config. Scope each relation field in its own right, put a
+  rule on it, or push the scope into the data layer — Postgres row-level
+  security, a per-request scoped client — where nothing can route around it.
 - **A scoping rule is not a gate.** It says nothing about the fields around it,
   and it cannot be an operand of `and` / `or` / `not` / `chain` / `race` — it
   decides by rewriting arguments and calling the resolver. Pair it with
