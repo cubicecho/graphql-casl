@@ -86,6 +86,15 @@ A soundness pass, taken from the lists above:
   supports `fallbackRule` (S2 / `ecosystem-parity` E9) and `'*'` wildcards in
   either position with graphql-authz's precedence (S3 / E8), and skips
   introspection types (S15).
+- **Stored rules are validated against the schema** (`prisma-schema-typing`
+  P1) — `validateGraphQLRules(schema, rules, options?)` is the DB-rules
+  counterpart of `validatePermissions`: subject names, `fields`, condition
+  field paths and operators, and the rule's shape (a truthy non-boolean
+  `inverted` silently turns a grant into a denial) are checked, every problem
+  reported at once as a `PermissionsError`. Condition fields are checked
+  against the schema by default; `conditionFields: 'none'` relaxes that for
+  subjects that are database models with columns the schema does not expose.
+
 - **`__isTypeOf` / `__resolveType` are excluded from `PermissionsMap`**
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
