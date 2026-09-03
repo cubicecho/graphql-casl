@@ -95,4 +95,33 @@ describe('graphql-casl codegen plugin', () => {
       /must be a string/,
     );
   });
+
+  it('validate ignores keys the plugin does not own', async () => {
+    // The CLI injects `emitLegacyCommonJSImports` into every output, so this
+    // arrives even when the user sets no config at all. Rejecting it made the
+    // plugin unusable with @graphql-codegen/cli.
+    await expect(
+      validate(schema, [], { emitLegacyCommonJSImports: false }, 'out.ts', []),
+    ).resolves.toBeUndefined();
+  });
+
+  it('validate ignores the sibling plugins’ options', async () => {
+    // Output-level config reaches every plugin in the output, and this plugin
+    // has to share one with typescript + typescript-resolvers.
+    await expect(
+      validate(
+        schema,
+        [],
+        {
+          skipTypename: true,
+          useTypeImports: true,
+          onlyResolveTypeForInterfaces: true,
+          disableDescriptions: true,
+          subjectConstName: 'S',
+        },
+        'out.ts',
+        [],
+      ),
+    ).resolves.toBeUndefined();
+  });
 });
