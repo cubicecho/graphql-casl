@@ -17,6 +17,7 @@ import {
   type Rule,
   resolvePermissions,
   rule,
+  validatePermissions,
 } from '../src/index.js';
 
 const typeDefs = /* GraphQL */ `
@@ -893,5 +894,75 @@ describe('applyPermissions — the untyped mode', () => {
     // unchecked at build time, and still fail loudly at startup.
     expect(() => applyPermissions(looseSchema, { Note: { nope: deny } })).toThrow(PermissionsError);
     expect(() => applyPermissions(looseSchema, { Nope: { id: deny } })).toThrow(/Nope/);
+  });
+});
+
+describe('validatePermissions', () => {
+  const schema = makeExecutableSchema({
+    typeDefs: `type Note { id: ID! body: String! } type Query { note: Note }`,
+  });
+
+  it('passes a map whose every key exists', () => {
+    expect(() =>
+      validatePermissions<Record<string, Record<string, unknown>>>(schema, {
+        Query: { note: accept },
+        Note: { id: deny, '*': accept },
+      }),
+    ).not.toThrow();
+  });
+
+  it('throws a PermissionsError naming a stale field', () => {
+    expect(() =>
+      validatePermissions<Record<string, Record<string, unknown>>>(schema, {
+        Note: { nope: deny },
+      }),
+    ).toThrow(PermissionsError);
+  });
+
+  it('aggregates every problem, as applyPermissions does', () => {
+    let message = '';
+    try {
+      validatePermissions<Record<string, Record<string, unknown>>>(schema, {
+        Nope: { id: deny },
+        Note: { alsoNope: deny },
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/Nope/);
+    expect(message).toMatch(/alsoNope/);
+  });
+
+  it('agrees with applyPermissions on the same map', () => {
+    // The whole point: a map that passes validation applies cleanly, and one
+    // that fails validation fails identically when applied.
+    const good = { Query: { note: accept } };
+    const bad = { Query: { nope: accept } };
+    expect(() => validatePermissions(schema, good)).not.toThrow();
+    expect(() => applyPermissions(schema, good)).not.toThrow();
+
+    const fromValidate = (() => {
+      try {
+        validatePermissions(schema, bad);
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+    const fromApply = (() => {
+      try {
+        applyPermissions(schema, bad);
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+    expect(fromValidate).toBe(fromApply);
+    expect(fromValidate).toBeTruthy();
+  });
+
+  it('builds no middleware, leaving the schema untouched', () => {
+    // applyPermissions returns a new, wrapped schema; validation must not.
+    const before = schema.getQueryType()?.getFields().note?.resolve;
+    validatePermissions(schema, { Query: { note: deny } });
+    expect(schema.getQueryType()?.getFields().note?.resolve).toBe(before);
   });
 });
