@@ -8,7 +8,9 @@
  */
 
 import {
+  defaultFieldResolver,
   type GraphQLField,
+  type GraphQLFieldResolver,
   type GraphQLNamedType,
   type GraphQLOutputType,
   type GraphQLResolveInfo,
@@ -629,6 +631,67 @@ function resolveFieldRules(
 }
 
 /**
+ * Fields already guarded in place, across every schema this module has touched.
+ * Guarding a field twice would stack two rules on it, and a second `inPlace`
+ * apply to a schema that was already guarded is far more likely to be a test
+ * reusing one base schema than a deliberate layering, so it is refused.
+ */
+const guardedInPlace = new WeakSet<AnyField>();
+
+/**
+ * Wraps one field's resolver in a rule, the same way `graphql-middleware` does:
+ * the `resolve` handed to the rule defaults every argument to the current call,
+ * so a rule may call it bare or with rewritten arguments.
+ */
+function wrapResolver(
+  resolver: GraphQLFieldResolver<unknown, unknown>,
+  rule: Rule,
+): GraphQLFieldResolver<unknown, unknown> {
+  return (parent, args, context, info) =>
+    rule(
+      (p = parent, a = args, c = context, i = info) =>
+        resolver(p, a as Record<string, unknown>, c, i as GraphQLResolveInfo) as Promise<unknown>,
+      parent,
+      args,
+      context,
+      info,
+    );
+}
+
+/**
+ * Guards the schema's fields by replacing their resolvers in place, with the
+ * same field selection `graphql-middleware` makes: a field's own resolver if it
+ * has one, else a subscription field's `subscribe`, else the default resolver.
+ */
+function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (!isObjectType(type) || isIntrospectionType(type)) continue;
+
+    for (const field of Object.values(type.getFields())) {
+      const rule = permissionFor(type.name, field.name);
+      if (!rule) continue;
+      if (guardedInPlace.has(field)) {
+        throw new Error(
+          `graphql-casl: \`${type.name}.${field.name}\` is already guarded. ` +
+            '`applyPermissions` with `inPlace: true` mutates the schema, so apply it once per ' +
+            'schema — or drop `inPlace` to get a guarded copy each time.',
+        );
+      }
+      guardedInPlace.add(field);
+
+      if (field.resolve && field.resolve !== defaultFieldResolver) {
+        field.resolve = wrapResolver(field.resolve, rule);
+      } else if (field.subscribe) {
+        field.subscribe = wrapResolver(field.subscribe, rule);
+      } else {
+        field.resolve = wrapResolver(defaultFieldResolver, rule);
+      }
+    }
+  }
+  return schema;
+}
+
+/**
  * A replacement error for denials that did not name one: an `Error`, a message,
  * or a mapper that receives the original error and the resolver arguments.
  *
@@ -746,6 +809,35 @@ export interface ApplyPermissionsOptions {
    *   would hide outages as permission decisions.
    */
   maskDenials?: boolean;
+
+  /**
+   * Whether to guard the schema you passed in, instead of a guarded copy.
+   * Defaults to `false`.
+   *
+   * By default `applyPermissions` hands the map to `graphql-middleware`, which
+   * rebuilds the schema. That rebuild is the whole cost of applying: on a
+   * 1,000-type schema it is tens of milliseconds, and on a large generated CRUD
+   * schema it is seconds. `inPlace: true` skips it — the rules are resolved
+   * exactly as before, then each guarded field's resolver is replaced on the
+   * schema itself, in a single walk. Enforcement is identical: the same fields
+   * are guarded, the same resolver (a field's own, a subscription's
+   * `subscribe`, or the default resolver) is wrapped.
+   *
+   * This saves apply time only; per-request cost is the same either way. A
+   * server that builds its schema once gains a few tens of milliseconds at
+   * startup and should keep the default. It is meant for the places
+   * `applyPermissions` runs repeatedly — a test suite guarding a fresh schema
+   * per test, hot reload, per-tenant schemas, a recomposing gateway.
+   *
+   * The schema is **mutated** and returned for convenience. Apply once per
+   * schema — guarding a schema that is already guarded throws, since stacking
+   * two maps is almost always a test reusing one base schema. Leave this off
+   * when you need the unguarded original too, or when something else already
+   * holds the schema and expects it to stay as built.
+   *
+   * Ignored by `resolvePermissions` and the envelop plugin, which apply nothing.
+   */
+  inPlace?: boolean;
 }
 
 /**
@@ -771,11 +863,17 @@ export interface ApplyPermissionsOptions {
  * reporting them as denials, and {@link ApplyPermissionsOptions.maskDenials}
  * resolves a denied field to `null`/`[]` rather than raising an error.
  *
+ * The returned schema is a guarded *copy* built by `graphql-middleware`. That
+ * rebuild is where all the time goes on a big schema;
+ * {@link ApplyPermissionsOptions.inPlace} guards the schema you passed instead
+ * and skips it.
+ *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @param schema - The executable schema to guard.
  * @param permissions - The permissions map to enforce.
  * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns The schema wrapped with the permission middleware.
+ * @returns The schema wrapped with the permission middleware — or, with
+ * `inPlace`, the same schema, now guarded.
  * @throws {@link PermissionsError} if the map does not line up with the schema.
  * @example
  * ```ts
@@ -791,5 +889,6 @@ export function applyPermissions<TResolvers = AnyResolvers>(
   options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
   const permissionFor = resolvePermissions(schema, permissions, options);
+  if (options?.inPlace) return guardInPlace(schema, permissionFor);
   return applyMiddleware(schema, resolveFieldRules(schema, permissionFor));
 }

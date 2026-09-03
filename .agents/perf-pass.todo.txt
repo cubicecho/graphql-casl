@@ -44,6 +44,19 @@ Measured (same machine, back to back: `git stash push -- src` -> bench ->
   applyPermissions 1000x8, fallbackRule: deny       78.9 ms  87.2 ms  noise
   applyPermissions 1000x8, fallback + maskDenials   86.4 ms  81.2 ms  noise
 
+  Pass 2 — apply time, middleware rebuild vs `inPlace: true` (median of 12,
+  prebuilt schemas, 1000 types x 8 fields; graphql-middleware path timed on
+  one shared schema, in-place on a fresh one per run since it mutates):
+
+                                                   middleware   inPlace
+  sparse map                                         40.3 ms     7.6 ms   5.3x
+  fallbackRule: deny                                 80.1 ms     8.3 ms   9.7x
+  deny + maskDenials + fallbackError                 83.2 ms     9.2 ms   9.1x
+
+  Of the in-place figure, ~5-6 ms is resolvePermissions (validation + one
+  rule lookup per field, the "resolvePermissions only" bench row); the walk
+  and resolver swap is the rest.
+
 Reading: every synchronous path now sits at the unguarded baseline — the
 wrapper's cost has become unmeasurable. The remaining gap is only on rules whose
 check is genuinely async (one extra microtask per field, the same cost shield
@@ -101,7 +114,13 @@ Suggestions (not done)
 Ranked by (win / risk). "Inherent" means the cost belongs to something we do
 not own and a change here would not remove it.
 
-[ ] X1. In-place apply (no schema rebuild) — the only apply-time win. MEDIUM.
+[x] X1. In-place apply (no schema rebuild) — the only apply-time win. DONE (pass 2):
+        `applyPermissions(schema, map, { inPlace: true })`, option (b) below.
+        Mirrors graphql-middleware's field selection (own resolve, else
+        subscribe, else defaultFieldResolver); validates before mutating;
+        throws on a second in-place apply to the same schema (WeakSet of
+        guarded fields). Envelop options `Omit` it. Numbers in the summary
+        table at the top. Was:
         graphql-middleware's applyMiddleware rebuilds the schema with
         addResolversToSchema and validates the map O(T^2)
         (validateMiddleware iterates schema types per map key). That is the
@@ -148,7 +167,12 @@ not own and a change here would not remove it.
         `{ cache: 'strict' }` on those rules, which already collapses
         5 fields -> 1 match per row. Recommend (b); it is done and documented.
 
-[ ] X5. scopeArgs fold memo per ability.rules identity. LOW. scopeArgs
+[-] X5. scopeArgs fold memo per ability.rules identity. SKIPPED (pass 2):
+        the memo would hand the same filter object to every request with
+        that ability, and a resolver or ORM that mutates `args.where` in
+        place (Prisma does not, hand-rolled SQL builders often do) would
+        corrupt it for everyone after. The fold is cheap and per-call; the
+        cross-request aliasing is not worth it. Was: LOW. scopeArgs
         recomputes the condition fold per call; memoizing on `ability.rules`
         (same trick as bareVerdicts) would make it O(1) per call after the
         first. Only matters for list fields called many times per request,

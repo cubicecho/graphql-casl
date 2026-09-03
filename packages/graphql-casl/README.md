@@ -414,8 +414,34 @@ Introspection is never guarded, so `fallbackRule: deny` does not break it.
 > action with no matching rule is denied. That is a different guarantee from
 > *schema coverage*, which is what `fallbackRule` provides. You want both.
 
-`fallbackRule` is one of five options. The other four govern what a denial looks
-like to the client — see [Error control](#error-control).
+`fallbackRule` is one of six options. Four govern what a denial looks like to
+the client — see [Error control](#error-control). The last, `inPlace`, is about
+apply time:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  fallbackRule: deny,
+  inPlace: true, // guard `baseSchema` itself instead of building a copy
+});
+```
+
+By default `applyPermissions` returns a guarded *copy* built by
+`graphql-middleware`. That rebuild is where all the apply time goes — tens of
+milliseconds per thousand types, seconds on a large generated CRUD schema —
+while the rules themselves resolve in a fraction of that. `inPlace: true` skips
+the copy and replaces the guarded fields' resolvers on the schema you passed,
+with the same field selection and the same enforcement.
+
+This is an **apply-time** saving only; per-request cost is identical in both
+modes. For a long-lived server that builds its schema once, the difference is a
+one-off few tens of milliseconds and the default is the right choice. Reach for
+`inPlace` where `applyPermissions` runs over and over: a test suite that guards a
+fresh schema per test, hot reload in development, per-tenant schemas, or a
+gateway that recomposes. The schema is mutated and also returned; apply it once
+per schema, since guarding an already-guarded schema throws rather than stacking
+two maps. If something else already holds the schema and expects it unguarded,
+leave `inPlace` off, or use the
+[envelop plugin](#enforcing-the-map-through-envelop-optional), which never rebuilds.
 
 ## Guides
 

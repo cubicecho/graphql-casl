@@ -48,7 +48,10 @@ import type { PermissionsMap } from './rules.js';
  *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  */
-export interface GraphQLCaslPluginOptions<TResolvers> extends ApplyPermissionsOptions {
+export interface GraphQLCaslPluginOptions<TResolvers>
+  // `inPlace` is about how `applyPermissions` hands back a schema; the plugin
+  // never rebuilds one, so the option has nothing to mean here.
+  extends Omit<ApplyPermissionsOptions, 'inPlace'> {
   /** The map to enforce. Validated against the schema when the schema arrives. */
   permissions: PermissionsMap<TResolvers>;
 }
