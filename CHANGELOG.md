@@ -1,3 +1,17 @@
+# [1.4.0](https://github.com/cubicecho/graphql-casl/compare/v1.3.1...v1.4.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* let a throwing operand lose rather than poison or() and race() ([c025bad](https://github.com/cubicecho/graphql-casl/commit/c025bad9e7e653731621648e82283f185585706c)), closes [#3](https://github.com/cubicecho/graphql-casl/issues/3)
+
+
+### Features
+
+* add a per-rule cache option with graphql-shield's three levels ([16832c2](https://github.com/cubicecho/graphql-casl/commit/16832c2781bff04ec3dfee9aa18135e025f23a53)), closes [#4](https://github.com/cubicecho/graphql-casl/issues/4)
+* add validatePermissions, the cheap half of applyPermissions ([1c786e7](https://github.com/cubicecho/graphql-casl/commit/1c786e7fed56cee290a90761250c19739f342575)), closes [#6](https://github.com/cubicecho/graphql-casl/issues/6)
+* give PermissionsMap a usable untyped mode via AnyResolvers ([9ba3a4d](https://github.com/cubicecho/graphql-casl/commit/9ba3a4dd43e2e1475170d57b4675745ac2d8af27)), closes [#5](https://github.com/cubicecho/graphql-casl/issues/5)
+
 ## [1.3.1](https://github.com/cubicecho/graphql-casl/compare/v1.3.0...v1.3.1) (2026-09-03)
 
 
