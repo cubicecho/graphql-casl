@@ -22,6 +22,7 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 |---|---|
 | `createGraphQLAbility<SubjectMap>()` | Returns a CASL `AbilityBuilder` typed against your schema — `can`/`cannot` conditions are checked against each subject's fields — with `__typename` subject detection applied by `build()`. |
 | `buildGraphQLAbility<SubjectMap>(rules, options?)` | Rebuilds an ability from stored `GraphQLRule`s (e.g. rules persisted in a database). |
+| `validateGraphQLRules(schema, rules, options?)` | Checks stored `GraphQLRule`s against the runtime schema (subjects, `fields`, condition fields and operators, rule shape) and throws `PermissionsError` listing every stale rule. `conditionFields: 'none'` skips the condition-field check for rules that condition on model columns the schema does not expose. |
 | `createCan(getAbility, isAuthenticated, buildSubject?, options?)` | Factory returning a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `getAbility(context)` is memoized per request. |
 | `requireCan.onResult(action, subject, getSubjectData?)` | Post-execution rule: runs the resolver and checks the ability against the value it returned. Refuses root mutation fields before resolving. |
 | `requireCan.fields(action, subject)` | One rule for a whole type; decides each field with `ability.can(action, subject, info.fieldName)`. |
@@ -33,8 +34,9 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `accept` / `deny` | Always-pass / always-fail rule primitives; both are combinable. |
 | `isCheckableRule(value)` | Whether a rule can be a combinator operand. |
 | `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `maskDenials`. |
+| `validatePermissions(schema, permissions)` | The validation half of `applyPermissions` alone — throws the same aggregated `PermissionsError` without building any middleware; the cheap drift check for tests. |
 | `resolvePermissions(schema, permissions, options?)` | The same layer without the `graphql-middleware` binding: a memoized `(typeName, fieldName) => Rule \| undefined` lookup for building another integration. |
-| `PermissionsError` | Thrown when the map names a type or field the schema lacks; aggregates every problem. |
+| `PermissionsError` | Thrown when the map, or a set of stored rules, does not match the schema; aggregates every problem. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability's rules into a query filter for row-level filtering. `null` means deny-all; `{}` means no restriction. |
 | `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable; compose it with `wrap`. |
 | `useGraphQLCasl<Resolvers>(options)` | **Subpath export `@vantreeseba/graphql-casl/envelop`.** An envelop `Plugin` that enforces the same `PermissionsMap` by wrapping resolvers as envelop hands them over, instead of wrapping the schema with `graphql-middleware`. `options.permissions` is the map; every other key is an `ApplyPermissionsOptions` field. |
