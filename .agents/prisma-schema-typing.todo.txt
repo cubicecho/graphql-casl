@@ -40,10 +40,28 @@ Where this maps onto our design
 -------------------------------------------------------------------------
 Compile-time types already come from codegen, so we do NOT need the runtime schema
 for typing. A runtime schema (or the codegen introspection) WOULD enable:
-  [ ] P1. Rule VALIDATION at load time: when rehydrating DB-stored rules
-          (buildGraphQLAbility), reject/log rules whose subject or condition fields
-          don't exist in the schema. High value for the DB-rules workflow where rules
-          are edited outside the type system. This is the most concrete win.
+  [x] P1. DONE (2026-09) — validateGraphQLRules(schema, rules, options?) in
+          src/validateGraphQLRules.ts. Kept separate from buildGraphQLAbility
+          (whose options are CASL's) and shaped like validatePermissions: walks
+          the rows, aggregates every problem into one PermissionsError, throws.
+          Checks subject names (mirroring what SubjectName excludes: root op
+          types, scalars; plus interfaces/unions, which __typename detection can
+          never match), `fields` (skipping `*` patterns, which
+          createMongoAbility's fieldPatternMatcher accepts), condition paths
+          (following dotted paths through object-typed fields; stopping at a
+          scalar/enum/union), the operator set CASL's mongoQueryMatcher knows
+          (from @ucast/mongo's MongoQuery type; `$where` rejected), and the
+          rule's shape. The shape check earned its place: a DB row with
+          `inverted: "false"` is a DENIAL to CASL.
+          THE CAVEAT that shaped the API: conditions name MODEL fields
+          (ResolversTypes[K]), which diverge from schema fields under codegen
+          `mappers`. So condition-field checking is on by default (fail loud)
+          with `conditionFields: 'none'` as the opt-out; subjects and `fields`
+          are schema names regardless and are always checked. Condition VALUES
+          are not checked against field types — that is P2's territory.
+          (Original ask: reject rules whose subject or condition fields don't
+          exist in the schema when rehydrating DB-stored rules — high value for
+          the DB-rules workflow where rules are edited outside the type system.)
   [ ] P2. A codegen-time generator that emits a typed condition map (per-field
           operator types) from the schema — closest to what @casl/prisma gets for free
           from Prisma's generator. Heavier; only if MongoQuery proves too coarse.
@@ -62,7 +80,7 @@ Decision points for the user
    gt/lt) vs the current uniform operator set? (Serializability is preserved either way.)
 2. Type getSubjectData against the schema (ArgsOf args -> GqlConditionsFor return)? —
    small, high-value, no runtime schema needed.
-3. Add load-time rule validation against a provided GraphQLSchema (P1)? This is the
+3. [ANSWERED: yes, done] Add load-time rule validation against a provided GraphQLSchema (P1)? This is the
    only part that actually needs "taking in the gql schema."
 4. Is a codegen plugin (P2) in scope, or out (keep types purely inferred from the
    existing codegen output)?

@@ -47,20 +47,21 @@ import {
 const WILDCARD = '*';
 
 /**
- * Thrown by {@link applyPermissions} when a permissions map does not line up with
- * the schema. Reports *every* problem at once, in {@link problems}, so a mismatched
- * map is fixed in one pass rather than one error per run.
+ * Thrown by {@link applyPermissions} / {@link validatePermissions} when a
+ * permissions map does not line up with the schema, and by
+ * {@link validateGraphQLRules} when stored ability rules do not. Reports
+ * *every* problem at once, in {@link problems}, so a mismatch is fixed in one
+ * pass rather than one error per run.
  */
 export class PermissionsError extends Error {
-  /** Every problem found, one message per offending type or field. */
+  /** Every problem found, one message per offending type, field or rule. */
   readonly problems: readonly string[];
 
-  constructor(problems: readonly string[]) {
-    super(
-      `graphql-casl: the permissions map does not match the schema.\n${problems
-        .map((problem) => `  - ${problem}`)
-        .join('\n')}`,
-    );
+  constructor(
+    problems: readonly string[],
+    heading = 'the permissions map does not match the schema',
+  ) {
+    super(`graphql-casl: ${heading}.\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);
     this.name = 'PermissionsError';
     this.problems = problems;
   }
@@ -73,8 +74,8 @@ function isRule(value: unknown): value is Rule {
   return typeof value === 'function';
 }
 
-/** Names a type's kind for an error message. */
-function describeKind(type: GraphQLNamedType): string {
+/** Names a type's kind for an error message. Shared with `validateGraphQLRules`. */
+export function describeKind(type: GraphQLNamedType): string {
   if (isInterfaceType(type)) return 'an interface type';
   if (isUnionType(type)) return 'a union type';
   if (isScalarType(type)) return 'a scalar type';

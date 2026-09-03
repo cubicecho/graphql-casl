@@ -62,6 +62,8 @@ packages/
                             same map through envelop instead of graphql-middleware
       internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
+      validateGraphQLRules.ts — checks stored ability rules (subjects, fields, conditions) against
+                            the runtime schema; the DB-rules counterpart of validatePermissions
       subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
     test/
@@ -71,6 +73,7 @@ packages/
       accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
+      validateGraphQLRules.test.ts       — stored rules vs the schema: every rejection, and what rehydration lets through
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit

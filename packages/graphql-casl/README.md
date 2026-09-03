@@ -235,6 +235,7 @@ Both messages are replaceable: see [Error control](#error-control) for
 |---|---|
 | `createGraphQLAbility<SubjectMap>()` | Returns a CASL `AbilityBuilder` typed against your schema — `can`/`cannot` conditions are checked against each subject's fields — with `__typename` detection applied by `build()`. |
 | `buildGraphQLAbility<SubjectMap>(rules, options?)` | Rebuilds an ability from stored `GraphQLRule`s (e.g. rules persisted in a database and loaded at startup). |
+| `validateGraphQLRules(schema, rules, options?)` | Checks stored `GraphQLRule`s against the runtime schema — subjects, `fields`, condition fields and operators — and throws a `PermissionsError` listing every stale one, rather than letting it silently never grant. |
 | `createCan(getAbility, isAuthenticated, buildSubject?)` | Factory that returns a `requireCan(action, subject, getSubjectData?)` rule builder, bound to your context shape and ability builder. `requireCan.onResult(...)` authorizes the resolved value instead of the args; `requireCan.fields(...)` guards every field of a type from the ability's field lists. |
 | `createTyped<SubjectMap>()` | Returns a `typed(type, attrs)` helper that tags plain objects with `__typename` for subject detection. |
 | `subjectsOf<SubjectMap>()` | Returns a `Subject` namespace of typo-proof subject names, read from the map. Optional — bare string literals are checked identically. |
@@ -1119,6 +1120,39 @@ const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();
 const ability = buildGraphQLAbility<AppSubjectMap>(rules);
 ```
 
+Rules in a database are edited outside the type system, and
+`buildGraphQLAbility` accepts whatever it is given. A stale row does not error —
+it silently never grants: a condition on a field that has since been renamed
+matches no record, a subject that no longer exists is never asked about, and an
+operator CASL does not know throws on the first `can()` that reaches it,
+mid-request. `validateGraphQLRules` checks the rows against the runtime schema
+and throws a `PermissionsError` naming every problem, so call it where the rules
+are loaded — and in a test:
+
+```ts
+import { validateGraphQLRules } from '@vantreeseba/graphql-casl';
+
+const rules = await db.loadPermissionRules();
+validateGraphQLRules(schema, rules); // PermissionsError: Rule 3 (`update` on `Note`): condition field `ownr` is not a field of `Note`.
+const ability = buildGraphQLAbility<AppSubjectMap>(rules);
+```
+
+Per rule it checks the shape (a string or string-array `action` and `subject`; a
+boolean `inverted`, since CASL reads any truthy value — the string `"false"`
+included — as a denial), that `action` is one of `Actions`, that `subject` is
+`all` or an object type in the schema (not a root operation type, and not an
+interface or union, which `__typename` detection can never match), that each of
+`fields` is a field of the subject, and that `conditions` uses only operators
+CASL's matcher supports and names only fields of the subject, following dotted
+paths through object-typed fields. Condition *values* are not checked.
+
+That last check assumes conditions name GraphQL fields. If your subjects are
+database models — codegen `mappers` pointing `ResolversTypes` at your ORM types
+— a rule may legitimately condition on a column the schema does not expose.
+Pass `{ conditionFields: 'none' }` to check only the shape and operators of
+conditions; subjects and `fields` are still checked, since those are schema
+names either way.
+
 ### Testing your permissions
 
 A guarded schema is just a schema, so rules are testable with `graphql()` and a
@@ -1169,13 +1203,18 @@ that only constructs the guarded schema will catch a whole class of drift.
 
 If that is *all* a test wants, call `validatePermissions` instead. It runs the
 same validation and throws the same aggregated `PermissionsError`, but builds no
-middleware:
+middleware. If rules live in a database, `validateGraphQLRules` is the same
+test for them (see [Persisting rules](#persisting-rules-optional)):
 
 ```ts
-import { validatePermissions } from '@vantreeseba/graphql-casl';
+import { validateGraphQLRules, validatePermissions } from '@vantreeseba/graphql-casl';
 
 it('names only fields that still exist', () => {
   expect(() => validatePermissions<Resolvers>(schema, permissions)).not.toThrow();
+});
+
+it('stored rules still match the schema', async () => {
+  expect(() => validateGraphQLRules(schema, await db.loadPermissionRules())).not.toThrow();
 });
 ```
 
