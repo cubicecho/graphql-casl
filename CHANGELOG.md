@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/cubicecho/graphql-casl/compare/v1.4.1...v1.5.0) (2026-09-03)
+
+
+### Features
+
+* add validateGraphQLRules, schema validation for stored ability rules ([62d78c6](https://github.com/cubicecho/graphql-casl/commit/62d78c69fe6402bd82803aaf5b94b3578b687704))
+
 ## [1.4.1](https://github.com/cubicecho/graphql-casl/compare/v1.4.0...v1.4.1) (2026-09-03)
 
 

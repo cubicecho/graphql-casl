@@ -1,6 +1,6 @@
 {
   "name": "@vantreeseba/graphql-casl-codegen",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "GraphQL Code Generator plugin that emits @vantreeseba/graphql-casl subject bindings for your generated resolver types.",
   "keywords": [
     "graphql",
