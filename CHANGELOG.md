@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/cubicecho/graphql-casl/compare/v1.3.0...v1.3.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* deny instead of crashing when a check returns a non-boolean ([a639fbc](https://github.com/cubicecho/graphql-casl/commit/a639fbc584d7feba900c9a13aad41f287985b5b6)), closes [#2](https://github.com/cubicecho/graphql-casl/issues/2)
+
 # [1.3.0](https://github.com/cubicecho/graphql-casl/compare/v1.2.1...v1.3.0) (2026-08-27)
 
 
