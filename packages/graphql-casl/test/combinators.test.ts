@@ -227,6 +227,83 @@ describe('race', () => {
   });
 });
 
+describe('a throwing operand', () => {
+  // The shape a ported shield map is full of: a cheap guard combined with a
+  // check that depends on it. `ctx.user` is absent, so `hasRole` throws rather
+  // than denying — under shield that is a denial and the other branch carries
+  // the field.
+  const passes = rule(() => true, { name: 'passes' });
+  const denies = rule(() => 'denied', { name: 'denies' });
+  const boom = new Error('Cannot read properties of undefined');
+  const throws = rule(
+    () => {
+      throw boom;
+    },
+    { name: 'throws' },
+  );
+
+  it('loses rather than poisons, in or(), whichever side it is on', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(or(passes, throws)(resolve, null, null, {}, info)).resolves.toBe('ok');
+    await expect(or(throws, passes)(resolve, null, null, {}, info)).resolves.toBe('ok');
+  });
+
+  it('loses rather than poisons, in race()', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(race(throws, passes)(resolve, null, null, {}, info)).resolves.toBe('ok');
+  });
+
+  it('does not stop race() from reaching the operand after it', async () => {
+    const after = probe(true, 'after');
+    await race(throws, after.rule)(vi.fn().mockResolvedValue('ok'), null, null, {}, info);
+    expect(after.evaluated).toBe(1);
+  });
+
+  it('rethrows unchanged when no operand passes, so it is not a denial', async () => {
+    // A rule that broke is an outage to report, not an access decision — and it
+    // must stay distinguishable from one for `debug` and `fallbackError`.
+    await expect(or(denies, throws)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+    await expect(race(denies, throws)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+  });
+
+  it('wins over a denial regardless of operand order', async () => {
+    await expect(or(throws, denies)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+    await expect(race(throws, denies)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+  });
+
+  it('still throws the last denial when nothing threw', async () => {
+    // The existing contract, unchanged.
+    await expect(
+      or(
+        rule(() => 'first'),
+        rule(() => 'last'),
+      )(vi.fn(), null, null, {}, info),
+    ).rejects.toThrow('last');
+  });
+
+  it('keeps and() / chain() / not() strict', async () => {
+    // A throw there decides nothing on its own, so it fails the rule outright.
+    await expect(and(passes, throws)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+    await expect(chain(passes, throws)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+    // not() especially: a broken operand must never flip to allow.
+    await expect(not(throws)(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+  });
+
+  it('is tolerated through nesting, since combinators compose', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(or(passes, and(passes, throws))(resolve, null, null, {}, info)).resolves.toBe(
+      'ok',
+    );
+  });
+
+  it('propagates a thrown non-Error unchanged', async () => {
+    const thrower = rule(() => {
+      throw 'a string';
+    });
+    await expect(or(denies, thrower)(vi.fn(), null, null, {}, info)).rejects.toBe('a string');
+  });
+});
+
 describe('not', () => {
   it('inverts the operand', async () => {
     await expect(not(deny)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe(
