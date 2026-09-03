@@ -1,0 +1,188 @@
+Performance / caching pass — results and suggestions
+=====================================================
+Status: PASS 1 SHIPPED on branch worktree-perf-caching-pass (2026-09-03).
+Items under "Suggestions" are NOT done; they are ranked and sized.
+
+Reference implementation studied: graphql-shield 7.6.5 (packages/graphql-shield/
+src/{rules,generator,constructors,validation}.ts) and graphql-middleware 6.1.35
+(applyMiddleware / validateMiddleware / wrapResolverInMiddleware).
+
+How to measure
+--------------
+  cd packages/graphql-casl && npm run bench      # vitest bench, bench/hotpath.bench.ts
+
+Two suites:
+  * "100 rows x 5 fields": one request, `{ notes { id title body author year } }`
+    over 100 rows, every field guarded by the rule under test. The number to
+    beat is "unguarded schema (graphql-js baseline)". A guard that sits at the
+    baseline costs nothing observable.
+  * "apply time": applyPermissions over 1000 types x 8 fields. Measures the
+    graphql-middleware walk + schema rebuild, which we do not own.
+
+Measured (same machine, back to back: `git stash push -- src` -> bench ->
+`git stash pop` -> bench). hz = requests/second, higher is better. rme 4-7%.
+
+  scenario                                          before     after   change
+  ------------------------------------------------  -------  -------  -------
+  unguarded schema (graphql-js baseline)              2,873    2,954   noise
+  accept on every field                               1,896    2,846   +50%
+  sync rule() on every field                          1,936    3,009   +55%  (at baseline)
+  async rule() on every field                         2,024    2,010   same  (inherent .then)
+  rule() cache: 'contextual' (async check)            1,945    1,951   same  (inherent .then)
+  rule() cache: 'strict'    (async check)             1,520    1,820   +20%
+  createCan bare check                                1,755    2,617   +49%
+  createCan bare, conditioned ability (warn path)     1,688    2,740   +62%
+  createCan conditioned from parent                   1,696    2,004   +18%
+  createCan.fields on the type                        1,754    1,951   +11%
+  and(sync, sync)                                     1,471    2,752   +87%
+  accept + fallbackError (error-control wrapper)      1,687    2,586   +53%
+  maskDenials, half the rows denied                     992    3,243   3.3x
+  maskDenials, conditioned createCan, half denied       820    1,625   2.0x
+  envelop plugin, sync rule()                         2,034    2,974   +46%  (at baseline)
+
+  applyPermissions 1000x8, sparse map               38.1 ms  41.1 ms  noise (rme 8-11%)
+  applyPermissions 1000x8, fallbackRule: deny       78.9 ms  87.2 ms  noise
+  applyPermissions 1000x8, fallback + maskDenials   86.4 ms  81.2 ms  noise
+
+Reading: every synchronous path now sits at the unguarded baseline — the
+wrapper's cost has become unmeasurable. The remaining gap is only on rules whose
+check is genuinely async (one extra microtask per field, the same cost shield
+pays), and on the CASL condition matcher itself for conditioned rules.
+
+What changed (and why it was slow)
+----------------------------------
+[x] P1. rule(): sync fast path. Was `async (resolve, ...) => { await check;
+        ...; return resolve(...) }` — three promise allocations and two
+        microtask hops per field even when the check was `() => true`.
+        Now: no `async`; a sync check that passes returns `resolve(...)`
+        directly (possibly a plain value); denials and thrown checks always
+        `Promise.reject` so error paths stay uniform. Documented on `Rule`:
+        "declared return type is a promise ... an allowed field may hand back
+        whatever resolve returned". graphql-js does not care either way.
+        (shield: `async` everywhere; same cost it pays per field.)
+
+[x] P2. Combinators sync-aware. and/or/chain/race/not evaluate operand checks
+        and only go async when an operand answers with a thenable
+        (isThenable / anyPending / outcomesOf). `and(sync, sync)` went from the
+        slowest scenario to baseline.
+
+[x] P3. Cache stores answers, not always promises. `memoize` stores a sync
+        answer as the value and an async one as its pending promise (the
+        stampede guard is kept). 'strict' key: empty args short-circuit to '';
+        sorted-key JSON otherwise; unkeyable args (BigInt, cycles) run uncached
+        instead of throwing. Flat WeakMap<ctx, Answer> for 'contextual'.
+
+[x] P4. cache: (parent, args, ctx, info) => key. graphql-shield's `cache: fn`
+        escape hatch, zero-dep. `undefined` skips the cache for that call.
+        Exported as `CacheKey`. Shipped instead of a `hashFunction` option.
+
+[x] P5. createCan: ability memo replaces the pending promise with the settled
+        ability (`abilityCache.set(key, ability)` on resolve), and
+        `withAbility(ctx, decide)` runs `decide` synchronously once it has one.
+        Bare-subject verdict + the "unconditioned subject" footgun walk are
+        memoized per `ability.rules` array identity (`bareVerdicts` WeakMap);
+        warn mode stops walking once it has warned. New 4th argument
+        `options?: CanRuleOptions` (`{ cache }`) on requireCan.
+
+[x] P6. applyPermissions error control: rules built by `rule()` carry a
+        PLAIN_RULE marker; `withCheckedErrorControl` calls `.check` directly
+        and decides on the RuleResult, so a masked denial never constructs an
+        Error (the maskDenials 3.3x). Generic thrown-error wrapper kept for
+        onResult / scopeArgs / wrap / hand-written rules. Wrappers are shared
+        per (rule, mask) so a type-level rule reused across 8 fields is wrapped
+        once; MASK_NULL / MASK_LIST are module constants.
+
+[x] P7. envelop plugin: `guarded` is a WeakSet<GraphQLField> keyed on
+        `parentType.getFields()[fieldName]` instead of a Set of
+        "Type.field" strings built per call; inner resolve is not `async`.
+
+Suggestions (not done)
+----------------------
+Ranked by (win / risk). "Inherent" means the cost belongs to something we do
+not own and a change here would not remove it.
+
+[ ] X1. In-place apply (no schema rebuild) — the only apply-time win. MEDIUM.
+        graphql-middleware's applyMiddleware rebuilds the schema with
+        addResolversToSchema and validates the map O(T^2)
+        (validateMiddleware iterates schema types per map key). That is the
+        entire 40-90 ms per 1000 types; nothing in this package shows up in
+        that profile. Options, in increasing ambition:
+          a. Document that apply time is one-off and dominated by
+             graphql-middleware; recommend the envelop plugin
+             (useGraphQLCasl) for apps that rebuild schemas per request
+             (federation gateways, per-tenant schemas). Cheapest; do now.
+          b. `applyPermissions(schema, map, { inPlace: true })`: walk
+             schema.getTypeMap() once, mutate `field.resolve` in place with
+             the same wrapped resolver resolvePermissions already computes.
+             Skips the rebuild and the O(T^2) validation (validatePermissions
+             already does that check in O(map)). ~60 lines, one flag, no new
+             dep. Mutating a schema is what envelop does anyway.
+          c. Drop graphql-middleware from the default path (it becomes an
+             optional peer for users on it). Bigger docs change; defer.
+        Shield does exactly what we do today (applyMiddleware), so parity is
+        not an argument here; graphql-authz and Pothos both mutate in place.
+
+[ ] X2. `'strict'` keyed on field name as an opt-in, or a documented
+        `CacheKey` recipe. SMALL. createCan.fields' verdict depends on
+        info.fieldName so it cannot use 'strict' today (documented in README).
+        A `cache: 'strict-field'` level would be a fourth mode; a recipe
+        `(p, _a, _c, i) => \`${p.id}:${i.fieldName}\`` is already in the
+        README. Recommend: stay with the recipe unless users ask; shield has
+        no per-field mode either.
+
+[ ] X3. Async rules: 1 microtask per field is inherent. NONE TO DO. An async
+        check returns a promise; awaiting it costs one hop and graphql-js
+        then awaits the resolver's promise. Shield pays the same. The only
+        way out is not calling the check per field — i.e. 'contextual' /
+        'strict' / a key function — which is now the documented advice.
+        Recorded so nobody spends a day on it.
+
+[ ] X4. createCan conditioned rules: CASL matcher cost. SMALL/INHERENT.
+        The remaining gap on "conditioned from parent" (2,004 vs 2,954) is
+        buildSubject + ability.can with a condition matcher. Two possible
+        trims: (a) `ability.rulesFor(action, subjectType)` once per
+        (ability, action, subject) and then `rule.matchesConditions(obj)`
+        per row — skips CASL's per-call rule lookup. ~20 lines, but reaches
+        into CASL internals that are semver-public but easy to get wrong
+        (inverted rules, field-level rules). (b) Tell users to set
+        `{ cache: 'strict' }` on those rules, which already collapses
+        5 fields -> 1 match per row. Recommend (b); it is done and documented.
+
+[ ] X5. scopeArgs fold memo per ability.rules identity. LOW. scopeArgs
+        recomputes the condition fold per call; memoizing on `ability.rules`
+        (same trick as bareVerdicts) would make it O(1) per call after the
+        first. Only matters for list fields called many times per request,
+        which is rare (it is a Query/Mutation-level rule). Do when someone
+        measures it.
+
+[ ] X6. Duplicate rule-name validation (shield-parity S14): NOT NEEDED.
+        Shield must reject duplicate names because its cache is keyed
+        `${ruleName}-${key}` on `ctx._shield.cache`. Ours is per rule
+        instance, so two rules called `isOwner` are independent. Close S14 as
+        "not applicable" and say so in the shield comparison table (done).
+
+[ ] X7. `fallbackError` as a function is called per denial. NONE TO DO.
+        Same as shield. Users who want a constant should pass a string/Error;
+        those are resolved once. Already the case.
+
+[ ] X8. useOnResolve per-call callback. INHERENT to @envelop/on-resolve —
+        it wraps every field including unguarded ones. The plugin is now at
+        the unguarded baseline anyway (2,974 vs 2,954), so there is nothing
+        to recover. If envelop ever ships a "resolver-only" hook, switch.
+
+[ ] X9. Bench in CI. SMALL. `npm run bench` exists; wire it as a manual
+        workflow_dispatch job (not on PRs — the numbers are too noisy to gate
+        on, rme 4-11%). Publish the table into the job summary so regressions
+        are visible without local runs.
+
+Correctness notes recorded during the pass
+-----------------------------------------
+* `Rule` may return a non-promise for an allowed field. Any code doing
+  `rule(...).then(...)` without `await`/`Promise.resolve` breaks; nothing in
+  this repo did, and graphql-js accepts either. Tests pin it (combinators
+  "rule — synchronous checks").
+* Denials and thrown checks still always reject; the sync path never throws
+  synchronously out of a rule.
+* A masked denial under maskDenials resolves to null/[] synchronously; the
+  resolvePermissions test was updated to `await` the result.
+* 'strict' does not key on fieldName (README + JSDoc say so).

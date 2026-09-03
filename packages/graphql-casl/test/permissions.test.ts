@@ -844,3 +844,78 @@ describe('createCan.fields — CASL field-level permissions', () => {
     );
   });
 });
+
+describe('createCan — rule cache option', () => {
+  const canUser = createCan<TestContext, ExampleSubjectMap>(
+    async (ctx) => buildAbility(ctx.userId),
+    (ctx) => ctx.userId != null,
+    typed,
+  );
+  const ctx: TestContext = { userId: 'u1' };
+
+  function subjectSpy() {
+    return vi.fn((_args: Record<string, never>, parent: { userId: string }) => ({
+      userId: parent.userId,
+    }));
+  }
+
+  it('matches the conditions once per field per row by default', async () => {
+    const getSubjectData = subjectSpy();
+    const update = canUser(Actions.update, 'Note', getSubjectData);
+    const row = { userId: 'u1' };
+    const resolve = vi.fn().mockResolvedValue('ok');
+    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    expect(getSubjectData).toHaveBeenCalledTimes(5);
+  });
+
+  it('matches the conditions once per row under strict', async () => {
+    const getSubjectData = subjectSpy();
+    const update = canUser(Actions.update, 'Note', getSubjectData, { cache: 'strict' });
+    const row = { userId: 'u1' };
+    const resolve = vi.fn().mockResolvedValue('ok');
+    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    expect(getSubjectData).toHaveBeenCalledOnce();
+    // Another row object is another subject.
+    await update(resolve, { userId: 'u1' }, {}, ctx, info);
+    expect(getSubjectData).toHaveBeenCalledTimes(2);
+    // Another request starts over.
+    await update(resolve, row, {}, { userId: 'u1' }, info);
+    expect(getSubjectData).toHaveBeenCalledTimes(3);
+  });
+
+  it('caches a denial as faithfully as a pass', async () => {
+    const getSubjectData = subjectSpy();
+    const update = canUser(Actions.update, 'Note', getSubjectData, { cache: 'strict' });
+    const theirs = { userId: 'someone-else' };
+    await expect(update(vi.fn(), theirs, {}, ctx, info)).rejects.toThrow('Forbidden');
+    await expect(update(vi.fn(), theirs, {}, ctx, info)).rejects.toThrow('Forbidden');
+    expect(getSubjectData).toHaveBeenCalledOnce();
+  });
+
+  it('accepts a key function', async () => {
+    const getSubjectData = subjectSpy();
+    const update = canUser(Actions.update, 'Note', getSubjectData, {
+      cache: (parent) => (parent as { userId: string }).userId,
+    });
+    const resolve = vi.fn().mockResolvedValue('ok');
+    // Two distinct row objects with the same owner share one verdict.
+    await update(resolve, { userId: 'u1' }, {}, ctx, info);
+    await update(resolve, { userId: 'u1' }, {}, ctx, info);
+    expect(getSubjectData).toHaveBeenCalledOnce();
+  });
+
+  it('is accepted, and harmless, on the bare form', async () => {
+    const getAbility = vi.fn(async (ctx: TestContext) => buildAbility(ctx.userId));
+    const canCounted = createCan<TestContext, ExampleSubjectMap>(
+      getAbility,
+      (ctx) => ctx.userId != null,
+      typed,
+    );
+    const read = canCounted(Actions.read, 'Note', undefined, { cache: 'contextual' });
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await read(resolve, null, {}, ctx, info);
+    await read(resolve, null, {}, ctx, info);
+    expect(getAbility).toHaveBeenCalledOnce();
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+});

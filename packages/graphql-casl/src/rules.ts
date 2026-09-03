@@ -21,6 +21,11 @@ type ResolveFn = (
  * arguments. It either calls `resolve(...)` to allow the field, or throws to
  * deny it. `createCan` produces rules that enforce CASL abilities;
  * {@link accept} and {@link deny} are the always-pass / always-fail primitives.
+ *
+ * The declared return type is a promise, and a denial is always delivered as a
+ * rejection. An *allowed* field, though, may hand back whatever `resolve`
+ * returned — a plain value when the resolver is synchronous — exactly as a
+ * GraphQL resolver may. Callers `await` the result, which handles both.
  */
 export type Rule = (
   resolve: ResolveFn,
@@ -120,6 +125,17 @@ function markDenial(error: Error, kind: DenialKind): Error {
 }
 
 /**
+ * Whether a {@link RuleResult} allows the field. The same reading as
+ * {@link denialFrom}, without building the error — for a caller that is going
+ * to mask the denial and never needs one. Internal.
+ */
+export function passes(result: RuleResult): boolean {
+  if (result === true) return true;
+  if (typeof result === 'string' || result instanceof Error) return false;
+  return Boolean(result);
+}
+
+/**
  * Normalizes a {@link RuleResult} into the error to throw, or `undefined` when
  * the check passed. Internal — shared with the combinators, not re-exported from
  * the package entry point.
@@ -148,7 +164,10 @@ export function denialFrom(result: RuleResult): Error | undefined {
  *   the context: `isAuthenticated`, `hasRole`, an org-membership lookup.
  * - `'strict'` — once per request per `(parent, args)`. Correct when the answer
  *   depends on the row being authorized, and still collapses the *fields* of one
- *   row into a single evaluation.
+ *   row into a single evaluation. The field name is *not* part of the key: a
+ *   check that reads `info.fieldName` needs `'no_cache'` or a {@link CacheKey}.
+ *
+ * A {@link CacheKey} function replaces `'strict'`'s key with one of your own.
  *
  * Caching is per rule and per request: entries hang off the context object in a
  * `WeakMap`, so they are unreachable once the request is. A context that is not
@@ -156,23 +175,83 @@ export function denialFrom(result: RuleResult): Error | undefined {
  */
 export type CacheMode = 'no_cache' | 'contextual' | 'strict';
 
-/** The single `'contextual'` slot's parent key — no real parent can collide. */
-const CONTEXTUAL: unique symbol = Symbol('graphql-casl.contextual');
+/**
+ * A custom cache key for {@link rule}'s `cache` option — the same escape hatch
+ * `graphql-shield` offers when a function is passed as `cache`.
+ *
+ * The check is evaluated once per request per distinct key. Keys compare with
+ * `Map` semantics: primitives by value, objects by identity — so return a
+ * string, a number, or the object whose identity you mean. Return `undefined`
+ * to skip the cache for that call.
+ *
+ * Use it when the built-in `'strict'` key — parent identity plus the field's
+ * arguments — is wrong in either direction: too coarse when the answer depends
+ * on `info.fieldName`, too fine when rows from different parents share an
+ * answer, e.g. a check that only cares about `parent.orgId`.
+ *
+ * @example
+ * ```ts
+ * const inOrg = rule(
+ *   async (parent: { orgId: string }, _args, ctx) => ctx.orgs.has(parent.orgId),
+ *   { name: 'inOrg', cache: (parent: { orgId: string }) => parent.orgId },
+ * );
+ * ```
+ */
+export type CacheKey = (
+  parent: unknown,
+  args: unknown,
+  // biome-ignore lint/suspicious/noExplicitAny: accepts any concrete context type
+  context: any,
+  info: GraphQLResolveInfo,
+) => unknown;
+
+/** Whether a check's answer is still pending. Internal. */
+export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as PromiseLike<T>).then === 'function'
+  );
+}
+
+/** Whether a value can key a `WeakMap`. */
+function isObject(value: unknown): value is object {
+  return value !== null && (typeof value === 'object' || typeof value === 'function');
+}
 
 /**
- * A stable key for a field's arguments.
+ * A stable key for a field's arguments, or `undefined` if none can be made.
  *
  * Arguments are GraphQL input values, so they are JSON-safe. Keys are sorted
  * because argument order is not guaranteed to be stable across executions, and
- * two orderings of the same arguments must share a cache entry.
+ * two orderings of the same arguments must share a cache entry. A field with no
+ * arguments — most fields of most object types — is the common case, and the
+ * `JSON.stringify` round trip is skipped for it.
+ *
+ * A value `JSON.stringify` rejects (a `BigInt` scalar, a cyclic custom scalar)
+ * yields no key rather than an exception: the rule then runs uncached for that
+ * call, which is correct and costs only the caching.
  */
-function argsKey(args: unknown): string {
-  if (args === null || typeof args !== 'object') return String(args);
-  return JSON.stringify(args, (_key, value) =>
-    value === null || typeof value !== 'object' || Array.isArray(value)
-      ? value
-      : Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1))),
-  );
+function argsKey(args: unknown): string | undefined {
+  if (args === null || args === undefined) return '';
+  if (typeof args !== 'object') return String(args);
+  if (!Array.isArray(args)) {
+    let empty = true;
+    for (const _ in args) {
+      empty = false;
+      break;
+    }
+    if (empty) return '';
+  }
+  try {
+    return JSON.stringify(args, (_key, value) =>
+      value === null || typeof value !== 'object' || Array.isArray(value)
+        ? value
+        : Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1))),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -183,50 +262,96 @@ function argsKey(args: unknown): string {
  * stampeding — which is the whole point on a rule that calls out to a policy
  * engine. A rejection is cached alongside, so a broken check fails the request
  * once rather than 500 times; the next request starts clean.
+ *
+ * A check that answers synchronously is stored as its value, so the cached
+ * answer is handed back without a promise hop — and {@link rule} then resolves
+ * the field synchronously too.
  */
-function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'>): Check {
-  type Slot = Map<unknown, Map<string, Promise<RuleResult>>>;
-  const byContext = new WeakMap<object, Slot>();
+function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey): Check {
+  type Answer = RuleResult | Promise<RuleResult>;
 
+  function evaluate(parent: unknown, args: unknown, context: unknown, info: GraphQLResolveInfo) {
+    const answer = check(parent, args, context, info);
+    return isThenable(answer) ? Promise.resolve(answer) : answer;
+  }
+
+  if (mode === 'contextual') {
+    // One slot per request; the parent and args are irrelevant by definition.
+    const byContext = new WeakMap<object, Answer>();
+    return (parent, args, context, info) => {
+      // No object to hang the cache off — a request-scoped cache is not
+      // available, so evaluate as if uncached rather than leaking entries into
+      // a global map.
+      if (!isObject(context)) return check(parent, args, context, info);
+      const hit = byContext.get(context);
+      if (hit !== undefined) return hit;
+      const answer = evaluate(parent, args, context, info);
+      byContext.set(context, answer);
+      return answer;
+    };
+  }
+
+  // 'strict' keys on the parent's identity and the field's arguments; a custom
+  // key function keys on whatever it returns. Both share one shape: a map per
+  // request, a map per parent (or per custom key), an answer per argument key.
+  const keyOf = typeof mode === 'function' ? mode : undefined;
+  const byContext = new WeakMap<object, Map<unknown, Map<string, Answer>>>();
   return (parent, args, context, info) => {
-    // No object to hang the cache off — a request-scoped cache is not available,
-    // so evaluate as if uncached rather than leaking entries into a global map.
-    if (context === null || typeof context !== 'object') return check(parent, args, context, info);
+    if (!isObject(context)) return check(parent, args, context, info);
+
+    const parentKey = keyOf ? keyOf(parent, args, context, info) : parent;
+    const key = keyOf ? '' : argsKey(args);
+    // `undefined` from either means "unkeyable": run uncached for this call.
+    if (parentKey === undefined || key === undefined) return check(parent, args, context, info);
 
     let slot = byContext.get(context);
     if (!slot) {
       slot = new Map();
       byContext.set(context, slot);
     }
-    const parentKey = mode === 'strict' ? parent : CONTEXTUAL;
-    const key = mode === 'strict' ? argsKey(args) : '';
-
     let byArgs = slot.get(parentKey);
     if (!byArgs) {
       byArgs = new Map();
       slot.set(parentKey, byArgs);
     }
-    const cached = byArgs.get(key);
-    if (cached) return cached;
-
-    const pending = Promise.resolve(check(parent, args, context, info));
-    byArgs.set(key, pending);
-    return pending;
+    const hit = byArgs.get(key);
+    if (hit !== undefined) return hit;
+    const answer = evaluate(parent, args, context, info);
+    byArgs.set(key, answer);
+    return answer;
   };
 }
+
+/** Options for {@link rule}. */
+export interface RuleOptions {
+  /** Labels the rule in combinator error messages. Defaults to the check's name. */
+  name?: string;
+  /**
+   * Reuses the check's answer within a request: a {@link CacheMode}, or a
+   * {@link CacheKey} function for a key of your own. Default `'no_cache'`.
+   */
+  cache?: CacheMode | CacheKey;
+}
+
+/**
+ * Marks a rule whose middleware is exactly "run `.check`, then `resolve`" — the
+ * ones {@link rule} builds. `applyPermissions` reads it to take a fast path that
+ * asks the check directly, which a hand-written {@link CheckableRule} whose
+ * middleware does more than that must not be given. Internal.
+ */
+export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule') as never;
 
 /**
  * Wraps a {@link Check} into a {@link CheckableRule} — a rule usable directly in
  * a `PermissionsMap` *and* as an operand of the combinators.
  *
- * The check runs before the resolver; a denial throws and the resolver never
+ * The check runs before the resolver; a denial rejects and the resolver never
  * runs. An error raised *inside* the check propagates unchanged rather than
  * being converted into a denial, so a broken check is not silently mistaken for
  * a legitimate `Forbidden`.
  *
  * @param check - The predicate. See {@link RuleResult} for what it may return.
- * @param options - `name` labels the rule in combinator error messages;
- * `cache` reuses the check's answer within a request, see {@link CacheMode}.
+ * @param options - See {@link RuleOptions}.
  * @example
  * ```ts
  * const isSelf = rule(
@@ -236,19 +361,36 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'>): Check {
  * );
  * ```
  */
-export function rule(check: Check, options?: { name?: string; cache?: CacheMode }): CheckableRule {
+export function rule(check: Check, options?: RuleOptions): CheckableRule {
   const mode = options?.cache ?? 'no_cache';
   // Memoize the *check*, not the middleware: the combinators call `.check`
   // directly, so caching applied any higher up would not reach an operand.
   const cached = mode === 'no_cache' ? check : memoize(check, mode);
-  const middleware: Rule = async (resolve, parent, args, context, info) => {
-    const denial = denialFrom(await cached(parent, args, context, info));
-    if (denial) throw denial;
-    return resolve(parent, args, context, info);
+  const middleware: Rule = (resolve, parent, args, context, info) => {
+    let answer: RuleResult | Promise<RuleResult>;
+    try {
+      answer = cached(parent, args, context, info);
+    } catch (error) {
+      // A check that broke still fails the field by rejection, as it always has.
+      return Promise.reject(error);
+    }
+    // A synchronous answer skips the microtask an `await` would cost — on a
+    // 100-row list with 5 guarded fields that is 500 promise hops — while a
+    // denial is still delivered as a rejection, never a synchronous throw.
+    if (!isThenable(answer)) {
+      const denial = denialFrom(answer);
+      return denial ? Promise.reject(denial) : resolve(parent, args, context, info);
+    }
+    return Promise.resolve(answer).then((result) => {
+      const denial = denialFrom(result);
+      if (denial) throw denial;
+      return resolve(parent, args, context, info);
+    });
   };
   return Object.assign(middleware, {
     check: cached,
     ruleName: options?.name ?? check.name ?? '',
+    [PLAIN_RULE]: true,
   }) as CheckableRule;
 }
 

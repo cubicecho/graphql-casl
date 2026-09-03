@@ -34,7 +34,7 @@
 
 import type { Plugin } from '@envelop/core';
 import { useOnResolve } from '@envelop/on-resolve';
-import type { GraphQLSchema } from 'graphql';
+import type { GraphQLField, GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
   type PermissionResolver,
@@ -86,8 +86,12 @@ export function useGraphQLCasl<
 
   /** Per schema, because envelop may hand over a new one at any point. */
   const resolvers = new WeakMap<GraphQLSchema, PermissionResolver>();
-  /** Fields already wrapped, so a rule is never applied twice to one field. */
-  const guarded = new WeakMap<GraphQLSchema, Set<string>>();
+  /**
+   * Fields already wrapped, so a rule is never applied twice to one field.
+   * Keyed on the field definition itself — unique per schema, and looked up
+   * without building a `Type.field` string on every resolver call.
+   */
+  const guarded = new WeakSet<GraphQLField<unknown, unknown>>();
 
   /** Resolves the map against a schema once, then reuses that lookup. */
   function permissionsFor(schema: GraphQLSchema): PermissionResolver {
@@ -104,29 +108,30 @@ export function useGraphQLCasl<
       addPlugin(
         useOnResolve<TContext>(({ info, resolver, replaceResolver }) => {
           // `replaceResolver` is permanent for the field, not per call, so this
-          // runs once per field and every later call reuses the wrapper.
-          let done = guarded.get(info.schema);
-          if (!done) {
-            done = new Set();
-            guarded.set(info.schema, done);
-          }
-          const key = `${info.parentType.name}.${info.fieldName}`;
-          if (done.has(key)) return;
-          done.add(key);
+          // runs once per field and every later call reuses the wrapper. This
+          // callback itself still runs per call, so the "already done" test is
+          // kept to one `WeakSet` lookup.
+          const field = info.parentType.getFields()[info.fieldName];
+          if (!field || guarded.has(field)) return;
+          guarded.add(field);
 
           const rule = permissionsFor(info.schema)(info.parentType.name, info.fieldName);
           if (!rule) return;
 
           replaceResolver((root, args, context, resolveInfo) =>
             rule(
-              async (...resolverArgs) =>
+              // Not `async`: a synchronous resolver stays synchronous, which
+              // is what lets a `rule()` guard resolve a field without a
+              // promise. The declared `Promise` return is satisfied in the
+              // sense `Rule` documents.
+              (p, a, c, i) =>
                 resolver(
-                  resolverArgs[0],
-                  resolverArgs[1] as Record<string, unknown>,
-                  resolverArgs[2] as TContext,
+                  p,
+                  a as Record<string, unknown>,
+                  c as TContext,
                   // biome-ignore lint/style/noNonNullAssertion: middleware always forwards info
-                  resolverArgs[3]!,
-                ),
+                  i!,
+                ) as Promise<unknown>,
               root,
               args,
               context,

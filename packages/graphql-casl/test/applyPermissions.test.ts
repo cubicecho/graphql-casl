@@ -779,9 +779,9 @@ describe('resolvePermissions', () => {
       { maskDenials: true },
     );
     const rule = permissionFor('Query', 'note');
-    await expect(
-      rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
-    ).resolves.toBeNull();
+    // `await` rather than `.resolves`: a masked denial of a synchronous check
+    // is handed back synchronously, as `Rule` documents an allowed value may be.
+    expect(await rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo)).toBeNull();
   });
 });
 
@@ -964,5 +964,154 @@ describe('validatePermissions', () => {
     const before = schema.getQueryType()?.getFields().note?.resolve;
     validatePermissions(schema, { Query: { note: deny } });
     expect(schema.getQueryType()?.getFields().note?.resolve).toBe(before);
+  });
+});
+
+describe('applyPermissions — error control on a check-then-resolve rule', () => {
+  // `rule()` marks its middleware, and error control then talks to the check
+  // directly instead of catching a thrown denial. Same contract as the generic
+  // wrapper, different code path, so each branch is pinned here.
+  function scenario(
+    guard: Rule,
+    options?: ApplyPermissionsOptions,
+    resolver: () => unknown = () => 'ok',
+  ) {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { note: String  other: String }`,
+      resolvers: { Query: { note: resolver, other: () => 'ok' } },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { note: guard, other: guard } },
+      options,
+    );
+  }
+
+  async function run(schema: GraphQLSchema, source = '{ note }') {
+    const result = await graphql({ schema, source, contextValue: {} });
+    return result.errors?.[0];
+  }
+
+  it('replaces a generic denial from a synchronous check', async () => {
+    const error = await run(
+      scenario(
+        rule(() => false),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('replaces a generic denial from an asynchronous check', async () => {
+    const error = await run(
+      scenario(
+        rule(async () => false),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('leaves an explicit denial alone, sync or async', async () => {
+    const sync = await run(
+      scenario(
+        rule(() => 'Trial expired'),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(sync?.message).toBe('Trial expired');
+    const async = await run(
+      scenario(
+        rule(async () => new Error('Trial expired')),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(async?.message).toBe('Trial expired');
+  });
+
+  it('masks an asynchronous rule failure by default and surfaces it under debug', async () => {
+    const broken = rule(async () => {
+      throw new Error('getAbility exploded');
+    });
+    const masked = await run(scenario(broken, { fallbackError: 'Not Authorised!' }));
+    expect(masked?.message).toBe('Not Authorised!');
+    const surfaced = await run(scenario(broken, { fallbackError: 'Not Authorised!', debug: true }));
+    expect(surfaced?.message).toBe('getAbility exploded');
+  });
+
+  it('propagates a rule failure untouched when there is no fallbackError', async () => {
+    const broken = rule(() => {
+      throw new Error('getAbility exploded');
+    });
+    const error = await run(scenario(broken, { allowExternalErrors: false }));
+    expect(error?.message).toBe('getAbility exploded');
+  });
+
+  it('masks an asynchronous resolver rejection when allowExternalErrors is false', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { fallbackError: 'Not Authorised!', allowExternalErrors: false },
+        async () => {
+          throw new Error('connection refused: 10.0.0.4:5432');
+        },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('lets a resolver rejection through by default', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { fallbackError: 'Not Authorised!' },
+        async () => {
+          throw new Error('connection refused');
+        },
+      ),
+    );
+    expect(error?.message).toBe('connection refused');
+  });
+
+  it('surfaces resolver errors under allowExternalErrors: false when nothing can replace them', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { allowExternalErrors: false },
+        () => {
+          throw new Error('connection refused');
+        },
+      ),
+    );
+    expect(error?.message).toBe('connection refused');
+  });
+
+  it('masks an explicit denial when maskDenials is on, ignoring fallbackError', async () => {
+    const schema = scenario(
+      rule(() => 'Trial expired'),
+      { maskDenials: true, fallbackError: 'Not Authorised!' },
+    );
+    const result = await graphql({ schema, source: '{ note }', contextValue: {} });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: null });
+  });
+
+  it('still applies the check cache underneath error control', async () => {
+    // The wrapper must consult the cached check, not the raw one, or the
+    // cache silently stops working the moment fallbackError is set.
+    let calls = 0;
+    const counted = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { cache: 'contextual' },
+    );
+    const error = await run(
+      scenario(counted, { fallbackError: 'Not Authorised!' }),
+      '{ note other }',
+    );
+    expect(error).toBeUndefined();
+    expect(calls).toBe(1);
   });
 });

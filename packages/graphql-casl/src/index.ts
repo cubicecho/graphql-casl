@@ -50,6 +50,7 @@ export type {
 } from './conditions.js';
 export type {
   BuildSubject,
+  CanRuleOptions,
   CreateCanOptions,
   RequireCan,
   RequireCanBare,
@@ -67,11 +68,13 @@ export type {
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
 export type {
   AnyResolvers,
+  CacheKey,
   CacheMode,
   Check,
   CheckableRule,
   PermissionsMap,
   Rule,
+  RuleOptions,
   RuleResult,
   Wildcard,
 } from './rules.js';
