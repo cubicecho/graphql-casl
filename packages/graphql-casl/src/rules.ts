@@ -135,6 +135,87 @@ export function denialFrom(result: RuleResult): Error | undefined {
 }
 
 /**
+ * How long one rule may reuse a check's answer.
+ *
+ * The default is `'no_cache'`: a rule attached to a *type* runs once per field
+ * per object, so a 100-row list with 5 selected fields evaluates it 500 times.
+ * That is free for a synchronous role check and expensive for the async rules
+ * this library encourages — a policy-engine round trip, a row load.
+ *
+ * - `'no_cache'` — evaluate every time. The safe default; a check that reads
+ *   something mutable, or that must observe every field, needs this.
+ * - `'contextual'` — once per request. Correct when the answer depends only on
+ *   the context: `isAuthenticated`, `hasRole`, an org-membership lookup.
+ * - `'strict'` — once per request per `(parent, args)`. Correct when the answer
+ *   depends on the row being authorized, and still collapses the *fields* of one
+ *   row into a single evaluation.
+ *
+ * Caching is per rule and per request: entries hang off the context object in a
+ * `WeakMap`, so they are unreachable once the request is. A context that is not
+ * an object cannot be a `WeakMap` key, so such a rule is simply never cached.
+ */
+export type CacheMode = 'no_cache' | 'contextual' | 'strict';
+
+/** The single `'contextual'` slot's parent key — no real parent can collide. */
+const CONTEXTUAL: unique symbol = Symbol('graphql-casl.contextual');
+
+/**
+ * A stable key for a field's arguments.
+ *
+ * Arguments are GraphQL input values, so they are JSON-safe. Keys are sorted
+ * because argument order is not guaranteed to be stable across executions, and
+ * two orderings of the same arguments must share a cache entry.
+ */
+function argsKey(args: unknown): string {
+  if (args === null || typeof args !== 'object') return String(args);
+  return JSON.stringify(args, (_key, value) =>
+    value === null || typeof value !== 'object' || Array.isArray(value)
+      ? value
+      : Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1))),
+  );
+}
+
+/**
+ * Wraps a check so that one request evaluates it at most once per cache key.
+ *
+ * The *pending promise* is stored rather than the resolved value, so concurrent
+ * field resolutions on one list share a single in-flight call instead of
+ * stampeding — which is the whole point on a rule that calls out to a policy
+ * engine. A rejection is cached alongside, so a broken check fails the request
+ * once rather than 500 times; the next request starts clean.
+ */
+function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'>): Check {
+  type Slot = Map<unknown, Map<string, Promise<RuleResult>>>;
+  const byContext = new WeakMap<object, Slot>();
+
+  return (parent, args, context, info) => {
+    // No object to hang the cache off — a request-scoped cache is not available,
+    // so evaluate as if uncached rather than leaking entries into a global map.
+    if (context === null || typeof context !== 'object') return check(parent, args, context, info);
+
+    let slot = byContext.get(context);
+    if (!slot) {
+      slot = new Map();
+      byContext.set(context, slot);
+    }
+    const parentKey = mode === 'strict' ? parent : CONTEXTUAL;
+    const key = mode === 'strict' ? argsKey(args) : '';
+
+    let byArgs = slot.get(parentKey);
+    if (!byArgs) {
+      byArgs = new Map();
+      slot.set(parentKey, byArgs);
+    }
+    const cached = byArgs.get(key);
+    if (cached) return cached;
+
+    const pending = Promise.resolve(check(parent, args, context, info));
+    byArgs.set(key, pending);
+    return pending;
+  };
+}
+
+/**
  * Wraps a {@link Check} into a {@link CheckableRule} — a rule usable directly in
  * a `PermissionsMap` *and* as an operand of the combinators.
  *
@@ -144,7 +225,8 @@ export function denialFrom(result: RuleResult): Error | undefined {
  * a legitimate `Forbidden`.
  *
  * @param check - The predicate. See {@link RuleResult} for what it may return.
- * @param options - `name` labels the rule in combinator error messages.
+ * @param options - `name` labels the rule in combinator error messages;
+ * `cache` reuses the check's answer within a request, see {@link CacheMode}.
  * @example
  * ```ts
  * const isSelf = rule(
@@ -154,14 +236,18 @@ export function denialFrom(result: RuleResult): Error | undefined {
  * );
  * ```
  */
-export function rule(check: Check, options?: { name?: string }): CheckableRule {
+export function rule(check: Check, options?: { name?: string; cache?: CacheMode }): CheckableRule {
+  const mode = options?.cache ?? 'no_cache';
+  // Memoize the *check*, not the middleware: the combinators call `.check`
+  // directly, so caching applied any higher up would not reach an operand.
+  const cached = mode === 'no_cache' ? check : memoize(check, mode);
   const middleware: Rule = async (resolve, parent, args, context, info) => {
-    const denial = denialFrom(await check(parent, args, context, info));
+    const denial = denialFrom(await cached(parent, args, context, info));
     if (denial) throw denial;
     return resolve(parent, args, context, info);
   };
   return Object.assign(middleware, {
-    check,
+    check: cached,
     ruleName: options?.name ?? check.name ?? '',
   }) as CheckableRule;
 }

@@ -6,6 +6,7 @@ import {
   accept,
   and,
   applyPermissions,
+  type CacheMode,
   createCan,
   createGraphQLAbility,
   createTyped,
@@ -779,5 +780,61 @@ describe('resolvePermissions', () => {
     await expect(
       rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
     ).resolves.toBeNull();
+  });
+});
+
+describe('applyPermissions — rule caching across a list', () => {
+  /**
+   * The shape the wildcard precedence table documents: one rule attached to a
+   * type, guarding its fields. Without caching that is O(rows x fields).
+   */
+  async function invocations(cache?: CacheMode) {
+    let calls = 0;
+    const counted = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { name: 'counted', ...(cache ? { cache } : {}) },
+    );
+    const rows = Array.from({ length: 100 }, (_, i) => ({
+      id: String(i),
+      title: 't',
+      body: 'b',
+      author: 'a',
+      year: 2020,
+    }));
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
+      makeExecutableSchema({
+        typeDefs: `
+          type Note { id: ID! title: String! body: String! author: String! year: Int! }
+          type Query { notes: [Note!]! }
+        `,
+        resolvers: { Query: { notes: () => rows } },
+      }),
+      { Query: { notes: counted }, Note: counted },
+    );
+    const result = await graphql({
+      schema,
+      source: '{ notes { id title body author year } }',
+      contextValue: {},
+    });
+    expect(result.errors).toBeUndefined();
+    expect((result.data?.notes as unknown[]).length).toBe(100);
+    return calls;
+  }
+
+  // 100 rows x 5 fields + the list field itself. The three numbers match
+  // graphql-shield's for the same query under its three cache settings.
+  it('evaluates once per field per object by default', async () => {
+    expect(await invocations()).toBe(501);
+  });
+
+  it('evaluates once per object under strict', async () => {
+    expect(await invocations('strict')).toBe(101);
+  });
+
+  it('evaluates once for the whole request under contextual', async () => {
+    expect(await invocations('contextual')).toBe(1);
   });
 });
