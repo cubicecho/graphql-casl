@@ -142,6 +142,155 @@ describe('rule — off-contract check results', () => {
   });
 });
 
+describe('rule caching', () => {
+  /** A check that counts its calls. */
+  function counted(result: boolean | string = true) {
+    let calls = 0;
+    return {
+      check: async () => {
+        calls++;
+        return result;
+      },
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  it('evaluates every time by default', async () => {
+    const c = counted();
+    const r = rule(c.check);
+    const ctx = {};
+    for (let i = 0; i < 3; i++) await r(vi.fn(), { id: i }, {}, ctx, info);
+    expect(c.calls).toBe(3);
+  });
+
+  it('evaluates once per request under contextual', async () => {
+    const c = counted();
+    const r = rule(c.check, { cache: 'contextual' });
+    const ctx = {};
+    // Different parents and args, one context: the answer cannot depend on them.
+    for (let i = 0; i < 3; i++) await r(vi.fn(), { id: i }, { n: i }, ctx, info);
+    expect(c.calls).toBe(1);
+  });
+
+  it('does not reuse an answer across requests', async () => {
+    const c = counted();
+    const r = rule(c.check, { cache: 'contextual' });
+    await r(vi.fn(), null, null, {}, info);
+    await r(vi.fn(), null, null, {}, info);
+    expect(c.calls).toBe(2);
+  });
+
+  it('keys on parent and args under strict', async () => {
+    const c = counted();
+    const r = rule(c.check, { cache: 'strict' });
+    const ctx = {};
+    const row = { id: 'n1' };
+    // Same row, five fields: one evaluation.
+    for (let i = 0; i < 5; i++) await r(vi.fn(), row, {}, ctx, info);
+    expect(c.calls).toBe(1);
+    // A different row is a different subject, so it must be re-evaluated.
+    await r(vi.fn(), { id: 'n2' }, {}, ctx, info);
+    expect(c.calls).toBe(2);
+    // Same row, different args.
+    await r(vi.fn(), row, { detailed: true }, ctx, info);
+    expect(c.calls).toBe(3);
+  });
+
+  it('treats reordered arguments as the same key', async () => {
+    const c = counted();
+    const r = rule(c.check, { cache: 'strict' });
+    const ctx = {};
+    await r(vi.fn(), null, { a: 1, b: 2 }, ctx, info);
+    await r(vi.fn(), null, { b: 2, a: 1 }, ctx, info);
+    expect(c.calls).toBe(1);
+  });
+
+  it('shares one in-flight call between concurrent resolutions', async () => {
+    // The point of caching the pending promise: a list must not stampede a
+    // policy engine with 100 identical calls before the first one returns.
+    let calls = 0;
+    let release: (v: boolean) => void = () => {};
+    const gate = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const r = rule(
+      () => {
+        calls++;
+        return gate;
+      },
+      { cache: 'contextual' },
+    );
+    const ctx = {};
+    const inFlight = [
+      r(vi.fn().mockResolvedValue('ok'), null, null, ctx, info),
+      r(vi.fn().mockResolvedValue('ok'), null, null, ctx, info),
+    ];
+    expect(calls).toBe(1);
+    release(true);
+    await expect(Promise.all(inFlight)).resolves.toEqual(['ok', 'ok']);
+    expect(calls).toBe(1);
+  });
+
+  it('caches a rejection for the request, then retries on the next one', async () => {
+    // A broken check should fail the request once, not once per field.
+    const boom = new Error('policy engine unreachable');
+    let calls = 0;
+    const r = rule(
+      () => {
+        calls++;
+        return Promise.reject(boom);
+      },
+      { cache: 'contextual' },
+    );
+    const ctx = {};
+    await expect(r(vi.fn(), null, null, ctx, info)).rejects.toBe(boom);
+    await expect(r(vi.fn(), null, null, ctx, info)).rejects.toBe(boom);
+    expect(calls).toBe(1);
+    await expect(r(vi.fn(), null, null, {}, info)).rejects.toBe(boom);
+    expect(calls).toBe(2);
+  });
+
+  it('falls back to evaluating every time when the context is not an object', async () => {
+    // Nothing to hang a request-scoped cache off; must not throw, and must not
+    // leak entries into a map that outlives the request.
+    const c = counted();
+    const r = rule(c.check, { cache: 'contextual' });
+    await r(vi.fn(), null, null, undefined, info);
+    await r(vi.fn(), null, null, undefined, info);
+    expect(c.calls).toBe(2);
+  });
+
+  it('caches the check itself, so combinators reuse the answer too', async () => {
+    const c = counted();
+    const cachedRule = rule(c.check, { cache: 'contextual' });
+    const ctx = {};
+    await and(cachedRule, accept)(vi.fn().mockResolvedValue('ok'), null, null, ctx, info);
+    await or(cachedRule, deny)(vi.fn().mockResolvedValue('ok'), null, null, ctx, info);
+    expect(c.calls).toBe(1);
+  });
+
+  it('caches a denial as faithfully as a pass', async () => {
+    const c = counted('Not a member');
+    const r = rule(c.check, { cache: 'contextual' });
+    const ctx = {};
+    await expect(r(vi.fn(), null, null, ctx, info)).rejects.toThrow('Not a member');
+    await expect(r(vi.fn(), null, null, ctx, info)).rejects.toThrow('Not a member');
+    expect(c.calls).toBe(1);
+  });
+
+  it('gives each rule its own cache', async () => {
+    const a = counted();
+    const b = counted();
+    const ctx = {};
+    await rule(a.check, { cache: 'contextual' })(vi.fn(), null, null, ctx, info);
+    await rule(b.check, { cache: 'contextual' })(vi.fn(), null, null, ctx, info);
+    expect(a.calls).toBe(1);
+    expect(b.calls).toBe(1);
+  });
+});
+
 describe('and', () => {
   it('passes only when every operand passes', async () => {
     await expect(

@@ -544,6 +544,37 @@ absent. Any such value is read for its truthiness, so `undefined` and `null`
 deny with `Forbidden` rather than crashing the request. Return a `boolean` to
 stay on contract; the coercion is a safety net, not a second supported form.
 
+#### Caching a rule's answer
+
+A rule attached to a *type* guards every field of it, so it runs **once per field
+per object**: a 100-row list with 5 selected fields evaluates it 500 times. That
+is free for a synchronous role check and expensive for the async rules this
+library encourages — a [policy engine](#delegating-to-an-external-policy-engine)
+round trip, a row load. `cache` bounds it:
+
+```ts
+rule(check, { name: 'isOrgMember', cache: 'contextual' }) // once per request
+rule(check, { name: 'canEdit',     cache: 'strict' })     // once per (parent, args)
+```
+
+| `cache` | Evaluations for 100 rows x 5 fields | Use when |
+| --- | --- | --- |
+| `'no_cache'` (default) | 501 | the answer can change between fields, or reads something mutable |
+| `'strict'` | 101 | the answer depends on the row being authorized |
+| `'contextual'` | 1 | the answer depends only on the context — `isAuthenticated`, `hasRole` |
+
+The cache is per rule and per request: entries hang off the context object in a
+`WeakMap`, so they are unreachable once the request is, and nothing is shared
+between requests. The *pending promise* is stored rather than the resolved value,
+so concurrent field resolutions on one list share a single in-flight call instead
+of stampeding. A rejection is cached alongside it, so a broken check fails the
+request once rather than 500 times.
+
+`'no_cache'` stays the default because it is the safe one — caching a check that
+reads something mutable is a correctness bug, and only you know whether yours
+does. A context that is not an object cannot key a `WeakMap`, so such a rule is
+simply never cached.
+
 Rules built by `rule()` or `createCan(...)`, plus `accept` and `deny`, are
 **combinable**: their verdict can be asked for without running the resolver, so
 they work as operands of the combinators.
@@ -988,19 +1019,18 @@ verdict in your logs and hides the outage. `maskDenials` respects the same line
 and will not mask it.
 
 **Cache the decision per request.** One query can touch the same object dozens
-of times, and each one is a round trip. Memoize on the context the way the
-ability itself is memoized:
+of times, and each one is a round trip. Set [`cache`](#caching-a-rules-answer)
+rather than memoizing by hand:
 
 ```ts
-function checkOnce(ctx: Context, key: string, ask: () => Promise<boolean>) {
-  const pending = ctx.pdpCache.get(key) ?? ask();
-  ctx.pdpCache.set(key, pending); // a Map created per request
-  return pending;
-}
+const canRead = rule(
+  (_parent, _args, ctx: Context) => askOpenFga(ctx.user, 'read'),
+  { name: 'canRead', cache: 'contextual' },
+);
 ```
 
-Cache the *pending promise*, not the resolved value, so concurrent sibling
-fields share one call rather than starting several.
+That stores the *pending promise*, so concurrent sibling fields share one call
+rather than starting several.
 
 For list fields, a PDP with a "list objects the user can access" endpoint plays
 the role [`accessibleBy`](#row-level-filtering) plays for CASL rules: fetch the
@@ -1109,7 +1139,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `allowExternalErrors` | same option, **opposite default** — see below |
 | `debug` | same option |
 | `ValidationError` for a rule on a field the schema lacks | `PermissionsError`, aggregating *every* problem in the map rather than the first |
-| `cache: 'contextual' \| 'strict'` per rule | no equivalent; `createCan` memoizes `getAbility(context)` per request instead |
+| `cache: 'contextual' \| 'strict'` per rule | [same option, same three levels](#caching-a-rules-answer), same default (`'no_cache'`) — and `createCan` memoizes `getAbility(context)` per request on top |
 | `inputRule` (yup-backed argument validation) | no equivalent — validate arguments in a `rule()` check or in the resolver |
 | `rule({ fragment })` | not supported, deliberately — see [the note below](#three-differences-that-will-bite) |
 
