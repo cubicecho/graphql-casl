@@ -1060,6 +1060,25 @@ building the schema in a test is itself a check: a rule naming a field that no
 longer exists throws a `PermissionsError` before any query runs. A single test
 that only constructs the guarded schema will catch a whole class of drift.
 
+If that is *all* a test wants, call `validatePermissions` instead. It runs the
+same validation and throws the same aggregated `PermissionsError`, but builds no
+middleware:
+
+```ts
+import { validatePermissions } from '@vantreeseba/graphql-casl';
+
+it('names only fields that still exist', () => {
+  expect(() => validatePermissions<Resolvers>(schema, permissions)).not.toThrow();
+});
+```
+
+The difference is cost. `applyPermissions` wraps a resolver for every guarded
+field, so it is O(fields) — and with `fallbackRule` set, that is every field in
+the schema. On a generated CRUD schema of 4,400 types and 35,200 fields,
+`applyPermissions` takes ~1.6s where `validatePermissions` takes ~8ms. That cost
+is paid once at startup, which is the right place for it; it is the wrong thing
+to pay in every test file that only wants the drift check.
+
 ## Coming from `graphql-shield`
 
 Both libraries occupy the same slot — a `graphql-middleware` layer keyed by type

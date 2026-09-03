@@ -33,7 +33,12 @@ export type {
   FallbackError,
   PermissionResolver,
 } from './applyPermissions.js';
-export { applyPermissions, PermissionsError, resolvePermissions } from './applyPermissions.js';
+export {
+  applyPermissions,
+  PermissionsError,
+  resolvePermissions,
+  validatePermissions,
+} from './applyPermissions.js';
 export { and, chain, not, or, race, wrap } from './combinators.js';
 export type {
   AdapterCore,
