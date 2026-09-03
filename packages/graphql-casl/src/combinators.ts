@@ -49,6 +49,47 @@ function label(combinator: string, rules: readonly Rule[]): string {
 }
 
 /**
+ * One operand's outcome under a *tolerant* combinator.
+ *
+ * `or` and `race` need to tell three things apart, where the strict combinators
+ * only need two: the operand passed, it denied, or it *broke*. A broken operand
+ * must not be collapsed into a denial — that is the distinction the whole error
+ * layer rests on — so its error is carried separately and rethrown only if it
+ * ends up deciding the outcome.
+ */
+type Outcome = { readonly denial: Error | undefined } | { readonly thrown: unknown };
+
+/** Runs one operand, catching a throw instead of letting it reject the group. */
+async function outcomeOf(
+  check: Check,
+  parent: unknown,
+  args: unknown,
+  context: unknown,
+  info: GraphQLResolveInfo,
+): Promise<Outcome> {
+  try {
+    return { denial: denialFrom(await check(parent, args, context, info)) };
+  } catch (thrown) {
+    return { thrown };
+  }
+}
+
+/**
+ * Decides a tolerant combinator once no operand has passed.
+ *
+ * A throw wins over a denial: a rule that broke is an outage to report, not an
+ * access decision, and *returning* it here would let `rule()` mark it as a
+ * denial. Throwing keeps it propagating unchanged, exactly as it would from a
+ * lone rule. With nothing thrown, the last operand's denial is used, as before.
+ */
+function failureOf(outcomes: readonly Outcome[]): Error {
+  const broken = outcomes.find((outcome) => 'thrown' in outcome);
+  if (broken && 'thrown' in broken) throw broken.thrown;
+  const last = outcomes[outcomes.length - 1] as { readonly denial: Error | undefined };
+  return last.denial as Error;
+}
+
+/**
  * Passes when **every** operand passes. Operands are evaluated **in parallel**;
  * on failure the **first** failing operand's error is thrown.
  *
@@ -81,6 +122,15 @@ export function and(...rules: Rule[]): CheckableRule {
  * that the last branch is the most specific fallback and so the most useful
  * thing to tell the caller.
  *
+ * An operand that **throws** counts as a failed operand rather than failing the
+ * whole rule, so a passing branch still carries the field. This matters for the
+ * common shape `or(isRoot, hasRole('ADMIN'))`, where `hasRole` reads `ctx.user`
+ * and throws for a caller that has none: the broken branch loses, `isRoot` wins.
+ * If *no* operand passes and one of them threw, that error is rethrown unchanged
+ * in preference to any denial — a rule that broke is an outage to report, not an
+ * access decision. {@link and}, {@link chain} and {@link not} stay strict, where
+ * a throw fails the rule immediately.
+ *
  * Use {@link race} to stop at the first operand that passes instead of always
  * evaluating all of them.
  *
@@ -93,10 +143,13 @@ export function or(...rules: Rule[]): CheckableRule {
   const checks = checksOf('or', rules);
   return rule(
     async (parent, args, context, info) => {
-      const results = await Promise.all(checks.map((check) => check(parent, args, context, info)));
-      const denials = results.map(denialFrom);
-      if (denials.some((denial) => denial === undefined)) return true;
-      return denials[denials.length - 1] as Error;
+      const outcomes = await Promise.all(
+        checks.map((check) => outcomeOf(check, parent, args, context, info)),
+      );
+      if (outcomes.some((outcome) => 'denial' in outcome && outcome.denial === undefined)) {
+        return true;
+      }
+      return failureOf(outcomes);
     },
     { name: label('or', rules) },
   );
@@ -136,6 +189,9 @@ export function chain(...rules: Rule[]): CheckableRule {
  * Put the cheap or common case first — a passing first operand means the rest
  * never run.
  *
+ * Like {@link or}, an operand that **throws** counts as a failed operand and the
+ * next one still runs; the error is rethrown only if no operand passes.
+ *
  * @example
  * ```ts
  * Query: { report: race(isCachedAsAllowed, askOpenFga) }
@@ -145,12 +201,13 @@ export function race(...rules: Rule[]): CheckableRule {
   const checks = checksOf('race', rules);
   return rule(
     async (parent, args, context, info) => {
-      let denial: Error | undefined;
+      const outcomes: Outcome[] = [];
       for (const check of checks) {
-        denial = denialFrom(await check(parent, args, context, info));
-        if (!denial) return true;
+        const outcome = await outcomeOf(check, parent, args, context, info);
+        if ('denial' in outcome && outcome.denial === undefined) return true;
+        outcomes.push(outcome);
       }
-      return denial as Error;
+      return failureOf(outcomes);
     },
     { name: label('race', rules) },
   );

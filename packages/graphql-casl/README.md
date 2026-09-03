@@ -531,8 +531,12 @@ const isNotBanned = rule(
 );
 ```
 
-An error raised *inside* a check propagates unchanged rather than becoming a
-denial, so a broken check is never mistaken for a legitimate `Forbidden`.
+An error raised *inside* a check propagates out of the rule unchanged rather
+than becoming a denial, so the two stay distinguishable. What `applyPermissions`
+then does with it is a separate decision: by default a rule failure *is* reported
+to the client as a denial, so it does not leak internals, and `debug: true`
+rethrows it untouched. See [Error control](#error-control) — the table there is
+the end-to-end behaviour, this paragraph is only about the rule layer.
 
 A check's `context` is typed `any`, so a value outside that contract can still
 reach the rule — `ctx.auth?.root` type-checks and is `undefined` when `auth` is
@@ -544,13 +548,28 @@ Rules built by `rule()` or `createCan(...)`, plus `accept` and `deny`, are
 **combinable**: their verdict can be asked for without running the resolver, so
 they work as operands of the combinators.
 
-| Combinator | Passes when | Evaluation | Error on failure |
-| --- | --- | --- | --- |
-| `and(...rules)` | every operand passes | parallel, all evaluated | the **first** failing operand's |
-| `chain(...rules)` | every operand passes | sequential, stops at first failure | the failing operand's |
-| `or(...rules)` | any operand passes | parallel, all evaluated | the **last** operand's |
-| `race(...rules)` | any operand passes | sequential, stops at first pass | the **last** operand's |
-| `not(rule, error?)` | the operand fails | — | `error`, else `Forbidden` |
+| Combinator | Passes when | Evaluation | Error on failure | An operand that *throws* |
+| --- | --- | --- | --- | --- |
+| `and(...rules)` | every operand passes | parallel, all evaluated | the **first** failing operand's | fails the rule |
+| `chain(...rules)` | every operand passes | sequential, stops at first failure | the failing operand's | fails the rule |
+| `or(...rules)` | any operand passes | parallel, all evaluated | the **last** operand's | counts as a failed operand |
+| `race(...rules)` | any operand passes | sequential, stops at first pass | the **last** operand's | counts as a failed operand |
+| `not(rule, error?)` | the operand fails | — | `error`, else `Forbidden` | fails the rule |
+
+In `or` and `race` a **broken** operand loses rather than poisoning the field, so
+a passing branch still carries it. That matters for the shape a ported
+`graphql-shield` map is full of — a cheap guard plus a check that depends on it:
+
+```ts
+Query: { thing: or(isRoot, hasRole('ADMIN')) }
+```
+
+For a machine identity with no `ctx.user`, `hasRole`'s inner check *throws*
+rather than denying. `isRoot` still carries the field. If no operand passes and
+one of them threw, that error is rethrown in preference to any denial — a rule
+that broke is an outage to report, not an access decision. `and`, `chain` and
+`not` stay strict; `not` especially, where a broken operand must never flip to
+allow.
 
 ```ts
 Mutation: {
@@ -1080,6 +1099,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `rule(name, opts)(async (parent, args, ctx, info) => …)` | `rule(check, { name })` — same arguments, same `true` / `false` / `string` / `Error` return contract |
 | a rule returning a non-boolean — shield coerces truthiness | same: a value outside the return contract is read for its truthiness, so a check yielding `undefined` denies |
 | `and` / `or` / `not` / `chain` / `race` | same names, same semantics: `and`/`or` evaluate in parallel, `chain`/`race` short-circuit, `not(rule, error?)` |
+| a rule that *throws* inside `or` / `race` | same: it counts as a failed operand, so another branch can still pass — see [the throw column](#combining-rules) |
 | — | `wrap(...rules)` has no shield equivalent: it nests rules as middleware, so rules that decide by running the resolver can still be composed |
 | `allow` / `deny` | `accept` / `deny` |
 | `fallbackRule: deny` | same option |
