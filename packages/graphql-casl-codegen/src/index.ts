@@ -66,8 +66,23 @@ export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _docume
   };
 };
 
+/** The option names this plugin owns. Every other key in the config is not ours. */
+const OPTION_NAMES = Object.keys(DEFAULTS) as (keyof GraphqlCaslPluginConfig)[];
+
+/**
+ * Checks the options this plugin reads, and only those.
+ *
+ * The config object a plugin receives is not its own: the CLI injects keys into
+ * every output (`emitLegacyCommonJSImports` is on all of them), and an output's
+ * `config` block reaches *every* plugin in that output — which matters here,
+ * because this plugin has to share an output with `typescript` and
+ * `typescript-resolvers` to reference the types they emit. Their options are
+ * mostly booleans. Walking the whole object therefore rejected configs that were
+ * never wrong, and `plugin()` ignores unknown keys anyway.
+ */
 export const validate: PluginValidateFn = async (_schema, _documents, config) => {
-  for (const [key, value] of Object.entries(config ?? {})) {
+  for (const key of OPTION_NAMES) {
+    const value = (config as GraphqlCaslPluginConfig | undefined)?.[key];
     if (value !== undefined && typeof value !== 'string') {
       throw new Error(`graphql-casl-codegen: config option \`${key}\` must be a string.`);
     }
