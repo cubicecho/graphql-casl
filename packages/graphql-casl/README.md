@@ -534,6 +534,12 @@ const isNotBanned = rule(
 An error raised *inside* a check propagates unchanged rather than becoming a
 denial, so a broken check is never mistaken for a legitimate `Forbidden`.
 
+A check's `context` is typed `any`, so a value outside that contract can still
+reach the rule — `ctx.auth?.root` type-checks and is `undefined` when `auth` is
+absent. Any such value is read for its truthiness, so `undefined` and `null`
+deny with `Forbidden` rather than crashing the request. Return a `boolean` to
+stay on contract; the coercion is a safety net, not a second supported form.
+
 Rules built by `rule()` or `createCan(...)`, plus `accept` and `deny`, are
 **combinable**: their verdict can be asked for without running the resolver, so
 they work as operands of the combinators.
@@ -1072,6 +1078,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `graphql-shield` | Here |
 | --- | --- |
 | `rule(name, opts)(async (parent, args, ctx, info) => …)` | `rule(check, { name })` — same arguments, same `true` / `false` / `string` / `Error` return contract |
+| a rule returning a non-boolean — shield coerces truthiness | same: a value outside the return contract is read for its truthiness, so a check yielding `undefined` denies |
 | `and` / `or` / `not` / `chain` / `race` | same names, same semantics: `and`/`or` evaluate in parallel, `chain`/`race` short-circuit, `not(rule, error?)` |
 | — | `wrap(...rules)` has no shield equivalent: it nests rules as middleware, so rules that decide by running the resolver can still be composed |
 | `allow` / `deny` | `accept` / `deny` |

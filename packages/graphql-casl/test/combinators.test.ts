@@ -96,6 +96,52 @@ describe('rule', () => {
   });
 });
 
+describe('rule — off-contract check results', () => {
+  // `Check`'s context is `any`, so every property read off it is `any` and
+  // assignable to RuleResult. This is the single most natural way to write a
+  // check, it compiles clean, and `ctx.auth?.root` is `undefined` at runtime.
+  const isRoot = rule((_parent, _args, ctx) => ctx.auth?.root, { name: 'isRoot' });
+
+  it('denies rather than crashing when the check returns undefined', async () => {
+    const resolve = vi.fn();
+    await expect(isRoot(resolve, null, null, {}, info)).rejects.toThrow('Forbidden');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('denies when the check returns null', async () => {
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: null } }, info)).rejects.toThrow(
+      'Forbidden',
+    );
+  });
+
+  it('denies on any other falsy value', async () => {
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: 0 } }, info)).rejects.toThrow(
+      'Forbidden',
+    );
+  });
+
+  it('allows on a truthy non-boolean', async () => {
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(isRoot(resolve, null, null, { auth: { root: 1 } }, info)).resolves.toBe('ok');
+  });
+
+  it('still reads a string as a denial message, not as truthiness', async () => {
+    // Strings are on contract and must keep denying, truthy though they are.
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: 'Nope' } }, info)).rejects.toThrow(
+      'Nope',
+    );
+  });
+
+  it('propagates through the combinators', async () => {
+    await expect(and(accept, isRoot)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
+    await expect(or(isRoot, isRoot)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
+    await expect(chain(accept, isRoot)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
+    await expect(race(isRoot, isRoot)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await expect(not(isRoot)(resolve, null, null, {}, info)).resolves.toBe('ok');
+  });
+});
+
 describe('and', () => {
   it('passes only when every operand passes', async () => {
     await expect(
