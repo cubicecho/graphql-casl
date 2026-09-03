@@ -303,6 +303,33 @@ type AnyFieldName<TResolvers> = {
 }[keyof TResolvers];
 
 /**
+ * The loose stand-in for a generated `Resolvers` type.
+ *
+ * `PermissionsMap<AnyResolvers>` accepts any type and field name, so the map
+ * compiles without codegen. Nothing is lost at *runtime*: `applyPermissions`
+ * walks the real schema and raises an aggregated `PermissionsError` for every
+ * key that does not exist, so a stale key still fails — at startup rather than
+ * at build.
+ *
+ * This is the intended starting point on a large generated CRUD schema
+ * (Prisma/TypeGraphQL, Pothos CRUD, drizzle-graphql), where running
+ * `typescript-resolvers` over the whole surface is a project of its own. Swap in
+ * your generated `Resolvers` when you have them and the same map starts being
+ * checked at compile time; it is an upgrade, not a precondition.
+ *
+ * It is also the **default** type argument, so omitting the generic entirely
+ * gives this behaviour rather than a misleading inference error.
+ *
+ * @example
+ * ```ts
+ * const permissions: PermissionsMap<AnyResolvers> = {
+ *   Query: { notes: canUser(Actions.read, Subject.Note) },
+ * };
+ * ```
+ */
+export type AnyResolvers = Record<string, Record<string, unknown>>;
+
+/**
  * The permissions map applied to a schema via `applyPermissions`.
  *
  * Every key is validated against your generated `Resolvers`: type names come
@@ -327,7 +354,9 @@ type AnyFieldName<TResolvers> = {
  * Below all of those sits `applyPermissions`'s `fallbackRule` option, and below
  * that, no guard at all.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @typeParam TResolvers - Your generated `Resolvers` type. Defaults to
+ * {@link AnyResolvers}, which accepts any type and field name and leaves the
+ * checking to `applyPermissions`'s runtime schema walk.
  * @example
  * ```ts
  * const permissions: PermissionsMap<Resolvers> = {
@@ -337,7 +366,7 @@ type AnyFieldName<TResolvers> = {
  * };
  * ```
  */
-export type PermissionsMap<TResolvers> = {
+export type PermissionsMap<TResolvers = AnyResolvers> = {
   [TypeName in keyof TResolvers | Wildcard]?:
     | Rule
     | {

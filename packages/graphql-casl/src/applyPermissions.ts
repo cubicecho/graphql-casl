@@ -29,7 +29,7 @@ import {
   type IMiddlewareTypeMap,
 } from 'graphql-middleware';
 import { SCOPE_INFO, type ScopeInfo } from './internal.js';
-import { denialKindOf, type PermissionsMap, type Rule } from './rules.js';
+import { type AnyResolvers, denialKindOf, type PermissionsMap, type Rule } from './rules.js';
 
 /** The wildcard key, in either the type or the field position. */
 const WILDCARD = '*';
@@ -381,9 +381,12 @@ export type PermissionResolver = (typeName: string, fieldName: string) => Rule |
  * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
  * ```
  */
-export function resolvePermissions<TResolvers>(
+export function resolvePermissions<TResolvers = AnyResolvers>(
   schema: GraphQLSchema,
-  permissions: PermissionsMap<TResolvers>,
+  // `NoInfer` keeps TS from inferring TResolvers *from the map being checked* —
+  // which would resolve every type key to `unknown` and report every real field
+  // name as unknown. Omitting the generic now falls back to the default instead.
+  permissions: PermissionsMap<NoInfer<TResolvers>>,
   options?: ApplyPermissionsOptions,
 ): PermissionResolver {
   const raw = permissions as RawPermissions;
@@ -606,9 +609,12 @@ export interface ApplyPermissionsOptions {
  * const schema = applyPermissions<Resolvers>(makeExecutableSchema({ typeDefs, resolvers }), permissions);
  * ```
  */
-export function applyPermissions<TResolvers>(
+export function applyPermissions<TResolvers = AnyResolvers>(
   schema: GraphQLSchema,
-  permissions: PermissionsMap<TResolvers>,
+  // `NoInfer` keeps TS from inferring TResolvers *from the map being checked* —
+  // which would resolve every type key to `unknown` and report every real field
+  // name as unknown. Omitting the generic now falls back to the default instead.
+  permissions: PermissionsMap<NoInfer<TResolvers>>,
   options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
   const permissionFor = resolvePermissions(schema, permissions, options);

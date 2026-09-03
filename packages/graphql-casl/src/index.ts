@@ -61,6 +61,7 @@ export type {
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
 export type {
+  AnyResolvers,
   CacheMode,
   Check,
   CheckableRule,
