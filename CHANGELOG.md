@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/cubicecho/graphql-casl/compare/v1.4.0...v1.4.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **codegen:** validate only the options this plugin owns ([1f5652a](https://github.com/cubicecho/graphql-casl/commit/1f5652ac4cbd5fbda919bf43fe5bbe63b019ac1a)), closes [#9](https://github.com/cubicecho/graphql-casl/issues/9)
+
 # [1.4.0](https://github.com/cubicecho/graphql-casl/compare/v1.3.1...v1.4.0) (2026-09-03)
 
 
