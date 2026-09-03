@@ -38,6 +38,12 @@ export type Rule = (
  * `true` allows the field. `false` denies it with the default `Forbidden`
  * error, a `string` denies it with that message, and an `Error` is thrown as-is
  * — so a check can supply its own `GraphQLError` with extensions and a code.
+ *
+ * A {@link Check}'s `context` is `any`, so a value outside this union can still
+ * reach here — `ctx.auth?.root` is `any`, and `undefined` at runtime. Any such
+ * value is read for its truthiness, which makes `undefined` and `null` deny with
+ * the default `Forbidden` rather than crash. Return a `boolean` to stay on
+ * contract; the coercion is a safety net, not a second supported form.
  */
 export type RuleResult = boolean | string | Error;
 
@@ -120,9 +126,12 @@ function markDenial(error: Error, kind: DenialKind): Error {
  */
 export function denialFrom(result: RuleResult): Error | undefined {
   if (result === true) return undefined;
-  if (result === false) return markDenial(new Error('Forbidden'), 'default');
   if (typeof result === 'string') return markDenial(new Error(result), 'explicit');
-  return markDenial(result, 'explicit');
+  if (result instanceof Error) return markDenial(result, 'explicit');
+  // Anything else is off-contract, and `Check`'s `any` context lets it compile.
+  // Fall back to truthiness so an off-contract value denies rather than crashing
+  // `markDenial` on a non-object — deny being the safe direction here.
+  return result ? undefined : markDenial(new Error('Forbidden'), 'default');
 }
 
 /**

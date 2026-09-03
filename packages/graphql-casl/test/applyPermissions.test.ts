@@ -359,6 +359,30 @@ describe('applyPermissions — error control', () => {
     expect(error?.message).toBe('Denied Query.note');
   });
 
+  it('classifies an off-contract check result as a denial, not a rule failure', async () => {
+    // `ctx.auth?.root` is `any` and `undefined` at runtime. `debug` rethrows a
+    // rule's own failure untouched, so it is what tells the two apart: a plain
+    // `Forbidden` here proves this reached the error layer as a real denial.
+    const isRoot = rule((_parent, _args, ctx) => ctx.auth?.root);
+    const result = await graphql({
+      schema: scenario(isRoot, { debug: true }),
+      source: '{ note }',
+      contextValue: {},
+    });
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('masks an off-contract denial like any other', async () => {
+    const isRoot = rule((_parent, _args, ctx) => ctx.auth?.root);
+    const result = await graphql({
+      schema: scenario(isRoot, { maskDenials: true }),
+      source: '{ note }',
+      contextValue: {},
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: null });
+  });
+
   it('leaves an explicitly-named denial alone', async () => {
     // The rule author said what they meant; a blanket fallback must not overrule it.
     const named = rule(() => 'Your trial has expired');
