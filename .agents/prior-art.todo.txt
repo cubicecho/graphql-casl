@@ -32,7 +32,7 @@ Applicable to fields and object types (Federation v2.9+ forbids interfaces).
 
 THREE THINGS WORTH STEALING:
 
-[ ] A1. FILTERING, NOT REJECTING, IS THE DEFAULT — and it is specified.
+[x] A1. FILTERING, NOT REJECTING, IS THE DEFAULT — and it is specified.
         The router REMOVES unauthorized fields from the query BEFORE execution,
         sends only the authorized portion to subgraphs, and returns the data it
         could get plus errors describing what was filtered. `reject_unauthorized:
@@ -49,6 +49,18 @@ THREE THINGS WORTH STEALING:
         Note this also fixes the asymmetry documented in
         test/integration/permissions.integration.test.ts, where a denial under a
         non-null chain currently nulls the ENTIRE data payload.
+        SHIPPED 2026-09-03, non-breaking: `onDeny: 'reject' | 'filter' | 'mask'`
+        is the global mode (`maskDenials: true` is now the spelling of `'mask'`),
+        `'reject'` stays the default until 2.0. Filtered denials carry the
+        router's shape — `extensions.code: "UNAUTHORIZED_FIELD_OR_TYPE"` + path —
+        and `report: 'errors' | 'extensions'` picks where they land
+        (`extensions.authorizationErrors`, the router's key). A nullable field
+        throws its own located error; a non-null list resolves to `[]` and the
+        denial is held per context until `reportDenials(context, result)`, which
+        the envelop plugin calls from onExecuteDone. The "suppressed entirely"
+        knob is just `onDeny: 'mask'`. Left out: the router's pre-execution
+        query rewriting — we filter at resolve time, which is the only place a
+        per-object CASL decision can be made.
 
 [ ] A2. AND/OR IN A DIRECTIVE VIA NESTED ARRAYS — no combinator objects needed.
           scopes: [["read:users", "read:profiles"], ["read:admin"]]

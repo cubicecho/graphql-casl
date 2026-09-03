@@ -56,6 +56,14 @@ A soundness pass, taken from the lists above:
   the whole `data` payload through a non-null chain. Bounded by the schema: a
   non-null non-list field still throws. Only denials are masked; rule failures
   and resolver errors still surface.
+- **Filtering denials** (`prior-art` A1) — `onDeny: 'reject' | 'filter' |
+  'mask'` is the global mode, with `maskDenials` kept as the spelling of
+  `'mask'`. `'filter'` is Apollo Router's partial-response contract: a denied
+  field resolves to `null`/`[]` and is reported with
+  `extensions.code: "UNAUTHORIZED_FIELD_OR_TYPE"` and its path, in `errors` or,
+  under `report: 'extensions'`, in `extensions.authorizationErrors`. Denials a
+  non-null list cannot carry are held per context for `reportDenials`, which the
+  envelop plugin wires itself. `'reject'` stays the default until 2.0.
 - **Field permissions driven by the ability** (`ecosystem-parity` E3) —
   `canUser.fields(action, subject)` attaches one rule to a type and decides each
   field with `ability.can(action, subject, info.fieldName)`, so a CASL rule's
