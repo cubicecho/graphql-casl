@@ -69,6 +69,33 @@ Codegen is not a requirement — `SubjectMap` only needs types of that *shape*, 
 a hand-written `Resolvers`/`ResolversTypes` pair works too. It is just far easier
 to keep generated ones honest.
 
+#### Starting without generated types
+
+You do not need them to start. `AnyResolvers` is the loose stand-in, and it is
+the **default**, so a map with no generic supplied simply works:
+
+```ts
+import { applyPermissions, type AnyResolvers, type PermissionsMap } from '@vantreeseba/graphql-casl';
+
+const permissions: PermissionsMap<AnyResolvers> = {
+  Query: { notes: canUser(Actions.read, Subject.Note) },
+};
+
+applyPermissions(schema, permissions);
+```
+
+Type and field names go unchecked at compile time — and are still checked at
+**startup**, because `applyPermissions` walks the real schema and raises an
+aggregated [`PermissionsError`](#4-apply-to-the-schema) naming every key that does not
+exist. A stale key fails loudly; it just fails when the server boots rather than
+when you build.
+
+That is the intended starting point on a large generated CRUD schema
+(Prisma/TypeGraphQL, Pothos CRUD, drizzle-graphql), where running
+`typescript-resolvers` over the whole surface is a project of its own. Supply
+your generated `Resolvers` when you have them and the same map starts being
+checked at compile time. Codegen is an upgrade, not a precondition.
+
 ## Quick start
 
 A todo API where callers may read any todo but update only their own. This is
@@ -359,9 +386,11 @@ const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions);
 ```
 
 `applyPermissions` keeps `permissions` typed as a `PermissionsMap<Resolvers>`, so
-a mistyped type or field name is caught at compile time. It also re-checks the map
-against the runtime schema and throws a `PermissionsError` listing **every**
-problem at once — which is what catches rules loaded from a database, written in
+a mistyped type or field name is caught at compile time — or, if you have no
+generated `Resolvers` yet, at startup instead; see
+[Starting without generated types](#starting-without-generated-types). It also
+re-checks the map against the runtime schema and throws a `PermissionsError`
+listing **every** problem at once — which is what catches rules loaded from a database, written in
 plain JavaScript, or built against a schema that has since drifted.
 
 Entries that would be silently inert are rejected rather than ignored: a rule on

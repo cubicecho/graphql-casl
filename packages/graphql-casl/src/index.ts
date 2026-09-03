@@ -60,7 +60,15 @@ export type {
   GraphQLRule,
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
-export type { Check, CheckableRule, PermissionsMap, Rule, RuleResult, Wildcard } from './rules.js';
+export type {
+  AnyResolvers,
+  Check,
+  CheckableRule,
+  PermissionsMap,
+  Rule,
+  RuleResult,
+  Wildcard,
+} from './rules.js';
 export { accept, deny, isCheckableRule, rule } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';

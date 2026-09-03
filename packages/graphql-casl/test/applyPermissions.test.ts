@@ -2,6 +2,7 @@ import { makeExecutableSchema } from '@graphql-tools/schema';
 import { GraphQLError, type GraphQLResolveInfo, type GraphQLSchema, graphql } from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  type AnyResolvers,
   type ApplyPermissionsOptions,
   accept,
   and,
@@ -779,5 +780,61 @@ describe('resolvePermissions', () => {
     await expect(
       rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
     ).resolves.toBeNull();
+  });
+});
+
+describe('applyPermissions — the untyped mode', () => {
+  const looseSchema = makeExecutableSchema({
+    typeDefs: `type Note { id: ID! body: String! } type Query { note: Note }`,
+  });
+
+  /** A hand-written stand-in for a generated `Resolvers` type. */
+  type Resolvers = { Query: { note: unknown }; Note: { id: unknown; body: unknown } };
+
+  it('accepts a map with no generic supplied (compile-time)', () => {
+    // Omitting the generic used to infer TResolvers *from the map being
+    // checked*, collapsing every type key to `unknown` and reporting every real
+    // field name as unknown. It now falls back to AnyResolvers.
+    applyPermissions(looseSchema, { Query: { note: accept }, Note: { id: deny } });
+    expect(true).toBe(true);
+  });
+
+  it('accepts a map annotated with AnyResolvers (compile-time)', () => {
+    const permissions: PermissionsMap<AnyResolvers> = {
+      Query: { note: accept },
+      Note: deny,
+      '*': { '*': deny },
+    };
+    expect(() => applyPermissions(looseSchema, permissions)).not.toThrow();
+  });
+
+  it('still rejects a value that is not a rule (compile-time)', () => {
+    // Loose on names, not on values.
+    expect(() =>
+      // @ts-expect-error a string is not a Rule
+      applyPermissions(looseSchema, { Query: { note: 'not a rule' } }),
+    ).toThrow();
+  });
+
+  it('still checks names when a generic is supplied (compile-time)', () => {
+    expect(() =>
+      // @ts-expect-error `nope` is not a field of Note
+      applyPermissions<Resolvers>(looseSchema, { Note: { nope: deny } }),
+    ).toThrow(PermissionsError);
+    expect(() =>
+      // @ts-expect-error `Nope` is not a type in Resolvers
+      applyPermissions<Resolvers>(looseSchema, { Nope: { id: deny } }),
+    ).toThrow(PermissionsError);
+    // the same map with real names typechecks and applies cleanly
+    expect(() =>
+      applyPermissions<Resolvers>(looseSchema, { Query: { note: accept }, Note: { id: deny } }),
+    ).not.toThrow();
+  });
+
+  it('leaves the runtime schema walk as the safety net for a stale key', () => {
+    // This is what makes the untyped mode a reasonable place to start: names go
+    // unchecked at build time, and still fail loudly at startup.
+    expect(() => applyPermissions(looseSchema, { Note: { nope: deny } })).toThrow(PermissionsError);
+    expect(() => applyPermissions(looseSchema, { Nope: { id: deny } })).toThrow(/Nope/);
   });
 });
