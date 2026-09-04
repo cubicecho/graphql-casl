@@ -3,7 +3,7 @@
   "projectTitle": "@vantreeseba/graphql-casl",
   "description": "A graphql-middleware plugin for schema-agnostic CASL permission rules on GraphQL resolvers, declared per type/field in a PermissionsMap and enforced before each resolver runs.",
   "folders": [],
-  "excludeFolders": ["dist", "docs", "node_modules", "coverage", ".github"],
+  "excludeFolders": ["dist", "docs/api", "node_modules", "coverage", ".github"],
   "excludeFiles": ["CHANGELOG.md"],
   "rules": [
     "The library is schema-agnostic: subject names and condition types are derived from the consumer's generated Resolvers / ResolversTypes. Never hardcode domain type names in the library core.",
