@@ -255,6 +255,28 @@ Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
 
+### Subjects
+
+Before CASL can pick the rules that apply to an object it has to know what the
+object *is*, and a plain `{ id, ownerId }` does not say. That question is the
+whole difficulty of binding CASL to a data source.
+[`@casl/prisma`](https://github.com/stalniy/casl/tree/master/packages/casl-prisma)
+has to wrap every record in CASL's `subject('Todo', record)` helper before a
+check, because Prisma returns DTOs with no type information; its README notes
+there is no easy fix short of adding a column to every model
+([prisma/prisma#5315](https://github.com/prisma/prisma/issues/5315)). The name
+passed to `subject()` is a string the record never carried, and nothing checks
+it against anything.
+
+GraphQL already has that answer. Every object type has a canonical name, the
+spec reserves a field to carry it — `__typename` — and `GraphQLAbility` detects
+subjects from exactly that field, which `build()` wires in. So the subject
+vocabulary *is* the schema's type vocabulary: `createTyped()` tags a value with
+a `__typename` narrowed to your `SubjectMap`, a misspelled tag is a compile
+error, and a value that already carries `__typename` needs no wrapping at all.
+That free, schema-checked type name is the structural reason a GraphQL-specific
+CASL binding exists.
+
 ### Conditions
 
 `GraphQLAbility` is a CASL [`MongoAbility`](https://casl.js.org/v6/en/guide/conditions-in-depth),
@@ -367,6 +389,46 @@ export const permissions: PermissionsMap<Resolvers> = {
 > record the resolver actually loaded, make the resolver **scope by the same
 > field the rule authorized** (look up by `id` **and** `userId`), derive the
 > owner from `context` rather than args, or enforce ownership in your data layer.
+
+The last of those is not one option among four. Ownership enforced in the data
+layer — Postgres row-level security, a per-request client scoped to the caller,
+a repository that takes the owner from the session and never from a parameter —
+holds no matter which code path reaches the data: a resolver the map forgot, a
+relation field a generated resolver routes through, a script, a second API. A
+resolver gate holds only for the resolvers it wraps. That makes the data-layer
+check **strictly stronger** than anything this library, or any resolver-level
+library, can do, and graphql-casl is defense in depth on top of it rather than
+a replacement for it: a rule denies before a query is issued, names the reason,
+and keeps the policy in one typed map, while the data layer catches whatever
+the map missed. Inside the library, [`canUser.onResult`](#post-execution-rules)
+is the mitigation — the condition is checked against the record that was loaded
+rather than the argument that was sent — and
+[`accessibleBy`](#row-level-filtering) pushes the decision into the query
+itself, so the rows a caller may not see are never fetched.
+
+Better still is a schema in which a forged argument has nowhere to go. The
+quick start's `setDone(id:, ownerId:)` takes the owner from the client, which is
+why it needs both a rule and a scoped lookup. Root authorized reads at the
+caller instead:
+
+```graphql
+type Query {
+  viewer: Viewer!   # the caller, from context — takes no argument
+}
+type Viewer {
+  todos: [Todo!]!   # only ever the caller's own
+}
+```
+
+`viewer { todos }` cannot return another user's todos because no resolver on
+that path accepts an owner; it reads `ctx.userId` and nothing else. Every
+condition derived from arguments — every `getSubjectData(args)` — is an IDOR
+waiting for a resolver that trusts it, which is exactly what
+[the IDOR test](./test/example.test.ts) in the worked example pins down. The
+viewer pattern removes that class of bug from the schema rather than guarding
+against it, and it needs no library at all. Rules still earn their place on the
+fields that must take an id — `note(id:)`, `updateNote(id:)` — where `onResult`
+authorizes the record rather than the argument.
 
 > ⚠️ **A bare subject name does not evaluate conditions.**
 > `ability.can('update', 'Note')` asks CASL whether updating a Note is *possible
