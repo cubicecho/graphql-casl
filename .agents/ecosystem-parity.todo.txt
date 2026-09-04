@@ -141,7 +141,24 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         ([Todo!]!) nulls the ENTIRE data payload. Field-masking is the standard
         alternative and would make partial responses actually usable.
 
-[ ] E5. DIRECTIVE-BASED DECLARATION — @can(action:, subject:) in SDL.
+[x] E5. DIRECTIVE-BASED DECLARATION — @can(action:, subject:) in SDL.
+        SHIPPED (2026-09-04) as the third package,
+        @vantreeseba/graphql-casl-directives. `directiveTypeDefs` defines
+        @can(action: String!, subject: String) and
+        @rule(names: [[String!]!]!), both repeatable on
+        FIELD_DEFINITION | OBJECT | INTERFACE. `permissionsFromDirectives(
+        schema, { can, rules })` reads them off the GraphQLSchema (astNode +
+        extensionASTNodes, graphql-js only) and returns a PermissionsMap —
+        the package is a translator, enforcement stays in applyPermissions /
+        useGraphQLCasl, so wildcards, fallbackRule, error control and masking
+        keep their one implementation. subject defaults to the enclosing
+        type, or the return type on a root field (scalar/enum return = error).
+        OBJECT-level = the type's '*' entry, ANDed into fields that carry
+        their own directive (wildcards never compose, so the translator does
+        it explicitly). INTERFACE directives project onto implementors because
+        the runtime rejects interface keys. All problems aggregate into one
+        PermissionsError. Not built: the `extensions`/authSchema forms —
+        PermissionsMap already is that.
         Sources: graphql-authz @authz(rules:, compositeRules:,
         deepCompositeRules:) on FIELD_DEFINITION | OBJECT | INTERFACE;
         envelop generic-auth @authenticated / @skipAuth / @requiresScopes.

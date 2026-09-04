@@ -12,7 +12,7 @@ npm install @casl/ability graphql graphql-middleware
 
 Requires `@casl/ability >=6`, `graphql >=16`, and `graphql-middleware >=6` as peer dependencies. `@envelop/core >=5` and `@envelop/on-resolve >=7` are **optional** peer dependencies, installed only by consumers who import the `/envelop` entry point. TypeScript 5, ESM only. No runtime dependencies.
 
-One optional sibling package, `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings), plus three optional entry points on the runtime itself: `@vantreeseba/graphql-casl/scoping` (rewrites a field's filter argument instead of allowing or denying it), `@vantreeseba/graphql-casl/envelop` (enforces the same map through envelop instead of `graphql-middleware`) and `@vantreeseba/graphql-casl/apollo` (an Apollo Server plugin that reports filtered denials from `willSendResponse`; typed structurally, so no `@apollo/server` dependency).
+Two optional sibling packages, `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings) and `@vantreeseba/graphql-casl-directives` (`@can` / `@rule` SDL directives translated into a `PermissionsMap`), plus three optional entry points on the runtime itself: `@vantreeseba/graphql-casl/scoping` (rewrites a field's filter argument instead of allowing or denying it), `@vantreeseba/graphql-casl/envelop` (enforces the same map through envelop instead of `graphql-middleware`) and `@vantreeseba/graphql-casl/apollo` (an Apollo Server plugin that reports filtered denials from `willSendResponse`; typed structurally, so no `@apollo/server` dependency).
 
 ## Public API
 
@@ -231,6 +231,15 @@ Under `onDeny: 'filter'` a denied non-null list resolves to `[]` and its denial 
 - `src/subjects.ts` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
 - `src/createCan.ts` — the factory tying a CASL ability to the rule layer
 - `src/grants.ts` — granted scopes: `grants` / `granted`, a parent field's decision reused by its children
+
+## Directives (sibling package)
+
+`@vantreeseba/graphql-casl-directives` lets schema-first users declare the map in SDL. It exports `directiveTypeDefs` (the SDL defining `@can` and `@rule`, to add to your `typeDefs`) and `permissionsFromDirectives(schema, { can, rules })`, which reads the directives off a `GraphQLSchema` and returns a `PermissionsMap` for `applyPermissions` or `useGraphQLCasl` — the directives only choose which rule guards which field; enforcement, wildcards, `fallbackRule`, error control and masking stay in the runtime.
+
+- `@can(action: String!, subject: String)` → `can(action, subject)` on the `createCan` builder passed as `can`. `subject` defaults to the enclosing type, or on a root field to the field's return type (a scalar/enum return is an error: name the subject).
+- `@rule(names: [[String!]!]!)` → rules from the `rules` registry; inner lists AND, the outer list ORs: `[["isAuthenticated", "isOwner"], ["isAdmin"]]`.
+- Both are `repeatable` on `FIELD_DEFINITION | OBJECT | INTERFACE`. On an OBJECT the rule becomes the type's `'*'` entry; a field with its own directive gets `and(typeRule, fieldRule)`. INTERFACE directives are projected onto every implementing type. Several directives on one site compose with `and`.
+- Problems (unknown action, unknown or non-checkable rule name, malformed `names`, missing `can` / `rules`, un-inferable subject) are aggregated into one `PermissionsError`.
 
 ## Optional
 

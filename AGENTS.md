@@ -15,6 +15,10 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
   `applyPermissions`).
 - **`packages/graphql-casl-codegen`** — a GraphQL Code Generator plugin that emits
   subject bindings (`SubjectMap`, `Subject`, `typed`, `ability`) from a schema.
+- **`packages/graphql-casl-directives`** — `@can` / `@rule` SDL directives for
+  schema-first users. `permissionsFromDirectives(schema, { can, rules })` reads
+  them off a `GraphQLSchema` and returns the `PermissionsMap` the runtime
+  enforces; it is a translator, not a second enforcer.
 
 ## Specifications
 
@@ -46,6 +50,11 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
   `@apollo/server` is a devDependency for its tests only
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
+- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.5.0`
+  (it imports `and` / `or` / `PermissionsError` from the runtime). Its tests and
+  typecheck resolve the runtime through the workspace symlink to
+  `packages/graphql-casl/dist`, so build the runtime first — CI builds before it
+  typechecks or tests
 - **Releases:** a single, repo-wide version via root `semantic-release` (one `v${version}`
   tag); `@semantic-release/exec` publishes every workspace together
 
@@ -105,6 +114,10 @@ packages/
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests
+  graphql-casl-directives/
+    src/index.ts             — `directiveTypeDefs` + `permissionsFromDirectives` (the translator)
+    test/directives.test.ts  — end-to-end: SDL → map → applyPermissions → queries, plus
+                               every validation problem and the envelop plugin
 vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a single instance
 ```
 
