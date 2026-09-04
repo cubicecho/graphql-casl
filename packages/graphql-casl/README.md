@@ -259,6 +259,28 @@ Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
 
+### Subjects
+
+Before CASL can pick the rules that apply to an object it has to know what the
+object *is*, and a plain `{ id, ownerId }` does not say. That question is the
+whole difficulty of binding CASL to a data source.
+[`@casl/prisma`](https://github.com/stalniy/casl/tree/master/packages/casl-prisma)
+has to wrap every record in CASL's `subject('Todo', record)` helper before a
+check, because Prisma returns DTOs with no type information; its README notes
+there is no easy fix short of adding a column to every model
+([prisma/prisma#5315](https://github.com/prisma/prisma/issues/5315)). The name
+passed to `subject()` is a string the record never carried, and nothing checks
+it against anything.
+
+GraphQL already has that answer. Every object type has a canonical name, the
+spec reserves a field to carry it — `__typename` — and `GraphQLAbility` detects
+subjects from exactly that field, which `build()` wires in. So the subject
+vocabulary *is* the schema's type vocabulary: `createTyped()` tags a value with
+a `__typename` narrowed to your `SubjectMap`, a misspelled tag is a compile
+error, and a value that already carries `__typename` needs no wrapping at all.
+That free, schema-checked type name is the structural reason a GraphQL-specific
+CASL binding exists.
+
 ### Conditions
 
 `GraphQLAbility` is a CASL [`MongoAbility`](https://casl.js.org/v6/en/guide/conditions-in-depth),
@@ -372,6 +394,46 @@ export const permissions: PermissionsMap<Resolvers> = {
 > field the rule authorized** (look up by `id` **and** `userId`), derive the
 > owner from `context` rather than args, or enforce ownership in your data layer.
 
+The last of those is not one option among four. Ownership enforced in the data
+layer — Postgres row-level security, a per-request client scoped to the caller,
+a repository that takes the owner from the session and never from a parameter —
+holds no matter which code path reaches the data: a resolver the map forgot, a
+relation field a generated resolver routes through, a script, a second API. A
+resolver gate holds only for the resolvers it wraps. That makes the data-layer
+check **strictly stronger** than anything this library, or any resolver-level
+library, can do, and graphql-casl is defense in depth on top of it rather than
+a replacement for it: a rule denies before a query is issued, names the reason,
+and keeps the policy in one typed map, while the data layer catches whatever
+the map missed. Inside the library, [`canUser.onResult`](#post-execution-rules)
+is the mitigation — the condition is checked against the record that was loaded
+rather than the argument that was sent — and
+[`accessibleBy`](#row-level-filtering) pushes the decision into the query
+itself, so the rows a caller may not see are never fetched.
+
+Better still is a schema in which a forged argument has nowhere to go. The
+quick start's `setDone(id:, ownerId:)` takes the owner from the client, which is
+why it needs both a rule and a scoped lookup. Root authorized reads at the
+caller instead:
+
+```graphql
+type Query {
+  viewer: Viewer!   # the caller, from context — takes no argument
+}
+type Viewer {
+  todos: [Todo!]!   # only ever the caller's own
+}
+```
+
+`viewer { todos }` cannot return another user's todos because no resolver on
+that path accepts an owner; it reads `ctx.userId` and nothing else. Every
+condition derived from arguments — every `getSubjectData(args)` — is an IDOR
+waiting for a resolver that trusts it, which is exactly what
+[the IDOR test](./test/example.test.ts) in the worked example pins down. The
+viewer pattern removes that class of bug from the schema rather than guarding
+against it, and it needs no library at all. Rules still earn their place on the
+fields that must take an id — `note(id:)`, `updateNote(id:)` — where `onResult`
+authorizes the record rather than the argument.
+
 > ⚠️ **A bare subject name does not evaluate conditions.**
 > `ability.can('update', 'Note')` asks CASL whether updating a Note is *possible
 > at all*, not whether it is permitted on a particular one. Given
@@ -398,10 +460,13 @@ re-checks the map against the runtime schema and throws a `PermissionsError`
 listing **every** problem at once — which is what catches rules loaded from a database, written in
 plain JavaScript, or built against a schema that has since drifted.
 
-Entries that would be silently inert are rejected rather than ignored: a rule on
-an interface or union type never runs (fields resolve against the concrete object
-type), and introspection types cannot be guarded. In an authorization library, a
-rule that quietly never runs is the worst failure mode, so it is an error.
+Entries that would be silently inert are rejected rather than ignored: a named
+field on a union (which declares none) is an error, and introspection types
+cannot be guarded. Fields resolve against the concrete object type, so a rule
+keyed on an interface is inherited by every type implementing it rather than
+left to never run — see [Rules on interfaces](#rules-on-interfaces). In an
+authorization library, a rule that quietly never runs is the worst failure mode,
+so it is an error.
 
 Types not named in the map are left **unguarded** — the map is a whitelist of what
 to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
@@ -471,10 +536,13 @@ Everything past the four steps, in rough order of how often it comes up.
 | [Field-level rules](#field-level-rules) | A single field of a type needs its own rule |
 | [Field permissions from the ability](#field-permissions-from-the-ability) | The ability already lists fields (`can('read', 'User', ['id'])`) and you don't want to restate them |
 | [Combining rules](#combining-rules) | A field needs more than one check — `and` / `or` / `not` / `chain` / `race` / `wrap` |
+| [Granting a parent's decision to its fields](#granting-a-parents-decision-to-its-fields) | A list already authorized its rows and the type rule re-checks them once per field |
 | [Error control](#error-control) | `Forbidden` isn't enough: you need codes, filtering, or a look at what actually broke |
 | [Wildcards](#wildcards) | One rule should cover a whole type, or one field across every type |
+| [Rules on interfaces](#rules-on-interfaces) | One rule should cover every type implementing an interface, new ones included |
 | [Row-level filtering](#row-level-filtering) | A list should return fewer rows rather than be denied outright |
 | [Scoping generated resolvers](#scoping-generated-resolvers-optional) | The resolver is generated and you can only reach its arguments |
+| [Validating arguments](#validating-arguments) | The arguments need checking the SDL cannot express — blank strings, ranges, one field against another |
 | [Using the map without `graphql-middleware`](#using-the-map-without-graphql-middleware) | You're building your own integration |
 | [Enforcing the map through envelop](#enforcing-the-map-through-envelop-optional) | Yoga, Apollo 4+, a gateway, or any schema you don't own |
 | [Delegating to an external policy engine](#delegating-to-an-external-policy-engine) | Permissions are relationship-derived — OpenFGA, Cerbos, OPA, Oso |
@@ -677,6 +745,10 @@ reads something mutable is a correctness bug, and only you know whether yours
 does. A context that is not an object cannot key a `WeakMap`, so such a rule is
 simply never cached.
 
+When the rows were already authorized by the field that returned them, a
+[granted scope](#granting-a-parents-decision-to-its-fields) skips the per-row
+check altogether rather than caching it.
+
 Rules built by `rule()` or `createCan(...)`, plus `accept` and `deny`, are
 **combinable**: their verdict can be asked for without running the resolver, so
 they work as operands of the combinators.
@@ -738,6 +810,82 @@ a wrapper's verdict is only knowable by running it — so a `wrap` cannot itself
 be an operand of `and` / `or` / `not` / `chain` / `race`. When every operand
 *is* combinable, use `chain` instead: same meaning, no resolver nesting, and the
 result stays combinable.
+
+### Granting a parent's decision to its fields
+
+A list field that authorized its rows is followed, on every row, by a type rule
+that authorizes them again — once per selected field.
+[Caching](#caching-a-rules-answer) bounds that to once per row. A **granted
+scope** removes it: the field that returns the objects *grants* them a named
+scope, and the rule on their type accepts the grant instead of asking CASL.
+
+```ts
+import { granted, grants, race } from '@vantreeseba/graphql-casl';
+
+export const permissions: PermissionsMap<Resolvers> = {
+  Query: {
+    // authorizes the list once, then grants every returned Post the 'post' scope
+    posts: grants(canUser(Actions.read, Subject.Post), 'post'),
+  },
+  // a granted row passes on a WeakMap lookup; anything else falls through to CASL
+  Post: race(granted('post'), canUser.fields(Actions.read, Subject.Post)),
+};
+```
+
+`grants(rule, scope)` wraps any rule and leaves its verdict alone. Once the rule
+has let the resolver run and the resolver has answered, whatever it returned —
+the object, or each object of a list, nested lists included — is tagged with
+`scope` for the rest of the request. `scope` may also be a list of names.
+`granted(scope)` is a combinable rule that passes when its `parent` carries the
+scope and denies with `Forbidden` otherwise. Put it **first in a `race`**: `race`
+stops at the first operand that passes, so the CASL check behind it runs only
+for rows that arrived some other way. `or` evaluates every operand, so it would
+still pay for the check it was meant to skip.
+
+This is Pothos' `grantScopes` / `$granted`, and it keeps the same rules:
+
+- **A grant is not transitive.** `Post.author` returns a `User`, and that `User`
+  is not granted `'post'`. Its fields need their own rule — or `Post.author`
+  grants in turn: `author: grants(granted('post'), 'user')`.
+- **Only what the field actually returns is granted.** A denial grants nothing,
+  a resolver that throws grants nothing, and `grants(canUser.onResult(...),
+  'post')` grants only the rows the post-execution check let through. `null`
+  and scalars are ignored — they cannot be a `parent`.
+- **Grants are per request.** They hang off the context object in a `WeakMap`,
+  like the rule cache, so they die with the request and a second request sees
+  none of them. A context that is not an object cannot carry them: such a
+  request grants nothing and every `granted` rule in it denies, deny being the
+  safe direction.
+- **`granted` on its own is deny-by-default.** A `Post` reached through a field
+  that does not grant — or a root field's `parent`, which is no object at all —
+  is denied. That is what makes it a *scope* rather than a bypass; the `race`
+  above is the shape for a type that is also reachable by paths that should
+  authorize it themselves.
+- **It needs no `cache`.** The check is a `WeakMap` lookup that answers
+  synchronously, so a granted field resolves without a promise. Under `onDeny`
+  an ungranted field is filtered or masked like any other denial, and
+  `fallbackError` rewords it like any other generic one.
+- **`grants(...)` is not combinable.** It decides by running the resolver, so
+  like `onResult` and `scopeArgs` it is rejected as an operand of `and` / `or`
+  / `not` / `chain` / `race` when the map is built. Compose it with `wrap`, or
+  combine the rule *inside* it: `grants(chain(isNotBanned, canUser(...)), 'post')`.
+
+What it saves is evaluations. For the 100-row, 5-field list the
+[caching table](#caching-a-rules-answer) measures:
+
+| Rule on `Post` | CASL checks per request |
+| --- | --- |
+| `canUser.fields(Actions.read, Subject.Post)` | 500, one per field per row |
+| conditioned `canUser(...)` with `cache: 'strict'` | 100, one per row |
+| `race(granted('post'), canUser.fields(...))` | 1, on the list field |
+
+Wall-clock, the difference is smaller than the counts suggest: a synchronous
+CASL check already sits close to the unguarded graphql-js baseline, so the
+grant mostly removes work that was cheap. Where it is not cheap — a
+[policy engine](#delegating-to-an-external-policy-engine) round trip, a
+conditioned check on a wide row, a `fields` rule whose ability has many rules —
+the 500-to-1 is the whole point. `npm run bench` in the package prints the
+current numbers side by side.
 
 ### Error control
 
@@ -958,18 +1106,59 @@ const permissions: PermissionsMap<Resolvers> = {
 };
 ```
 
-From highest precedence to lowest:
+From highest precedence to lowest, for a `Note` that implements `Node`:
 
 | Entry | Matches |
 | --- | --- |
 | `{ Note: { body: rule } }` | a named field of a named type |
+| `{ Node: { body: rule } }` | a named field of an interface the type implements |
 | `{ Note: { '*': rule } }` or `{ Note: rule }` | any field of a named type |
+| `{ Node: { '*': rule } }` or `{ Node: rule }` | any field of any type implementing the interface (a union's `'*'` sits here too) |
 | `{ '*': { body: rule } }` | a named field of any type |
 | `{ '*': { '*': rule } }` or `{ '*': rule }` | any field of any type |
 | `fallbackRule` | everything else |
 
 Field names under `'*'` are still checked — against every field in the schema, so a
 typo that matches no type at all is an error.
+
+### Rules on interfaces
+
+An interface is a type key like any other. A rule under it guards that field on
+every type implementing the interface — including one added to the schema after
+the map was written, which is the point: a rule restated on each implementor
+silently misses the next one.
+
+```ts
+const permissions: PermissionsMap<Resolvers> = {
+  Node: { id: accept },                          // Note.id, User.id, and whatever implements Node next
+  Searchable: canUser(Actions.read, Subject.Note), // every field of every Searchable
+  Note: { body: canUser(Actions.read, Subject.Note) },
+};
+```
+
+The field keys are the fields the interface declares — `Node: { body: rule }` is
+an error, since `Node` has no `body` — but a type-wide `'*'` (or a bare rule)
+on an interface covers every field of the implementor, declared on the interface
+or not. Implementation is transitive: an interface that implements `Node` passes
+`Node`'s rules on to its own implementors. A union takes only `'*'`, which guards
+every field of every member; a named field on a union is an error, because a
+union declares none. Either kind of entry guards the type wherever it is
+reached: `Thing: rule` guards `Note`'s fields under `Query.note` as much as
+under `Query.thing`.
+
+An implementor's own entry beats the interface's, at the same tier — the table
+above states the order. What the map never does is pick one of two inherited
+rules for you: a `Note` implementing both `Node` and `Searchable`, where both
+give a rule for `id` (or both give `'*'`) and `Note` does not, is ambiguous, and
+`applyPermissions` rejects it with a `PermissionsError` naming both interfaces
+until `Note` chooses. The same rule reached through two interfaces is fine.
+
+With `typescript-resolvers`, the interface's resolver type lists its fields
+alongside `__resolveType`, so `PermissionsMap<Resolvers>` checks the field keys
+under `Node` at compile time exactly as it does under `Note` — and a union's
+resolver type, which has only `__resolveType`, accepts only `'*'`. Under
+`onlyResolveTypeForInterfaces: true` an interface accepts only `'*'` too; the
+runtime walk still checks every key either way.
 
 ### Row-level filtering
 
@@ -1128,6 +1317,81 @@ archives only your own. Note the asymmetry with `onResult`, which refuses
 mutations outright: scoping happens *before* the resolver, so nothing has
 happened yet when it decides. Keep `onDenyAll: 'deny'` there, though: a
 forbidden delete should fail, not succeed while matching nothing.
+
+### Validating arguments
+
+GraphQL's input coercion checks *shape* — the right scalars in the right
+places. It has nothing to say about a title that is blank, an end date before
+its start, or a page size of ten million, so those checks end up hand-written at
+the top of each resolver. `validateArgs` lifts them into the permissions map,
+next to the authorization the same field needs.
+
+It takes any [Standard Schema](https://standardschema.dev) — a zod (3.24+),
+valibot, arktype or yup (1.7+) schema, or anything else with a `~standard`
+property — so you bring the validator you already use and the package adds no
+dependency:
+
+```ts
+import { validateArgs, wrap } from '@vantreeseba/graphql-casl';
+import { z } from 'zod';
+
+const CreateNoteArgs = z.object({
+  input: z.object({
+    title: z.string().trim().min(1, 'A note needs a title'),
+    tags: z.array(z.string()).max(10).default([]),
+  }),
+});
+
+const permissions = {
+  Mutation: {
+    createNote: wrap(canUser(Actions.create, Subject.Note), validateArgs(CreateNoteArgs)),
+  },
+} satisfies PermissionsMap<Resolvers>;
+```
+
+On success the resolver receives the schema's **parsed output** as its `args` —
+`title` trimmed, `tags` defaulted — which is the point of running a schema
+rather than a predicate. `ValidatedArgs<typeof CreateNoteArgs>` names that type.
+Pass `{ replace: false }` to validate only and leave the arguments exactly as
+GraphQL coerced them.
+
+On failure the field rejects with a `GraphQLError` whose message lists the
+issues, with `extensions.code: 'BAD_USER_INPUT'` and an `extensions.issues`
+array of `{ message, path }`:
+
+```json
+{
+  "message": "input.title: A note needs a title",
+  "path": ["createNote"],
+  "extensions": {
+    "code": "BAD_USER_INPUT",
+    "issues": [{ "message": "A note needs a title", "path": ["input", "title"] }]
+  }
+}
+```
+
+That failure is **not a permission denial**, and [error control](#error-control)
+treats it accordingly: `fallbackError` never rewords it, since it named its own
+error; `debug` has nothing to reveal; and under `onDeny: 'filter'` it keeps
+`BAD_USER_INPUT` rather than taking `UNAUTHORIZED_FIELD_OR_TYPE`. The one mode
+that treats it like a denial is `onDeny: 'mask'`, which nulls the field and says
+nothing — bad input then reads as a missing record, the trade-off `'mask'`
+already makes everywhere. An error thrown by the validator *itself* is a rule
+failure, not a validation result, and is replaced or revealed as one.
+
+Three things to know:
+
+- **It is not a gate**, and like `scopeArgs` it cannot be an operand of `and` /
+  `or` / `not` / `chain` / `race` — it decides by rewriting arguments and calling
+  the resolver. Compose it with `wrap`, and put the authorization rule *first*:
+  a caller who may not run the field at all should learn that, not what is wrong
+  with their input.
+- **Rewritten arguments bypass GraphQL's coercion**, exactly as `scopeArgs`'s do.
+  A transform that changes a value's *type* — a string into a `Date` — hands the
+  resolver something the SDL never promised. Often that is the point; make sure
+  the resolver expects it.
+- **Coming from `graphql-shield`'s `inputRule`**: same idea, no yup dependency,
+  and the parsed output reaches the resolver instead of being thrown away.
 
 ### Using the map without `graphql-middleware`
 
@@ -1449,7 +1713,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `cache: 'contextual' \| 'strict'` per rule | [same option, same three levels](#caching-a-rules-answer), same default (`'no_cache'`) — and `createCan` memoizes `getAbility(context)` per request on top |
 | `cache: (parent, args, ctx, info) => key` | same escape hatch; returning `undefined` skips the cache for that call. No `hashFunction`: `'strict'` keys arguments with a built-in sorted-key stringifier rather than `object-hash` |
 | unique rule names required (the cache is keyed by name) | not required — each rule instance owns its cache, so two rules named `isOwner` never share an answer |
-| `inputRule` (yup-backed argument validation) | no equivalent — validate arguments in a `rule()` check or in the resolver |
+| `inputRule` (yup-backed argument validation) | [`validateArgs(schema)`](#validating-arguments), taking any Standard Schema (zod, valibot, arktype, yup 1.7+) — no validator dependency, and the parsed output reaches the resolver |
 | `rule({ fragment })` | not supported, deliberately — see [the note below](#three-differences-that-will-bite) |
 
 ### Three differences that will bite

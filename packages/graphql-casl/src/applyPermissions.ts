@@ -10,13 +10,17 @@
 import {
   defaultFieldResolver,
   type ExecutionResult,
+  type GraphQLAbstractType,
   GraphQLError,
   type GraphQLField,
   type GraphQLFieldResolver,
+  type GraphQLInterfaceType,
   type GraphQLNamedType,
+  type GraphQLObjectType,
   type GraphQLOutputType,
   type GraphQLResolveInfo,
   type GraphQLSchema,
+  isAbstractType,
   isEnumType,
   isInputObjectType,
   isInterfaceType,
@@ -91,6 +95,124 @@ export function describeKind(type: GraphQLNamedType): string {
 }
 
 /**
+ * The object types an abstract type stands for: an interface's implementors
+ * (through interfaces that implement it, too) or a union's members. These are
+ * the types an entry keyed on the abstract type actually guards, since
+ * execution resolves every field against the concrete object type.
+ */
+function possibleTypesOf(
+  schema: GraphQLSchema,
+  abstract: GraphQLAbstractType,
+): GraphQLObjectType[] {
+  if (isUnionType(abstract)) return [...abstract.getTypes()];
+  const objects = new Set<GraphQLObjectType>();
+  const seen = new Set<GraphQLInterfaceType>();
+  const visit = (iface: GraphQLInterfaceType): void => {
+    if (seen.has(iface)) return;
+    seen.add(iface);
+    const implementations = schema.getImplementations(iface);
+    for (const object of implementations.objects) objects.add(object);
+    for (const sub of implementations.interfaces) visit(sub);
+  };
+  visit(abstract);
+  return [...objects];
+}
+
+/**
+ * Object type name -> the interface and union entries in the map that cover it,
+ * in map order. Only types under at least one such entry are listed.
+ */
+type Supertypes = ReadonlyMap<string, readonly string[]>;
+
+function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
+  const supertypes = new Map<string, string[]>();
+  for (const [typeName, entry] of Object.entries(permissions)) {
+    if (entry == null) continue;
+    const type = schema.getType(typeName);
+    if (!type || !isAbstractType(type)) continue;
+    for (const object of possibleTypesOf(schema, type)) {
+      const seen = supertypes.get(object.name);
+      if (seen) seen.push(typeName);
+      else supertypes.set(object.name, [typeName]);
+    }
+  }
+  return supertypes;
+}
+
+/** `\`A\``, `\`A\` and \`B\``, `\`A\`, \`B\` and \`C\`` — for a problem message. */
+function listed(names: readonly string[]): string {
+  const quoted = names.map((name) => `\`${name}\``);
+  if (quoted.length === 1) return quoted[0] as string;
+  return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
+}
+
+/**
+ * The abstract entries giving `typeName` a rule for `key`, by name — one per
+ * distinct rule, so the same rule reached through two interfaces counts once.
+ */
+function sourcesOf(
+  permissions: RawPermissions,
+  abstracts: readonly string[],
+  key: string,
+): string[] {
+  const byRule = new Map<Rule, string>();
+  for (const name of abstracts) {
+    const rule = fieldRuleOf(permissions[name], key);
+    if (rule && !byRule.has(rule)) byRule.set(rule, name);
+  }
+  return [...byRule.values()];
+}
+
+/**
+ * Where two abstract entries would both guard a field of one implementor and
+ * the implementor does not choose between them.
+ *
+ * Inherited rules never compose, and picking one silently — by map order, say
+ * — would make the outcome depend on which interface was listed first. So a
+ * field two interfaces both cover is a problem until the object type's own
+ * entry settles it: `T.f` settles `f` outright, and `T['*']` settles the
+ * type-wide tier (an `I.f` still beats it, as the precedence table says).
+ */
+function ambiguityProblems(
+  schema: GraphQLSchema,
+  permissions: RawPermissions,
+  supertypes: Supertypes,
+): string[] {
+  const problems: string[] = [];
+  for (const [typeName, abstracts] of supertypes) {
+    if (abstracts.length < 2) continue;
+    const type = schema.getType(typeName) as GraphQLObjectType;
+    const own = permissions[typeName];
+    const ownWild = fieldRuleOf(own, WILDCARD) !== undefined;
+    let wildSources: string[] | undefined;
+    const unsettled: string[] = [];
+
+    for (const fieldName of Object.keys(type.getFields())) {
+      if (fieldRuleOf(own, fieldName)) continue;
+      const fieldSources = sourcesOf(permissions, abstracts, fieldName);
+      if (fieldSources.length > 1) {
+        problems.push(
+          `Field \`${typeName}.${fieldName}\` gets a rule from ${listed(fieldSources)}, and ` +
+            `\`${typeName}\` does not say which applies — add \`${typeName}: { ${fieldName}: … }\` to choose.`,
+        );
+        continue;
+      }
+      if (fieldSources.length === 1 || ownWild) continue;
+      wildSources ??= sourcesOf(permissions, abstracts, WILDCARD);
+      if (wildSources.length > 1) unsettled.push(fieldName);
+    }
+
+    if (wildSources && unsettled.length > 0) {
+      problems.push(
+        `\`${typeName}\` gets a type-wide rule from ${listed(wildSources)}, and nothing says ` +
+          `which applies to ${listed(unsettled)} — add \`${typeName}: { '*': … }\`, or a rule per field, to choose.`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
  * Every way a permissions map can fail to line up with the schema.
  *
  * `graphql-middleware` does check that types and fields exist, but it fails on
@@ -98,10 +220,17 @@ export function describeKind(type: GraphQLNamedType): string {
  * function`). More importantly it accepts entries that are silently inert: a rule
  * on an interface type type-checks, applies cleanly, and then never runs, because
  * execution resolves fields against the concrete object type. In an authorization
- * library a rule that quietly never runs is the worst possible failure, so these
- * are rejected outright.
+ * library a rule that quietly never runs is the worst possible failure, so
+ * nothing here is allowed to be inert: an interface or union entry is resolved
+ * onto the object types it stands for (see {@link supertypesOf}), and anything
+ * that cannot be — an introspection type, a union's named field, a field the
+ * interface does not declare — is rejected outright.
  */
-function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): string[] {
+function collectProblems(
+  schema: GraphQLSchema,
+  permissions: RawPermissions,
+  supertypes: Supertypes,
+): string[] {
   const problems: string[] = [];
   const typeMap = schema.getTypeMap();
 
@@ -118,36 +247,37 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
     }
   }
 
-  for (const [typeName, entry] of Object.entries(permissions)) {
-    if (entry == null) continue;
+  for (const [typeName, rawEntry] of Object.entries(permissions)) {
+    if (rawEntry == null) continue;
+    // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`, and is
+    // checked as such — a bare scoping rule still has arguments to verify.
+    const entry = isRule(rawEntry) ? { [WILDCARD]: rawEntry } : rawEntry;
 
     // A wildcard type is not looked up in the schema; its field keys are checked
     // against every guardable field instead, so a typo there is still caught.
     if (typeName === WILDCARD) {
-      if (!isRule(entry)) {
-        for (const [fieldName, rule] of Object.entries(entry)) {
-          if (rule === undefined || fieldName === WILDCARD) continue;
-          const targets = guardableFields.get(fieldName);
-          if (!targets) {
-            problems.push(
-              `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
-            );
-          } else if (!isRule(rule)) {
-            problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
-          } else {
-            const problem = scopeProblem(rule, `*.${fieldName}`, targets);
-            if (problem) problems.push(problem);
-          }
-        }
-        const wildRule = entry[WILDCARD];
-        if (wildRule !== undefined && !isRule(wildRule)) {
-          problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
-        } else if (wildRule !== undefined && scopeTargetsOf(wildRule).length > 0) {
+      for (const [fieldName, rule] of Object.entries(entry)) {
+        if (rule === undefined || fieldName === WILDCARD) continue;
+        const targets = guardableFields.get(fieldName);
+        if (!targets) {
           problems.push(
-            'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
-              'every type. Attach the scoping rule to the fields it filters.',
+            `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
           );
+        } else if (!isRule(rule)) {
+          problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
+        } else {
+          const problem = scopeProblem(rule, `*.${fieldName}`, targets);
+          if (problem) problems.push(problem);
         }
+      }
+      const wildRule = entry[WILDCARD];
+      if (wildRule !== undefined && !isRule(wildRule)) {
+        problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
+      } else if (wildRule !== undefined && scopeTargetsOf(wildRule).length > 0) {
+        problems.push(
+          'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
+            'every type. Attach the scoping rule to the fields it filters.',
+        );
       }
       continue;
     }
@@ -161,22 +291,29 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
       problems.push(`\`${typeName}\` is an introspection type and cannot be guarded.`);
       continue;
     }
-    if (!isObjectType(type)) {
-      const hint =
-        isInterfaceType(type) || isUnionType(type)
-          ? ' Fields are resolved against the concrete object type, so the rule would never run — attach it to each implementing type instead.'
-          : '';
-      problems.push(`\`${typeName}\` is ${describeKind(type)}, not an object type.${hint}`);
+    if (!isObjectType(type) && !isAbstractType(type)) {
+      problems.push(`\`${typeName}\` is ${describeKind(type)}, not an object type.`);
       continue;
     }
-    if (isRule(entry)) continue;
 
-    const fields = type.getFields();
+    // An abstract entry guards the fields of the object types it stands for. A
+    // union declares no fields of its own, so only `'*'` can be attached to it.
+    const declared = isUnionType(type) ? undefined : type.getFields();
+    const guarded = isAbstractType(type) ? possibleTypesOf(schema, type) : [type];
     for (const [fieldName, rule] of Object.entries(entry)) {
       if (rule === undefined) continue;
-      if (fieldName !== WILDCARD && !(fieldName in fields)) {
+      if (fieldName !== WILDCARD && !declared) {
         problems.push(
-          `Field \`${typeName}.${fieldName}\` is in the permissions map but not in the schema.`,
+          `Field \`${typeName}.${fieldName}\` is in the permissions map but \`${typeName}\` is a union type, ` +
+            "which declares no fields — only `'*'` can be attached to a union.",
+        );
+        continue;
+      }
+      if (fieldName !== WILDCARD && !(fieldName in (declared as Record<string, AnyField>))) {
+        problems.push(
+          isInterfaceType(type)
+            ? `Field \`${typeName}.${fieldName}\` is in the permissions map but interface \`${typeName}\` does not declare it.`
+            : `Field \`${typeName}.${fieldName}\` is in the permissions map but not in the schema.`,
         );
         continue;
       }
@@ -185,12 +322,15 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions): st
         continue;
       }
       const targets =
-        fieldName === WILDCARD ? Object.values(fields) : [fields[fieldName] as AnyField];
+        fieldName === WILDCARD
+          ? guarded.flatMap((object) => Object.values(object.getFields()))
+          : guarded.map((object) => object.getFields()[fieldName] as AnyField);
       const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
       if (problem) problems.push(problem);
     }
   }
 
+  problems.push(...ambiguityProblems(schema, permissions, supertypes));
   return problems;
 }
 
@@ -216,14 +356,15 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
   for (const into of scopeTargetsOf(rule)) {
     const missing = targets.filter((field) => !field.args.some((arg) => arg.name === into));
     if (missing.length === 0) continue;
-    const names = missing.map((field) => `\`${field.name}\``);
-    const listed =
+    // By name, once: an interface field's targets are that field on every implementor.
+    const names = [...new Set(missing.map((field) => `\`${field.name}\``))];
+    const shown =
       names.length > 4
         ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`
         : names.join(', ');
     return (
       `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
-      `${listed} ${missing.length === 1 ? 'has' : 'have'} no such argument. ` +
+      `${shown} ${names.length === 1 ? 'has' : 'have'} no such argument. ` +
       'An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.'
     );
   }
@@ -243,6 +384,24 @@ function fieldRuleOf(
 }
 
 /**
+ * The rule the interfaces (and unions) an object type belongs to give one of its
+ * field keys. Validation has already rejected the case where two of them
+ * disagree, so the first one found is the only one.
+ */
+function inheritedRuleOf(
+  permissions: RawPermissions,
+  abstracts: readonly string[] | undefined,
+  fieldName: string,
+): Rule | undefined {
+  if (!abstracts) return undefined;
+  for (const name of abstracts) {
+    const rule = fieldRuleOf(permissions[name], fieldName);
+    if (rule) return rule;
+  }
+  return undefined;
+}
+
+/**
  * The single rule guarding one field, or `undefined` to leave it unguarded.
  *
  * Wildcards never compose — exactly one rule applies, and the most specific
@@ -253,13 +412,17 @@ function ruleForField(
   permissions: RawPermissions,
   typeName: string,
   fieldName: string,
+  supertypes: Supertypes,
   fallbackRule: Rule | undefined,
 ): Rule | undefined {
   const named = permissions[typeName];
+  const abstracts = supertypes.get(typeName);
   const wild = permissions[WILDCARD];
   return (
     fieldRuleOf(named, fieldName) ??
+    inheritedRuleOf(permissions, abstracts, fieldName) ??
     fieldRuleOf(named, WILDCARD) ??
+    inheritedRuleOf(permissions, abstracts, WILDCARD) ??
     fieldRuleOf(wild, fieldName) ??
     fieldRuleOf(wild, WILDCARD) ??
     fallbackRule
@@ -454,7 +617,7 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  * and a **resolver error** (the field was allowed and the resolver failed).
  *
  * A rule built by `rule()` — which is every rule this library produces except
- * `onResult`, `scopeArgs` and `wrap` — exposes its decision as a check, and the
+ * `onResult`, `scopeArgs`, `validateArgs` and `wrap` — exposes its decision as a check, and the
  * wrapper asks that directly. A denial is then a *returned* value, not a thrown
  * one, so masking it costs no `Error` construction and no stack capture: on a
  * 100-row list with 5 masked fields that is 500 errors never built. It also
@@ -698,8 +861,15 @@ export function validatePermissions<TResolvers = AnyResolvers>(
   schema: GraphQLSchema,
   permissions: PermissionsMap<NoInfer<TResolvers>>,
 ): void {
-  const problems = collectProblems(schema, permissions as RawPermissions);
+  validated(schema, permissions as RawPermissions);
+}
+
+/** The check behind {@link validatePermissions}, handing back what the resolver reuses. */
+function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
+  const supertypes = supertypesOf(schema, permissions);
+  const problems = collectProblems(schema, permissions, supertypes);
   if (problems.length > 0) throw new PermissionsError(problems);
+  return supertypes;
 }
 
 export function resolvePermissions<TResolvers = AnyResolvers>(
@@ -710,8 +880,8 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
   permissions: PermissionsMap<NoInfer<TResolvers>>,
   options?: ApplyPermissionsOptions,
 ): PermissionResolver {
-  validatePermissions(schema, permissions);
   const raw = permissions as RawPermissions;
+  const supertypes = validated(schema, raw);
 
   // `strict` moves the defaults, never the keys actually passed.
   const strict = options?.strict ?? false;
@@ -759,7 +929,9 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     // working; a non-object type has no field to guard in the first place.
     const field =
       isObjectType(type) && !isIntrospectionType(type) ? type.getFields()[fieldName] : undefined;
-    const rule = field ? ruleForField(raw, typeName, fieldName, fallbackRule) : undefined;
+    const rule = field
+      ? ruleForField(raw, typeName, fieldName, supertypes, fallbackRule)
+      : undefined;
     const guard =
       rule && field
         ? wrapped(rule, errorControl.onDeny === 'reject' ? undefined : maskFor(field.type))
@@ -1113,11 +1285,16 @@ export interface ApplyPermissionsOptions {
  *
  * The map is validated against the schema first: unknown types and fields,
  * non-function rules, and entries that would be silently inert (introspection
- * types, and interfaces/unions, whose fields are resolved against the concrete
- * object type) all raise a {@link PermissionsError} listing every problem at once.
- * This catches what `PermissionsMap`'s compile-time keys cannot — rules loaded
- * from a database, built in plain JavaScript, or written against a schema that has
- * since drifted.
+ * types, a named field on a union) all raise a {@link PermissionsError} listing
+ * every problem at once. This catches what `PermissionsMap`'s compile-time keys
+ * cannot — rules loaded from a database, built in plain JavaScript, or written
+ * against a schema that has since drifted.
+ *
+ * An entry keyed on an interface guards that field on every type implementing
+ * it, and a `'*'` entry on a union guards every field of every member; an
+ * implementor's own entry overrides either. Two interfaces that both cover a
+ * field of one implementor are ambiguous and rejected until the implementor
+ * chooses — see {@link PermissionsMap} for the precedence table.
  *
  * Types not named in the map are left unguarded — the map is a whitelist of what
  * to guard, not a schema-coverage guarantee. Pass

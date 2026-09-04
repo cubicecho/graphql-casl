@@ -89,6 +89,15 @@ A soundness pass, taken from the lists above:
   value it returned, so conditions are evaluated on the real record instead of on
   a client-asserted arg. That closes the IDOR gap the README documents. It
   refuses root mutation fields *before* resolving, so no side effect escapes.
+- **Rules on interfaces and unions** (`ecosystem-parity` E10, E8) — an
+  interface entry in the map is inherited by every type implementing it,
+  transitively, so a `Node` rule covers an implementor added later instead of
+  being restated on each one; a union takes `'*'` for every member's fields.
+  Precedence is stated in full — `T.f` > `I.f` > `T['*']` > `I['*']` > `'*'.f`
+  > `'*'['*']` > `fallbackRule` — and two interfaces that both cover a field of
+  one implementor are rejected as ambiguous until the implementor's own entry
+  chooses. `PermissionsMap<Resolvers>` types an interface's keys from the fields
+  `typescript-resolvers` emits on its resolver type.
 - **`applyPermissions` is a real schema walk**, not a cast: it validates the map
   against the runtime schema (`shield-parity` S13, aggregating every problem),
   supports `fallbackRule` (S2 / `ecosystem-parity` E9) and `'*'` wildcards in
@@ -102,6 +111,34 @@ A soundness pass, taken from the lists above:
   reported at once as a `PermissionsError`. Condition fields are checked
   against the schema by default; `conditionFields: 'none'` relaxes that for
   subjects that are database models with columns the schema does not expose.
+- **Granted scopes** (`ecosystem-parity` E7) — `grants(rule, scope)` tags what
+  a field returned (the object, or each element of a list) with a scope for the
+  request, and `granted(scope)` passes on it, so a list field's decision is
+  reused by its rows' fields instead of re-checked once per field per row.
+  Pothos `grantScopes` / `$granted` semantics: per request (a `WeakMap` off the
+  context), never transitive, only what the field actually returned, and
+  deny-by-default alone — `race(granted('post'), canUser.fields(...))` is the
+  shape. Bench, 100 rows x 5 fields: 500 CASL checks become 1; `race(granted,
+  fields)` runs 1.2–1.4x the `fields`-alone throughput across two passes, and
+  `granted` alone lands within 8–17% of the unguarded baseline. Opt-in.
+
+- **Argument validation as a rule** (`shield-parity` S11) —
+  `validateArgs(schema, options?)` is the `inputRule` counterpart, built on
+  [Standard Schema](https://standardschema.dev) rather than yup: any zod
+  (3.24+), valibot, arktype or yup (1.7+) schema works, the spec's interface is
+  vendored, and the package stays zero-dep. On success the resolver receives
+  the parsed output (defaults, coercion, transforms); `replace: false` validates
+  only. On failure it rejects with a `GraphQLError` carrying
+  `extensions.code: 'BAD_USER_INPUT'` and `extensions.issues`, marked as an
+  explicit denial so `fallbackError` never rewords it and `onDeny: 'filter'`
+  keeps its code. Plain `Rule`, like `scopeArgs`; composes through `wrap`.
+- **The trust boundary, stated** (`prior-art` C2, E1, F1) — documented, not
+  built. The README now says why a GraphQL-specific CASL binding exists at all
+  (`__typename` is a schema-checked subject name, where `@casl/prisma` has to
+  wrap every record in `subject()`), that ownership enforced in the data layer
+  is strictly stronger than any resolver gate with this library as defense in
+  depth on top of it, and that rooting authorized reads at `viewer`/`me`
+  removes the IDOR class from the schema rather than guarding against it.
 
 - **`__isTypeOf` / `__resolveType` are excluded from `PermissionsMap`**
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
