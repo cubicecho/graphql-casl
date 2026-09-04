@@ -33,6 +33,8 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `wrap(...rules)` | Nests any rules as middleware — each receives the next as its `resolve`, outermost first. The escape hatch for rules the combinators reject (`onResult`, `scopeArgs`, hand-written middleware). Returns a plain `Rule`, so it is never itself a combinator operand. |
 | `validateArgs(schema, options?)` | A rule that validates a field's arguments against any [Standard Schema](https://standardschema.dev) (zod 3.24+, valibot, arktype, yup 1.7+ — no dependency added) and calls the resolver with the parsed output as `args` (`replace: false` validates only). A failure rejects with a `GraphQLError` carrying `extensions.code: 'BAD_USER_INPUT'` and `extensions.issues: [{ message, path }]`; error control passes it through verbatim. Not combinable; compose it with `wrap`, authorization first. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives; both are combinable. |
+| `grants(rule, scope)` | Granted scopes (Pothos `grantScopes`): wraps any rule and, once it passes and the resolver returns, tags what was returned (the object, or each element of a list) with `scope` for the request. Per context, never transitive, tags only what the field actually returns. Returns a plain `Rule` — not combinable; compose with `wrap` or combine the rule inside it. |
+| `granted(scope)` | Combinable rule that passes when `parent` was granted `scope` in this request and denies with `Forbidden` otherwise. Synchronous `WeakMap` lookup, needs no `cache`. Deny-by-default on its own; the usual shape is `race(granted('post'), canUser.fields(...))` — `race`, not `or`, so the CASL check is skipped for granted rows. |
 | `isCheckableRule(value)` | Whether a rule can be a combinator operand. |
 | `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `onDeny` (`'reject'` default, `'filter'`, `'mask'`), `report` (`'errors'` default, `'extensions'`), `maskDenials` (older spelling of `onDeny: 'mask'`). |
 | `reportDenials(contextValue, result)` | Merges the denials `onDeny: 'filter'` held for a request into its execution result — into `errors`, or `extensions.authorizationErrors` under `report: 'extensions'`. Needed only outside envelop, where the plugin does it. |
@@ -211,6 +213,7 @@ const yoga = createYoga({
 - `src/graphqlAbility.ts` — `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
 - `src/subjects.ts` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
 - `src/createCan.ts` — the factory tying a CASL ability to the rule layer
+- `src/grants.ts` — granted scopes: `grants` / `granted`, a parent field's decision reused by its children
 
 ## Optional
 

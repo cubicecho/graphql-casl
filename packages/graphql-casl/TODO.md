@@ -111,6 +111,16 @@ A soundness pass, taken from the lists above:
   reported at once as a `PermissionsError`. Condition fields are checked
   against the schema by default; `conditionFields: 'none'` relaxes that for
   subjects that are database models with columns the schema does not expose.
+- **Granted scopes** (`ecosystem-parity` E7) — `grants(rule, scope)` tags what
+  a field returned (the object, or each element of a list) with a scope for the
+  request, and `granted(scope)` passes on it, so a list field's decision is
+  reused by its rows' fields instead of re-checked once per field per row.
+  Pothos `grantScopes` / `$granted` semantics: per request (a `WeakMap` off the
+  context), never transitive, only what the field actually returned, and
+  deny-by-default alone — `race(granted('post'), canUser.fields(...))` is the
+  shape. Bench, 100 rows x 5 fields: 500 CASL checks become 1; `race(granted,
+  fields)` runs 1.2–1.4x the `fields`-alone throughput across two passes, and
+  `granted` alone lands within 8–17% of the unguarded baseline. Opt-in.
 
 - **Argument validation as a rule** (`shield-parity` S11) —
   `validateArgs(schema, options?)` is the `inputRule` counterpart, built on

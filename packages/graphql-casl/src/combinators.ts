@@ -36,10 +36,11 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
       throw new Error(
         `graphql-casl: \`${combinator}()\` operand ${index} is not a checkable rule, so its ` +
           'verdict cannot be evaluated without also running the resolver. Build it with `rule()` ' +
-          'or `createCan(...)`. `createCan(...).onResult`, `scopeArgs(...)` and `validateArgs(...)` ' +
-          'rules are never combinable — the first needs the resolved value to decide, the others ' +
-          'decide by rewriting the arguments and calling the resolver themselves. Compose those ' +
-          'with `wrap()` instead.',
+          'or `createCan(...)`. `createCan(...).onResult`, `scopeArgs(...)`, `validateArgs(...)` ' +
+          'and `grants(...)` rules are never combinable — the first needs the resolved value to ' +
+          'decide, the next two decide by rewriting the arguments and calling the resolver ' +
+          'themselves, and the last tags what the resolver returned. Compose those with ' +
+          '`wrap()` instead.',
       );
     }
     return operand.check;
@@ -309,7 +310,7 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * side effects, so they accept only {@link CheckableRule}s. `wrap` never asks —
  * it just nests — so it accepts anything, including the rules that decide by
  * running the resolver: `createCan(...).onResult`, `scopeArgs(...)` and
- * `validateArgs(...)`.
+ * `validateArgs(...)` and `grants(...)`.
  *
  * ```ts
  * Query: {
