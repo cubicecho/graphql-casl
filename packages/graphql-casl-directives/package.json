@@ -1,24 +1,24 @@
 {
-  "name": "@vantreeseba/graphql-casl-codegen",
-  "version": "1.9.0",
-  "description": "GraphQL Code Generator plugin that emits @vantreeseba/graphql-casl subject bindings for your generated resolver types.",
+  "name": "@vantreeseba/graphql-casl-directives",
+  "version": "1.5.0",
+  "description": "Declare @vantreeseba/graphql-casl permissions in SDL: translates @can and @rule directives on a GraphQLSchema into the PermissionsMap the runtime enforces.",
   "keywords": [
     "graphql",
-    "graphql-codegen",
-    "graphql-code-generator",
-    "codegen",
+    "graphql-directives",
+    "directives",
+    "sdl",
+    "schema-first",
     "casl",
     "authorization",
     "permissions",
     "access-control",
-    "plugin",
     "typescript"
   ],
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cubicecho/graphql-casl.git",
-    "directory": "packages/graphql-casl-codegen"
+    "directory": "packages/graphql-casl-directives"
   },
   "homepage": "https://github.com/cubicecho/graphql-casl#readme",
   "bugs": {
@@ -48,17 +48,17 @@
     "coverage": "vitest run --coverage"
   },
   "peerDependencies": {
-    "@graphql-codegen/plugin-helpers": ">=5",
-    "@vantreeseba/graphql-casl": ">=0.2.1",
+    "@vantreeseba/graphql-casl": ">=1.5.0",
     "graphql": ">=16"
   },
-  "peerDependenciesMeta": {
-    "@vantreeseba/graphql-casl": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@graphql-codegen/plugin-helpers": "^5.1.1",
-    "graphql": "^16.14.0"
+    "@casl/ability": "^7.0.0",
+    "@envelop/core": "^5.6.0",
+    "@envelop/on-resolve": "^7.0.0",
+    "@envelop/testing": "^10.2.0",
+    "@graphql-tools/schema": "^10.0.33",
+    "@vantreeseba/graphql-casl": "*",
+    "graphql": "^16.14.0",
+    "graphql-middleware": "^6.1.35"
   }
 }

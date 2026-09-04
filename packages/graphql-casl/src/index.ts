@@ -16,11 +16,13 @@
  * - `schemaTypes` — type helpers derived from generated `Resolvers`/`ResolversTypes`
  * - `rules` — the `graphql-middleware` rule layer (`Rule`, `PermissionsMap`, `accept`, `deny`)
  * - `applyPermissions` — validates a map against the schema and applies it
+ * - `validateArgs` — argument validation as a rule, via any Standard Schema validator
  * - `validateGraphQLRules` — validates stored ability rules against the schema
  * - `ability` — CASL `Action` / `Actions` / `AbilityLike`
  * - `graphqlAbility` — the schema-typed `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
  * - `subjects` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
  * - `createCan` — the factory tying abilities to rules
+ * - `grants` — granted scopes: `grants` / `granted`, a parent's decision reused by its fields
  *
  * @packageDocumentation
  */
@@ -65,6 +67,7 @@ export type {
   UnconditionedSubjectMode,
 } from './createCan.js';
 export { createCan } from './createCan.js';
+export { granted, grants } from './grants.js';
 export type {
   GraphQLAbilities,
   GraphQLAbility,
@@ -87,5 +90,12 @@ export type {
 export { accept, deny, isCheckableRule, rule } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';
+export type {
+  ArgumentIssue,
+  StandardSchemaV1,
+  ValidateArgsOptions,
+  ValidatedArgs,
+} from './validateArgs.js';
+export { BAD_USER_INPUT, validateArgs } from './validateArgs.js';
 export type { ValidateGraphQLRulesOptions } from './validateGraphQLRules.js';
 export { validateGraphQLRules } from './validateGraphQLRules.js';

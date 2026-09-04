@@ -59,3 +59,7 @@ canUser(Actions.update, 'Note', (_args, parent) => ({ userId: parent.userId }), 
 reads something mutable is a correctness bug, and only you know whether yours
 does. A context that is not an object cannot key a `WeakMap`, so such a rule is
 simply never cached.
+
+When the rows were already authorized by the field that returned them, a
+[granted scope](./granted-scopes.md) skips the per-row
+check altogether rather than caching it.

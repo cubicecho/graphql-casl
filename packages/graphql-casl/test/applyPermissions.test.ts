@@ -30,6 +30,7 @@ import {
   validatePermissions,
   wrap,
 } from '../src/index.js';
+import { SCOPE_INFO } from '../src/internal.js';
 
 const typeDefs = /* GraphQL */ `
   interface Node {
@@ -145,16 +146,18 @@ describe('applyPermissions — schema validation', () => {
     ]);
   });
 
-  it('rejects an interface, explaining that the rule would never run', () => {
-    const [problem] = problemsOf({ Node: { id: deny } });
-    expect(problem).toContain('`Node` is an interface type, not an object type.');
-    expect(problem).toContain('attach it to each implementing type instead');
+  it('rejects a field the interface does not declare', () => {
+    // `body` exists on Note, but Node does not declare it; the entry is on Node.
+    expect(problemsOf({ Node: { body: deny } })).toEqual([
+      'Field `Node.body` is in the permissions map but interface `Node` does not declare it.',
+    ]);
   });
 
-  it('rejects a union instead of crashing inside graphql-middleware', () => {
+  it('rejects a named field on a union instead of crashing inside graphql-middleware', () => {
     // graphql-middleware itself throws `type.getFields is not a function` here.
-    const [problem] = problemsOf({ Thing: deny });
-    expect(problem).toContain('`Thing` is a union type, not an object type.');
+    expect(problemsOf({ Thing: { id: deny } })).toEqual([
+      "Field `Thing.id` is in the permissions map but `Thing` is a union type, which declares no fields — only `'*'` can be attached to a union.",
+    ]);
   });
 
   it('rejects a non-object type', () => {
@@ -325,6 +328,278 @@ describe('applyPermissions — wildcard precedence', () => {
 
   it('accepts a wildcard field name that exists on some other type', () => {
     expect(() => apply({ '*': { body: deny } })).not.toThrow();
+  });
+});
+
+describe('applyPermissions — rules on interfaces and unions', () => {
+  // Node is implemented directly (Note) and through a chain of interfaces that
+  // meet again (Post: Article implements Entity & Node, Entity implements
+  // Node), so the transitive walk has a diamond to survive. Note also
+  // implements Searchable, which is what makes ambiguity possible.
+  const abstractSchema = (): GraphQLSchema =>
+    makeExecutableSchema({
+      typeDefs: /* GraphQL */ `
+        interface Node { id: ID! }
+        interface Searchable { id: ID! title: String! }
+        interface Entity implements Node { id: ID! }
+        interface Article implements Entity & Node { id: ID! }
+        type Note implements Node & Searchable { id: ID! title: String! body: String! }
+        type Post implements Article & Entity & Node { id: ID! body: String! }
+        union Thing = Note | Post
+        type Query { note: Note! post: Post! thing: Thing! }
+      `,
+      resolvers: {
+        Node: { __resolveType: (v: { title?: string }) => (v.title ? 'Note' : 'Post') },
+        Searchable: { __resolveType: () => 'Note' },
+        Entity: { __resolveType: () => 'Post' },
+        Article: { __resolveType: () => 'Post' },
+        Thing: { __resolveType: (v: { title?: string }) => (v.title ? 'Note' : 'Post') },
+        Query: {
+          note: () => ({ id: 'n1', title: 'hi', body: 'note' }),
+          post: () => ({ id: 'p1', body: 'post' }),
+          thing: () => ({ id: 'n1', title: 'hi', body: 'note' }),
+        },
+      },
+    });
+
+  type SpecMap = Record<string, string | Record<string, string>>;
+
+  /** Applies a spec of named recording rules and returns `Type.field=name` per guarded field. */
+  async function guards(spec: SpecMap, source: string): Promise<string[]> {
+    const marks: string[] = [];
+    const mark =
+      (name: string): Rule =>
+      (resolve, parent, args, context, info) => {
+        marks.push(`${info.parentType.name}.${info.fieldName}=${name}`);
+        return resolve(parent, args, context, info);
+      };
+    const built: LooseMap = {};
+    for (const [typeName, entry] of Object.entries(spec)) {
+      built[typeName] =
+        typeof entry === 'string'
+          ? mark(entry)
+          : Object.fromEntries(Object.entries(entry).map(([f, n]) => [f, mark(n)]));
+    }
+    const result = await graphql({ schema: applyPermissions(abstractSchema(), built), source });
+    expect(result.errors).toBeUndefined();
+    return marks.sort();
+  }
+
+  function problemsOf(permissions: LooseMap): string[] {
+    try {
+      validatePermissions(abstractSchema(), permissions);
+    } catch (error) {
+      if (error instanceof PermissionsError) return [...error.problems];
+      throw error;
+    }
+    return [];
+  }
+
+  it('guards a field on every type implementing the interface', async () => {
+    expect(await guards({ Node: { id: 'iface.field' } }, '{ note { id } post { id } }')).toEqual([
+      'Note.id=iface.field',
+      'Post.id=iface.field',
+    ]);
+  });
+
+  it('reaches an implementor through interfaces that implement the interface', () => {
+    // Post implements Node only by way of Article and Entity in spirit; the
+    // schema lists all three, as GraphQL requires, and the walk visits each once.
+    const permissionFor = resolvePermissions(abstractSchema(), { Node: { id: deny } });
+    expect(permissionFor('Post', 'id')).toBeDefined();
+    expect(permissionFor('Post', 'body')).toBeUndefined();
+    // An abstract type is never a field's parent at runtime, so it has no guard of its own.
+    expect(permissionFor('Node', 'id')).toBeUndefined();
+  });
+
+  it('a bare interface rule covers every field of its implementors, declared on the interface or not', async () => {
+    expect(await guards({ Node: 'iface.*' }, '{ note { id body } }')).toEqual([
+      'Note.body=iface.*',
+      'Note.id=iface.*',
+    ]);
+  });
+
+  it("the implementor's own field entry beats the interface's", async () => {
+    expect(
+      await guards({ Note: { id: 'type.field' }, Node: { id: 'iface.field' } }, '{ note { id } }'),
+    ).toEqual(['Note.id=type.field']);
+  });
+
+  it("an interface's field entry beats the implementor's wildcard", async () => {
+    expect(
+      await guards(
+        { Note: { '*': 'type.*' }, Node: { id: 'iface.field' } },
+        '{ note { id body } }',
+      ),
+    ).toEqual(['Note.body=type.*', 'Note.id=iface.field']);
+  });
+
+  it("the implementor's wildcard beats the interface's", async () => {
+    expect(await guards({ Note: 'type.*', Node: 'iface.*' }, '{ note { id } }')).toEqual([
+      'Note.id=type.*',
+    ]);
+  });
+
+  it("the interface's wildcard beats the wildcard type", async () => {
+    expect(
+      await guards({ Node: 'iface.*', '*': { id: '*.field', '*': '*.*' } }, '{ note { id } }'),
+    ).toEqual(['Note.id=iface.*', 'Query.note=*.*']);
+  });
+
+  it('sits above fallbackRule', async () => {
+    const marks: string[] = [];
+    const fallback: Rule = (resolve, parent, args, context, info) => {
+      marks.push(`${info.parentType.name}.${info.fieldName}=fallback`);
+      return resolve(parent, args, context, info);
+    };
+    const schema = applyPermissions(
+      abstractSchema(),
+      { Node: { id: accept } },
+      {
+        fallbackRule: fallback,
+      },
+    );
+    await graphql({ schema, source: '{ note { id body } }' });
+    expect(marks.sort()).toEqual(['Note.body=fallback', 'Query.note=fallback']);
+  });
+
+  it("a union's wildcard guards every member's fields, however the member is reached", async () => {
+    expect(
+      await guards({ Thing: 'union.*' }, '{ note { id } thing { ... on Note { body } } }'),
+    ).toEqual(['Note.body=union.*', 'Note.id=union.*']);
+  });
+
+  it('a union entry sits at the interface-wildcard tier', async () => {
+    expect(
+      await guards(
+        { Thing: { '*': 'union.*' }, Node: { id: 'iface.field' } },
+        '{ note { id body } }',
+      ),
+    ).toEqual(['Note.body=union.*', 'Note.id=iface.field']);
+    expect(await guards({ Thing: 'union.*', Note: 'type.*' }, '{ note { id } }')).toEqual([
+      'Note.id=type.*',
+    ]);
+  });
+
+  it('works under inPlace', async () => {
+    const schema = applyPermissions(abstractSchema(), { Node: { id: deny } }, { inPlace: true });
+    const result = await graphql({ schema, source: '{ post { id } }' });
+    expect(result.data).toBeNull();
+    expect(result.errors?.[0]?.path).toEqual(['post', 'id']);
+  });
+
+  it('accepts interface and union entries in validatePermissions', () => {
+    expect(
+      problemsOf({ Node: { id: deny, '*': accept }, Searchable: { title: deny }, Thing: accept }),
+    ).toEqual([]);
+  });
+
+  it('rejects a field two interfaces both cover, until the implementor chooses', () => {
+    expect(problemsOf({ Node: { id: deny }, Searchable: { id: accept } })).toEqual([
+      'Field `Note.id` gets a rule from `Node` and `Searchable`, and `Note` does not say which applies — add `Note: { id: … }` to choose.',
+    ]);
+    expect(
+      problemsOf({ Node: { id: deny }, Searchable: { id: accept }, Note: { id: accept } }),
+    ).toEqual([]);
+  });
+
+  it('accepts the same rule reached through two interfaces', () => {
+    expect(problemsOf({ Node: { id: deny }, Searchable: { id: deny } })).toEqual([]);
+  });
+
+  it('rejects a type-wide rule from two interfaces, naming the fields nothing settles', () => {
+    // `id` is settled by Note's own entry; `title` and `body` are not.
+    expect(problemsOf({ Node: deny, Searchable: accept, Note: { id: accept } })).toEqual([
+      "`Note` gets a type-wide rule from `Node` and `Searchable`, and nothing says which applies to `title` and `body` — add `Note: { '*': … }`, or a rule per field, to choose.",
+    ]);
+  });
+
+  it('names a single unsettled field on its own', () => {
+    expect(
+      problemsOf({ Node: deny, Searchable: accept, Note: { id: accept, title: accept } }),
+    ).toEqual([
+      "`Note` gets a type-wide rule from `Node` and `Searchable`, and nothing says which applies to `body` — add `Note: { '*': … }`, or a rule per field, to choose.",
+    ]);
+  });
+
+  it('ignores an interface entry that is undefined, as it does any other', () => {
+    expect(problemsOf({ Node: undefined, Searchable: undefined, Note: { id: accept } })).toEqual(
+      [],
+    );
+  });
+
+  it("an interface's field entry settles a field above the type-wide tier", () => {
+    // Node['*'] and Searchable['*'] disagree, but every field of Note is
+    // settled higher up: id and title by Searchable's field entries, body by Note's own.
+    expect(
+      problemsOf({
+        Node: { '*': deny },
+        Searchable: { '*': accept, id: accept, title: accept },
+        Note: { body: accept },
+      }),
+    ).toEqual([]);
+  });
+
+  it("the implementor's wildcard settles the type-wide tier", () => {
+    expect(problemsOf({ Node: deny, Searchable: accept, Note: { '*': accept } })).toEqual([]);
+  });
+
+  it('counts a union among the sources', () => {
+    const third = rule(() => true);
+    // Post is under Node and Thing too, and is reported on its own.
+    expect(problemsOf({ Node: deny, Searchable: accept, Thing: third })).toEqual([
+      "`Note` gets a type-wide rule from `Node`, `Searchable` and `Thing`, and nothing says which applies to `id`, `title` and `body` — add `Note: { '*': … }`, or a rule per field, to choose.",
+      "`Post` gets a type-wide rule from `Node` and `Thing`, and nothing says which applies to `id` and `body` — add `Post: { '*': … }`, or a rule per field, to choose.",
+    ]);
+  });
+
+  it("checks a scoping rule's argument on every implementor", () => {
+    const scoped: Rule = Object.assign((resolve: Parameters<Rule>[0]) => resolve(), {
+      [SCOPE_INFO]: { into: ['where'] },
+    });
+    expect(problemsOf({ Node: { id: scoped } })).toEqual([
+      'Rule for `Node.id` injects a filter into an argument named `where`, but `id` has no such argument. An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.',
+    ]);
+    // A bare rule is `{ '*': rule }`, and is checked as such — across every member.
+    expect(problemsOf({ Thing: scoped })).toHaveLength(1);
+    expect(problemsOf({ Thing: scoped })[0]).toMatch(
+      /Rule for `Thing\.\*` injects a filter into an argument named `where`, but `id`, `title`, `body` have no such argument/,
+    );
+  });
+
+  it('types an interface entry by the fields the interface declares (compile-time)', () => {
+    // The shape typescript-resolvers emits: an interface's resolver type lists
+    // its fields alongside __resolveType; a union's has only __resolveType.
+    type Resolvers = {
+      Query: { note: unknown };
+      Node: { __resolveType: unknown; id: unknown };
+      Thing: { __resolveType: unknown };
+      Note: { __isTypeOf: unknown; id: unknown; title: unknown; body: unknown };
+    };
+    const typed: PermissionsMap<Resolvers> = {
+      Node: { id: deny },
+      Thing: { '*': deny },
+      Note: { body: accept },
+    };
+    const bare: PermissionsMap<Resolvers> = { Node: deny, Thing: deny };
+    const wrong: PermissionsMap<Resolvers> = {
+      // @ts-expect-error `body` is not declared on Node
+      Node: { body: deny },
+      // @ts-expect-error a union has no field keys of its own
+      Thing: { id: deny },
+    };
+    const discriminator: PermissionsMap<Resolvers> = {
+      // @ts-expect-error __resolveType is not a field
+      Node: { __resolveType: deny },
+    };
+    for (const map of [typed, bare]) {
+      expect(() => validatePermissions(abstractSchema(), map as LooseMap)).not.toThrow();
+    }
+    for (const map of [wrong, discriminator]) {
+      expect(() => validatePermissions(abstractSchema(), map as LooseMap)).toThrow(
+        PermissionsError,
+      );
+    }
   });
 });
 
@@ -954,6 +1229,138 @@ describe('applyPermissions — filtering denials', () => {
       );
       expect(() => filtering({}, { onDeny: 'mask', report: 'errors' })).toThrow(PermissionsError);
     });
+  });
+});
+
+describe('applyPermissions — strict', () => {
+  const CODE = { code: UNAUTHORIZED_FIELD_OR_TYPE };
+
+  /** A non-null list to filter, and a permitted field whose resolver fails. */
+  function strictly(permissions: LooseMap, options?: ApplyPermissionsOptions): GraphQLSchema {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { list: [String!]! broken: String }`,
+      resolvers: {
+        Query: {
+          list: () => ['a'],
+          broken: () => {
+            throw new Error('db down');
+          },
+        },
+      },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(schema, permissions, {
+      strict: true,
+      ...options,
+    });
+  }
+
+  async function query(schema: GraphQLSchema, source: string) {
+    const contextValue = {};
+    return reportDenials(contextValue, await graphql({ schema, source, contextValue }));
+  }
+
+  it("defaults onDeny to 'filter'", async () => {
+    const result = await query(strictly({ Query: { list: deny } }), '{ list }');
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors?.[0]?.path).toEqual(['list']);
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it('defaults allowExternalErrors to false', async () => {
+    const map: LooseMap = { Query: { broken: accept } };
+    const masked = await query(strictly(map, { fallbackError: 'Not Authorised!' }), '{ broken }');
+    expect(masked.errors?.[0]?.message).toBe('Not Authorised!');
+
+    // The same map without `strict` lets the resolver's own error through.
+    const loose = await query(
+      strictly(map, { strict: false, fallbackError: 'Not Authorised!' }),
+      '{ broken }',
+    );
+    expect(loose.errors?.[0]?.message).toBe('db down');
+  });
+
+  it('moves defaults only — a key passed explicitly still wins', async () => {
+    const rejected = await query(
+      strictly({ Query: { list: deny } }, { onDeny: 'reject' }),
+      '{ list }',
+    );
+    expect(rejected.data).toBeNull();
+    expect(rejected.errors?.[0]?.message).toBe('Forbidden');
+    expect(rejected.errors?.[0]?.extensions).toEqual({});
+
+    const surfaced = await query(
+      strictly({ Query: { broken: accept } }, { allowExternalErrors: true, fallbackError: 'Nope' }),
+      '{ broken }',
+    );
+    expect(surfaced.errors?.[0]?.message).toBe('db down');
+  });
+
+  it('lets maskDenials choose the mode, since it is a choice', async () => {
+    const result = await query(
+      strictly({ Query: { list: deny } }, { maskDenials: true }),
+      '{ list }',
+    );
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it("accepts report, because the mode is 'filter'", async () => {
+    const result = await query(
+      strictly({ Query: { list: deny } }, { report: 'extensions' }),
+      '{ list }',
+    );
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+    expect(result.extensions?.authorizationErrors).toEqual([
+      expect.objectContaining({ path: ['list'], extensions: CODE }),
+    ]);
+  });
+});
+
+describe('applyPermissions — disabled', () => {
+  const denyNote: LooseMap = { Query: { note: deny } };
+
+  it('returns the schema it was given, unguarded', async () => {
+    const base = baseSchema();
+    const schema = applyPermissions(base, denyNote, { disabled: true, fallbackRule: deny });
+    expect(schema).toBe(base);
+    const result = await graphql({ schema, source: '{ note { id } notes { id } }' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: { id: '1' }, notes: [{ id: '1' }] });
+  });
+
+  it('returns the schema unguarded under inPlace too, and leaves it guardable', async () => {
+    const base = baseSchema();
+    expect(applyPermissions(base, denyNote, { disabled: true, inPlace: true })).toBe(base);
+    const open = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(open.errors).toBeUndefined();
+
+    // Nothing was marked as guarded, so a real apply still goes through.
+    applyPermissions(base, denyNote, { inPlace: true });
+    const guarded = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(guarded.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('still validates the map and the options', () => {
+    expect(() =>
+      applyPermissions(baseSchema(), { Nope: { id: deny } } as LooseMap, { disabled: true }),
+    ).toThrow(PermissionsError);
+    expect(() =>
+      applyPermissions(baseSchema(), {} as LooseMap, {
+        disabled: true,
+        onDeny: 'reject',
+        report: 'extensions',
+      }),
+    ).toThrow(/only applies under/);
+  });
+
+  it('resolves every field to no rule, even under fallbackRule', () => {
+    const permissionFor = resolvePermissions(baseSchema(), denyNote, {
+      disabled: true,
+      fallbackRule: deny,
+    });
+    expect(permissionFor('Query', 'note')).toBeUndefined();
+    expect(permissionFor('Query', 'notes')).toBeUndefined();
   });
 });
 

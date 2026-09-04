@@ -45,7 +45,10 @@ const canUser = createCan<Context, M>(
 function schemaWith(resolvers: Record<string, Record<string, unknown>> = {}) {
   return makeExecutableSchema({
     typeDefs: /* GraphQL */ `
-      type Note {
+      interface Node {
+        id: ID!
+      }
+      type Note implements Node {
         id: ID!
         userId: ID!
         body: String!
@@ -60,6 +63,7 @@ function schemaWith(resolvers: Record<string, Record<string, unknown>> = {}) {
       }
     `,
     resolvers: {
+      Node: { __resolveType: () => 'Note' },
       Query: {
         note: (_p: unknown, args: { id: string }) => NOTES.find((n) => n.id === args.id) ?? null,
         notes: () => NOTES,
@@ -127,6 +131,15 @@ describe('useGraphQLCasl', () => {
     const execute = run({ Note: { id: counting } });
     await execute('{ notes { id } }');
     expect(checks).toBe(NOTES.length);
+  });
+
+  it('inherits a rule from an interface to the implementing type', async () => {
+    // `Node.id` guards `Note.id`: the plugin looks the field up by its concrete
+    // parent type, which is where resolvePermissions resolves the inheritance.
+    const execute = run({ Node: { id: deny }, Note: { body: accept } });
+    const result = await execute('{ note(id: "n1") { id body } }');
+    expect(result.data).toEqual({ note: null });
+    expect(result.errors?.map((e) => e.path)).toEqual([['note', 'id']]);
   });
 
   it('guards a field that has no resolver of its own', async () => {
@@ -209,6 +222,49 @@ describe('useGraphQLCasl', () => {
     expect(result.errors).toBeUndefined();
     expect(result.extensions).toBeUndefined();
     expect(result.data?.notes).toHaveLength(2);
+  });
+
+  it("defaults to 'filter' under strict, with the report hook installed", async () => {
+    // The mode is a default here, not a key, so the plugin has to resolve it
+    // to know it needs the hook — a non-null list is the case that shows it.
+    const execute = run({ Query: { notes: deny } }, { strict: true });
+    const result = await execute('{ notes { id } }');
+    expect(result.data?.notes).toEqual([]);
+    expect(result.errors?.[0]?.path).toEqual(['notes']);
+    expect(result.errors?.[0]?.extensions).toEqual({ code: UNAUTHORIZED_FIELD_OR_TYPE });
+  });
+
+  it('validates but wraps nothing under disabled', async () => {
+    const execute = run(
+      { Query: { notes: deny, note: deny } },
+      { disabled: true, fallbackRule: deny, onDeny: 'filter' },
+    );
+    const result = await execute('{ notes { id } note(id: "n1") { id } }');
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.notes).toHaveLength(2);
+    expect(result.data?.note).toEqual({ id: 'n1' });
+
+    expect(() =>
+      createTestkit(
+        [
+          useGraphQLCasl<Record<string, Record<string, unknown>>>({
+            permissions: { Nope: { id: deny } },
+            disabled: true,
+          }),
+        ],
+        schemaWith(),
+      ),
+    ).toThrow(PermissionsError);
+  });
+
+  it('rejects contradictory options when the plugin is built', () => {
+    expect(() =>
+      useGraphQLCasl<Record<string, Record<string, unknown>>>({
+        permissions: {},
+        onDeny: 'reject',
+        report: 'extensions',
+      }),
+    ).toThrow(PermissionsError);
   });
 
   it('rejects a map that does not match the schema', () => {

@@ -1,3 +1,34 @@
+# [1.9.0](https://github.com/cubicecho/graphql-casl/compare/v1.8.0...v1.9.0) (2026-09-04)
+
+
+### Features
+
+* add granted scopes, a parent field's decision reused by its children ([cb27495](https://github.com/cubicecho/graphql-casl/commit/cb2749509f40422e09196924ad947fd3f30a14d8))
+* add strict and disabled options, and an /apollo reporting plugin ([0a57637](https://github.com/cubicecho/graphql-casl/commit/0a576373644e9aab90d65cae322d3fa00cb6a384))
+
+# [1.8.0](https://github.com/cubicecho/graphql-casl/compare/v1.7.0...v1.8.0) (2026-09-04)
+
+
+### Features
+
+* inherit permissions map rules from interfaces and unions ([1ced308](https://github.com/cubicecho/graphql-casl/commit/1ced3080a3b8ea7077a8a67436739a7ad7679e4e))
+
+# [1.7.0](https://github.com/cubicecho/graphql-casl/compare/v1.6.0...v1.7.0) (2026-09-04)
+
+
+### Features
+
+* add validateArgs, argument validation as a rule via Standard Schema ([a509dd8](https://github.com/cubicecho/graphql-casl/commit/a509dd839908ec993ee8e81f58e73ba7fd4eccbc))
+
+# [1.6.0](https://github.com/cubicecho/graphql-casl/compare/v1.5.0...v1.6.0) (2026-09-04)
+
+
+### Features
+
+* add onDeny filter mode with the standard UNAUTHORIZED_FIELD_OR_TYPE report ([0cee71a](https://github.com/cubicecho/graphql-casl/commit/0cee71aba9933a63de5bb1b9aad9bef381b773e3))
+* **apply:** add inPlace mode that guards the schema without rebuilding it ([954d1fd](https://github.com/cubicecho/graphql-casl/commit/954d1fdc1883855ffba21b7ff6b919a75f724fb0))
+* **rules:** custom cache keys, createCan cache option and a sync fast path ([dbb0fb0](https://github.com/cubicecho/graphql-casl/commit/dbb0fb03178232be1224fe48b7d13485f40f729e))
+
 # [1.5.0](https://github.com/cubicecho/graphql-casl/compare/v1.4.1...v1.5.0) (2026-09-03)
 
 

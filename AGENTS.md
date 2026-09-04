@@ -7,11 +7,18 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
 - **`packages/graphql-casl`** — the runtime: a `graphql-middleware` plugin for
   defining [CASL](https://casl.js.org/) permission rules on resolvers. Rules are
   declared per type/field in a `PermissionsMap` and enforced before the resolver runs.
-  Two optional subpath exports ride along: `/scoping` (`scopeArgs`) and
+  Three optional subpath exports ride along: `/scoping` (`scopeArgs`),
   `/envelop` (`useGraphQLCasl`, for hosts where the schema cannot be wrapped up
-  front — Apollo Server 4+, federation, dynamically swapped schemas).
+  front — Apollo Server 4+, federation, dynamically swapped schemas) and
+  `/apollo` (`reportDenialsPlugin`, an Apollo Server plugin that reports
+  filtered denials from `willSendResponse` for schemas guarded with
+  `applyPermissions`).
 - **`packages/graphql-casl-codegen`** — a GraphQL Code Generator plugin that emits
   subject bindings (`SubjectMap`, `Subject`, `typed`, `ability`) from a schema.
+- **`packages/graphql-casl-directives`** — `@can` / `@rule` SDL directives for
+  schema-first users. `permissionsFromDirectives(schema, { can, rules })` reads
+  them off a `GraphQLSchema` and returns the `PermissionsMap` the runtime
+  enforces; it is a translator, not a second enforcer.
 
 ## Specifications
 
@@ -27,6 +34,10 @@ README is also published to npm).
 - **Monorepo:** npm workspaces; run scripts at root (delegates to packages via
   `--workspaces`) or target one with `-w packages/<name>`
 - **Tests:** Vitest (`npm test`)
+- **Bench:** Vitest bench (`npm run bench -w packages/graphql-casl`, `bench/hotpath.bench.ts`);
+  in CI only by hand — `.github/workflows/bench.yml` is `workflow_dispatch` (optional
+  name-filter input) and writes the results table to the job summary; it never runs on
+  push/PR because the numbers are too noisy (rme 4-11%) to gate on
 - **Formatting/linting:** Biome (`npm run check`) — single root config, whole repo
 - **Build:** `tsc` per package (`npm run build`) — outputs to each package's `dist/`
 - **API docs:** TypeDoc (`npm run docs`) — `packages/graphql-casl/docs/api/`
@@ -37,9 +48,16 @@ README is also published to npm).
   consumers who import `/envelop`, which is how that entry point can have a real
   runtime requirement without the main entry point growing a dependency. Keep it
   that way: `src/index.ts` must never import `src/envelop.ts`, or `dist/index.d.ts`
-  would reference `@envelop/core` for everyone
+  would reference `@envelop/core` for everyone. `/apollo` has no peer at all: it
+  is typed against a minimal structural slice of Apollo's plugin contract, and
+  `@apollo/server` is a devDependency for its tests only
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
+- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.5.0`
+  (it imports `and` / `or` / `PermissionsError` from the runtime). Its tests and
+  typecheck resolve the runtime through the workspace symlink to
+  `packages/graphql-casl/dist`, so build the runtime first — CI builds before it
+  typechecks or tests
 - **Releases:** a single, repo-wide version via root `semantic-release` (one `v${version}`
   tag); `@semantic-release/exec` publishes every workspace together
 
@@ -63,23 +81,33 @@ packages/
                             filter argument instead of allowing or denying the field
       envelop.ts          — OPTIONAL subpath export `/envelop`: useGraphQLCasl enforces the
                             same map through envelop instead of graphql-middleware
+      apollo.ts           — OPTIONAL subpath export `/apollo`: reportDenialsPlugin calls
+                            reportDenials from Apollo Server's willSendResponse hook
       internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       validateGraphQLRules.ts — checks stored ability rules (subjects, fields, conditions) against
                             the runtime schema; the DB-rules counterpart of validatePermissions
+      validateArgs.ts     — validateArgs: argument validation as a rule over any Standard Schema
+                            (the spec's interface is vendored here); the resolver gets the parsed args
       subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
+      grants.ts           — granted scopes: grants / granted, a parent field's decision reused
+                            by the fields of what it returned (per request, never transitive)
     test/
       permissions.test.ts                — unit tests for the rule primitives
       applyPermissions.test.ts           — the schema walk: enforcement + validation errors
       combinators.test.ts                — rule(), the combinators, wrap, operand validation
+      grants.test.ts                     — granted scopes: object/list grants, no transitive inheritance,
+                                           per-request isolation, composition, onDeny, the sync path
       accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       validateGraphQLRules.test.ts       — stored rules vs the schema: every rejection, and what rehydration lets through
+      validateArgs.test.ts               — validateArgs: a hand-rolled Standard Schema, zod, and error control through applyPermissions
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit
+      apollo.test.ts                     — the `/apollo` plugin, end-to-end through ApolloServer.executeOperation
       integration/permissions.integration.test.ts — end-to-end test against an executable schema
       integration/scoping.integration.test.ts     — scopeArgs (and wrap) against a
                                                     generated-CRUD-shaped schema
@@ -89,6 +117,10 @@ packages/
   graphql-casl-codegen/
     src/index.ts        — the codegen plugin (plugin + validate + config)
     test/plugin.test.ts — plugin output + config tests
+  graphql-casl-directives/
+    src/index.ts             — `directiveTypeDefs` + `permissionsFromDirectives` (the translator)
+    test/directives.test.ts  — end-to-end: SDL → map → applyPermissions → queries, plus
+                               every validation problem and the envelop plugin
 vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a single instance
 ```
 
@@ -132,13 +164,15 @@ vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a sing
 
 ## CI & releases
 
-Two GitHub Actions workflows:
+Three GitHub Actions workflows:
 
 - **`.github/workflows/test.yml`** — runs on every push: biome check, typecheck,
   test, coverage, build (all via root scripts that fan out to workspaces), then
   publishes TypeDoc from `packages/graphql-casl/docs/api/` to the wiki on `main`.
 - **`.github/workflows/release.yml`** — runs after **Test** succeeds on `main`,
   then runs `npx semantic-release` once at the repo root.
+- **`.github/workflows/bench.yml`** — manual (`workflow_dispatch`) only: runs the
+  hot-path benchmarks and publishes the table to the job summary. Never a gate.
 
 Releases use a **single, repo-wide version** ([semantic-release](https://semantic-release.gitbook.io/)
 at the root, `.releaserc.json`): one `v${version}` git tag and one GitHub release

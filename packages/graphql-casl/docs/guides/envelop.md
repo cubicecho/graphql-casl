@@ -35,6 +35,9 @@ reimplementing any of it. Beyond that:
 - **Filtered denials are reported for you.** Under `onDeny: 'filter'` the plugin
   merges each request's held denials into the result as execution finishes, so
   there is no `reportDenials` call to wire.
+- **`strict` and `disabled` work here too.** `strict: true` defaults the plugin
+  to `'filter'`, report hook included; `disabled: true` validates the map and
+  wraps nothing.
 
 - **The map is validated when the schema arrives**, not on the first query that
   touches the offending field, so a map naming a type or field the schema does

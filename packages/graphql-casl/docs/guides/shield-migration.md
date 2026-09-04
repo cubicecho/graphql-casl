@@ -33,7 +33,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `cache: 'contextual' \| 'strict'` per rule | [same option, same three levels](./caching.md), same default (`'no_cache'`) — and `createCan` memoizes `getAbility(context)` per request on top |
 | `cache: (parent, args, ctx, info) => key` | same escape hatch; returning `undefined` skips the cache for that call. No `hashFunction`: `'strict'` keys arguments with a built-in sorted-key stringifier rather than `object-hash` |
 | unique rule names required (the cache is keyed by name) | not required — each rule instance owns its cache, so two rules named `isOwner` never share an answer |
-| `inputRule` (yup-backed argument validation) | no equivalent — validate arguments in a `rule()` check or in the resolver |
+| `inputRule` (yup-backed argument validation) | [`validateArgs(schema)`](./validating-arguments.md), taking any Standard Schema (zod, valibot, arktype, yup 1.7+) — no validator dependency, and the parsed output reaches the resolver |
 | `rule({ fragment })` | not supported, deliberately — see [the note below](#three-differences-that-will-bite) |
 
 ## Three differences that will bite

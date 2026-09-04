@@ -71,3 +71,19 @@ the schema. On a generated CRUD schema of 4,400 types and 35,200 fields,
 `applyPermissions` takes ~1.6s where `validatePermissions` takes ~8ms. That cost
 is paid once at startup, which is the right place for it; it is the wrong thing
 to pay in every test file that only wants the drift check.
+
+## Switching the map off
+
+The opposite need — the schema *without* its rules, to seed a fixture through
+the same resolvers or to prove a failure is the resolver's and not
+authorization's — is `disabled: true`:
+
+```ts
+const open = applyPermissions<Resolvers>(baseSchema, permissions, { disabled: true });
+```
+
+The map is still validated, so a stale rule still throws; the schema comes back
+as it went in — the same object, with or without `inPlace` — and the envelop
+plugin does the same, validating and wrapping nothing. It is a test-only switch.
+Do not wire it to an environment variable you do not control, or a
+misconfigured deploy ships with every rule off and nothing to say so.

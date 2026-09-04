@@ -36,7 +36,8 @@ says — see [Filtering denials](#filtering-denials) below.
 > here, the opposite of shield, which masks resolver errors by default. Masking
 > is the safer behaviour, but it is not what this library has done since 1.0 and
 > silently swallowing resolver errors on upgrade would be worse than leaving the
-> choice explicit. Set it to `false` deliberately.
+> choice explicit. Set it to `false` deliberately — or set `strict: true`, which
+> flips it along with `onDeny`; see [The 2.0 defaults](#the-20-defaults).
 
 ## Filtering denials
 
@@ -118,6 +119,30 @@ Skip that call and those denials are silently masked — the one way `'filter'`
 degrades. The record is keyed on the context value, so it must be an object,
 one per request.
 
+**On Apollo Server** that hook is `willSendResponse`, and the `/apollo` entry
+point is `reportDenials` already wired to it:
+
+```ts
+import { ApolloServer } from '@apollo/server';
+import { reportDenialsPlugin } from '@vantreeseba/graphql-casl/apollo';
+
+const server = new ApolloServer<Context>({
+  schema: applyPermissions<Resolvers>(baseSchema, permissions, { onDeny: 'filter' }),
+  plugins: [reportDenialsPlugin()],
+});
+```
+
+The plugin reads the request's `contextValue` and merges the held denials into
+the response before it is sent — into `errors`, formatted as Apollo formats its
+own, or into `extensions.authorizationErrors` under `report: 'extensions'`. A
+request with nothing held is left untouched, so it is harmless under `'reject'`
+or `'mask'`. It is typed against the shape of Apollo's plugin contract rather
+than against `@apollo/server`, so it adds no dependency; Apollo Server 4 and 5
+share that shape. One limit: only a single-result response is reported into.
+Under incremental delivery (`@defer`, `@stream`) the body is a stream the plugin
+does not follow, and a denial held for a deferred payload is masked — the same
+degradation as no hook at all.
+
 `report: 'extensions'` moves every filtered denial out of `errors` and into
 `extensions.authorizationErrors` (the router's key again). That keeps `errors`
 clean for clients that treat any entry there as a failed request — Apollo
@@ -140,7 +165,33 @@ the query were filtered. In this mode every denial goes through `reportDenials`.
 ```
 
 The default stays `'reject'`, so nothing changes on upgrade. `'filter'` is the
-better choice for new code and is the planned default for 2.0.
+better choice for new code and is the default in 2.0 — which `strict: true`
+gives you today.
+
+## The 2.0 defaults
+
+Two defaults above are compatibility choices rather than the better ones:
+`onDeny: 'reject'` is what 1.0 did, and `allowExternalErrors: true` is what this
+library has always done. Both change in 2.0. `strict: true` makes that change
+now, so a map written against it will not change behaviour on the upgrade:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  strict: true, // onDeny: 'filter' and allowExternalErrors: false, unless you say otherwise
+  fallbackError: new GraphQLError('Not authorized', { extensions: { code: 'FORBIDDEN' } }),
+});
+```
+
+| Option | 1.x default | Under `strict: true` |
+| --- | --- | --- |
+| `onDeny` | `'reject'` | `'filter'` |
+| `allowExternalErrors` | `true` | `false` |
+
+It moves defaults, nothing more. A key you pass still wins —
+`{ strict: true, onDeny: 'reject' }` rejects — and `maskDenials: true`, being a
+choice of mode itself, still masks. `report` is accepted alongside it, since the
+mode is `'filter'`. The [envelop plugin](./envelop.md)
+takes it too.
 
 ## Denial reasons from CASL
 

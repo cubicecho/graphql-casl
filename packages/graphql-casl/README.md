@@ -9,7 +9,7 @@ The library is **schema-agnostic** — the subject names and condition types are
 derived from your own generated `Resolvers` / `ResolversTypes`, so there is no
 manual type listing.
 
-There are two optional entry points, neither of which the main one pulls in:
+There are three optional entry points, none of which the main one pulls in:
 
 - `@vantreeseba/graphql-casl/scoping` for
   [scoping generated resolvers](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/scoping.md) — narrowing
@@ -17,6 +17,9 @@ There are two optional entry points, neither of which the main one pulls in:
 - `@vantreeseba/graphql-casl/envelop` for
   [enforcing the map through envelop](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/envelop.md)
   instead of `graphql-middleware`.
+- `@vantreeseba/graphql-casl/apollo` for
+  [reporting filtered denials on Apollo Server](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/error-control.md#where-filtered-denials-are-reported)
+  — the one response hook `applyPermissions` cannot reach on its own.
 
 ## Install
 
@@ -31,7 +34,8 @@ npm install @envelop/core @envelop/on-resolve
 
 `@envelop/core` and `@envelop/on-resolve` are *optional* peer dependencies, so npm
 will not install them unless you ask for them. The package itself has no runtime
-dependencies.
+dependencies. The `/apollo` entry point needs nothing extra — it is typed against
+the shape of Apollo Server's plugin contract, not against `@apollo/server`.
 
 ### Generating the types
 
@@ -255,6 +259,28 @@ Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`,
 A failed authentication check throws `Not authenticated`; a failed ability check
 throws `Forbidden`.
 
+### Subjects
+
+Before CASL can pick the rules that apply to an object it has to know what the
+object *is*, and a plain `{ id, ownerId }` does not say. That question is the
+whole difficulty of binding CASL to a data source.
+[`@casl/prisma`](https://github.com/stalniy/casl/tree/master/packages/casl-prisma)
+has to wrap every record in CASL's `subject('Todo', record)` helper before a
+check, because Prisma returns DTOs with no type information; its README notes
+there is no easy fix short of adding a column to every model
+([prisma/prisma#5315](https://github.com/prisma/prisma/issues/5315)). The name
+passed to `subject()` is a string the record never carried, and nothing checks
+it against anything.
+
+GraphQL already has that answer. Every object type has a canonical name, the
+spec reserves a field to carry it — `__typename` — and `GraphQLAbility` detects
+subjects from exactly that field, which `build()` wires in. So the subject
+vocabulary *is* the schema's type vocabulary: `createTyped()` tags a value with
+a `__typename` narrowed to your `SubjectMap`, a misspelled tag is a compile
+error, and a value that already carries `__typename` needs no wrapping at all.
+That free, schema-checked type name is the structural reason a GraphQL-specific
+CASL binding exists.
+
 ### Conditions
 
 `GraphQLAbility` is a CASL [`MongoAbility`](https://casl.js.org/v6/en/guide/conditions-in-depth),
@@ -368,6 +394,46 @@ export const permissions: PermissionsMap<Resolvers> = {
 > field the rule authorized** (look up by `id` **and** `userId`), derive the
 > owner from `context` rather than args, or enforce ownership in your data layer.
 
+The last of those is not one option among four. Ownership enforced in the data
+layer — Postgres row-level security, a per-request client scoped to the caller,
+a repository that takes the owner from the session and never from a parameter —
+holds no matter which code path reaches the data: a resolver the map forgot, a
+relation field a generated resolver routes through, a script, a second API. A
+resolver gate holds only for the resolvers it wraps. That makes the data-layer
+check **strictly stronger** than anything this library, or any resolver-level
+library, can do, and graphql-casl is defense in depth on top of it rather than
+a replacement for it: a rule denies before a query is issued, names the reason,
+and keeps the policy in one typed map, while the data layer catches whatever
+the map missed. Inside the library, [`canUser.onResult`](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/post-execution-rules.md)
+is the mitigation — the condition is checked against the record that was loaded
+rather than the argument that was sent — and
+[`accessibleBy`](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/row-level-filtering.md) pushes the decision into the query
+itself, so the rows a caller may not see are never fetched.
+
+Better still is a schema in which a forged argument has nowhere to go. The
+quick start's `setDone(id:, ownerId:)` takes the owner from the client, which is
+why it needs both a rule and a scoped lookup. Root authorized reads at the
+caller instead:
+
+```graphql
+type Query {
+  viewer: Viewer!   # the caller, from context — takes no argument
+}
+type Viewer {
+  todos: [Todo!]!   # only ever the caller's own
+}
+```
+
+`viewer { todos }` cannot return another user's todos because no resolver on
+that path accepts an owner; it reads `ctx.userId` and nothing else. Every
+condition derived from arguments — every `getSubjectData(args)` — is an IDOR
+waiting for a resolver that trusts it, which is exactly what
+[the IDOR test](./test/example.test.ts) in the worked example pins down. The
+viewer pattern removes that class of bug from the schema rather than guarding
+against it, and it needs no library at all. Rules still earn their place on the
+fields that must take an id — `note(id:)`, `updateNote(id:)` — where `onResult`
+authorizes the record rather than the argument.
+
 > ⚠️ **A bare subject name does not evaluate conditions.**
 > `ability.can('update', 'Note')` asks CASL whether updating a Note is *possible
 > at all*, not whether it is permitted on a particular one. Given
@@ -394,10 +460,13 @@ re-checks the map against the runtime schema and throws a `PermissionsError`
 listing **every** problem at once — which is what catches rules loaded from a database, written in
 plain JavaScript, or built against a schema that has since drifted.
 
-Entries that would be silently inert are rejected rather than ignored: a rule on
-an interface or union type never runs (fields resolve against the concrete object
-type), and introspection types cannot be guarded. In an authorization library, a
-rule that quietly never runs is the worst failure mode, so it is an error.
+Entries that would be silently inert are rejected rather than ignored: a named
+field on a union (which declares none) is an error, and introspection types
+cannot be guarded. Fields resolve against the concrete object type, so a rule
+keyed on an interface is inherited by every type implementing it rather than
+left to never run — see [Rules on interfaces](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/interface-rules.md). In an
+authorization library, a rule that quietly never runs is the worst failure mode,
+so it is an error.
 
 Types not named in the map are left **unguarded** — the map is a whitelist of what
 to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
@@ -415,9 +484,22 @@ Introspection is never guarded, so `fallbackRule: deny` does not break it.
 > action with no matching rule is denied. That is a different guarantee from
 > *schema coverage*, which is what `fallbackRule` provides. You want both.
 
-`fallbackRule` is one of six options. Four govern what a denial looks like to
-the client — see [Error control](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/error-control.md). The last, `inPlace`, is about
-apply time:
+Read as modes, the way `@envelop/generic-auth` names its own, the choice is:
+
+| Mode | Spelling | What it guarantees |
+| --- | --- | --- |
+| **Granular** | the default | only what the map names is guarded; a field it does not mention is open |
+| **Protect all** | `fallbackRule: deny` | every field is guarded; the map is the allow-list, and a field added later ships closed |
+| **Strict** | `strict: true`, on top of either | the error-side defaults of 2.0 — a denial filters instead of nulling the branch, and a resolver error is masked rather than passed through — see [The 2.0 defaults](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/error-control.md#the-20-defaults) |
+
+Each mode is one option underneath, so they compose: `fallbackRule: deny` with
+`strict: true` is deny-by-default with the stricter delivery, and either alone is
+exactly what it says.
+
+`fallbackRule` is one of several options. Four govern what a denial looks like to
+the client — see [Error control](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/error-control.md) — and `strict` picks the 2.0
+defaults for them. `disabled` is [the test switch](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/testing.md#switching-the-map-off).
+The last, `inPlace`, is about apply time:
 
 ```ts
 const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
@@ -456,15 +538,32 @@ guide is its own page.
 | [Field permissions from the ability](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/field-permissions-from-the-ability.md) | The ability already lists fields (`can('read', 'User', ['id'])`) and you don't want to restate them |
 | [Combining rules](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/combining-rules.md) | A field needs more than one check — `and` / `or` / `not` / `chain` / `race` / `wrap` |
 | [Caching a rule's answer](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/caching.md) | An async rule runs once per field per object and should run once per request, or once per row |
+| [Granting a parent's decision to its fields](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/granted-scopes.md) | A list already authorized its rows and the type rule re-checks them once per field |
 | [Error control](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/error-control.md) | `Forbidden` isn't enough: you need codes, filtering, or a look at what actually broke |
 | [Wildcards](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/wildcards.md) | One rule should cover a whole type, or one field across every type |
+| [Rules on interfaces](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/interface-rules.md) | One rule should cover every type implementing an interface, new ones included |
 | [Row-level filtering](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/row-level-filtering.md) | A list should return fewer rows rather than be denied outright |
 | [Scoping generated resolvers](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/scoping.md) | The resolver is generated and you can only reach its arguments |
+| [Validating arguments](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/validating-arguments.md) | The arguments need checking the SDL cannot express — blank strings, ranges, one field against another |
 | [Using the map without `graphql-middleware`](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/custom-integration.md) | You're building your own integration |
 | [Enforcing the map through envelop](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/envelop.md) | Yoga, Apollo 4+, a gateway, or any schema you don't own |
 | [Delegating to an external policy engine](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/external-policy-engine.md) | Permissions are relationship-derived — OpenFGA, Cerbos, OPA, Oso |
 | [Persisting rules](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/stored-rules.md) | Rules live in a database rather than in code |
 | [Testing your permissions](https://github.com/cubicecho/graphql-casl/blob/main/packages/graphql-casl/docs/guides/testing.md) | You want the rules covered, including the argument-forging case |
+
+The opposite need — the schema *without* its rules, to seed a fixture through
+the same resolvers or to prove a failure is the resolver's and not
+authorization's — is `disabled: true`:
+
+```ts
+const open = applyPermissions<Resolvers>(baseSchema, permissions, { disabled: true });
+```
+
+The map is still validated, so a stale rule still throws; the schema comes back
+as it went in — the same object, with or without `inPlace` — and the envelop
+plugin does the same, validating and wrapping nothing. It is a test-only switch.
+Do not wire it to an environment variable you do not control, or a
+misconfigured deploy ships with every rule off and nothing to say so.
 
 ## Coming from `graphql-shield`
 

@@ -62,15 +62,30 @@ THREE THINGS WORTH STEALING:
         query rewriting — we filter at resolve time, which is the only place a
         per-object CASL decision can be made.
 
-[ ] A2. AND/OR IN A DIRECTIVE VIA NESTED ARRAYS — no combinator objects needed.
+[x] A2. AND/OR IN A DIRECTIVE VIA NESTED ARRAYS — no combinator objects needed.
+        SHIPPED (2026-09-04) in @vantreeseba/graphql-casl-directives:
+        @rule(names: [[String!]!]!) — inner lists AND, outer list OR —
+          names: [["isAuthenticated", "isOwner"], ["isAdmin"]]
+          => (isAuthenticated AND isOwner) OR isAdmin
+        translated to and(...) / or(...) from the runtime's combinators, so
+        the registry may only hold CheckableRules (rule(), createCan(),
+        accept/deny, combinators); onResult / scopeArgs / wrap rules are
+        reported as a problem and belong in a hand-written entry.
           scopes: [["read:users", "read:profiles"], ["read:admin"]]
           => (read:users AND read:profiles) OR read:admin
         Compare graphql-authz, which needs three input types
         (AuthZDirectiveCompositeRulesInput, DeepCompositeRulesInput, ...) of SDL
-        boilerplate to express the same thing. If ecosystem-parity E5
-        (directives) is ever built, use the nested-array encoding.
+        boilerplate to express the same thing.
 
-[ ] A3. IF DIRECTIVES GET BUILT, SPEAK THE EXISTING VOCABULARY.
+[x] A3. IF DIRECTIVES GET BUILT, SPEAK THE EXISTING VOCABULARY.
+        SHIPPED (2026-09-04): the names are @can and @rule, deliberately
+        outside the federation auth vocabulary (@authenticated,
+        @requiresScopes, @policy), so a subgraph can carry both without a
+        collision — "not colliding" was the bar, and a CASL ability check is
+        not a scope check, so reusing @requiresScopes would have lied about
+        the semantics. The composition rule WAS copied: several directives on
+        one site (field + field, type + field, interface + implementor)
+        compose with AND, in SDL order.
         @authenticated / @requiresScopes / @policy is a de-facto standard across
         the federation ecosystem. Composing with it — or at minimum not
         colliding with it — beats inventing @can. Their composition rule is also
@@ -157,7 +172,7 @@ CASL author solving the same binding problem for a different target.
         GqlOperators, a type that does not exist. That file needs a correction
         pass before it can be actioned either way.
 
-[ ] C2. __typename IS A GENUINE STRUCTURAL ADVANTAGE — SAY SO IN THE README.
+[x] C2. __typename IS A GENUINE STRUCTURAL ADVANTAGE — SAY SO IN THE README.
         @casl/prisma is forced to use the `subject()` helper on every record
         because "Prisma returns DTO objects without exposing any type
         information", and its README calls this out as having no easy fix short
@@ -165,6 +180,11 @@ CASL author solving the same binding problem for a different target.
         GraphQL hands you __typename for free. That is the single best argument
         for a GraphQL-specific CASL binding existing at all, and the docs
         currently do not make it.
+        SHIPPED 2026-09-04, docs only: a "Subjects" subsection under Concepts
+        in packages/graphql-casl/README.md makes the @casl/prisma comparison
+        (with the prisma/prisma#5315 link) and states that the schema's type
+        vocabulary is the subject vocabulary; llms.txt carries the one-line
+        version under Key conventions.
 
 [ ] C3. accessibleBy(ability).ofType('Post') is the naming precedent for
         Workstream B. Matching the sibling package's API shape is worth more
@@ -211,6 +231,12 @@ reaches the data.
         trustworthy, not less — and it costs nothing to say.
         Cross-links: ecosystem-parity E1 (post-execution rules) is the in-library
         mitigation; this is the out-of-library one.
+        SHIPPED 2026-09-04, docs only: a paragraph directly under the IDOR
+        warning in README step 3 says the data-layer check is strictly
+        stronger than any resolver gate and that graphql-casl is defense in
+        depth on top of it, cross-linking `onResult` (in-library mitigation)
+        and `accessibleBy` (the decision pushed into the query). One line in
+        llms.txt's Key conventions.
 
 
 -----------------------------------------------------------------------
@@ -220,11 +246,16 @@ Root every authorized read at `viewer`/`me` so the schema itself makes
 unauthorized access unrepresentable: `viewer { todos }` cannot return another
 user's todos because the resolver never accepts an owner argument.
 
-[ ] F1. WORTH ONE README PARAGRAPH. Every arg-derived condition
+[x] F1. WORTH ONE README PARAGRAPH. Every arg-derived condition
         (getSubjectData(args)) is an IDOR waiting to happen — that is exactly
         what example.test.ts's IDOR test demonstrates. Schema design removes the
         class of bug rather than guarding it. Recommending it costs the library
         nothing and prevents the failure mode the docs currently only warn about.
+        SHIPPED 2026-09-04, docs only: the paragraph plus a six-line
+        `viewer { todos }` schema snippet sits right after the E1 paragraph in
+        README step 3, tied to example.test.ts's IDOR test, with the caveat
+        that id-taking fields still want `onResult`. One line in llms.txt's
+        Key conventions.
 
 
 -----------------------------------------------------------------------
