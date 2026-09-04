@@ -1,0 +1,73 @@
+name: Bench
+
+# Manual only. The hot-path numbers are noisy (rme 4-11% on a shared runner),
+# so they must never gate a push or a PR; run this by hand and read the job
+# summary when a change touches the request path.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Only run benchmarks whose full name matches this regexp (vitest -t); empty runs everything"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The bench imports ../src directly through vitest, so no build is needed.
+      - name: Bench
+        env:
+          FILTER: ${{ inputs.filter }}
+        run: |
+          args=(--outputJson "$RUNNER_TEMP/bench.json")
+          if [ -n "$FILTER" ]; then args+=(-t "$FILTER"); fi
+          npm run bench -w packages/graphql-casl -- "${args[@]}"
+
+      - name: Publish results to the job summary
+        env:
+          BENCH_JSON: ${{ runner.temp }}/bench.json
+          FILTER: ${{ inputs.filter }}
+        run: |
+          node >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.env.BENCH_JSON, "utf8"));
+          const num = (value, digits) =>
+            value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+          const cell = (text) => String(text).replace(/\|/g, "\\|");
+          const sha = (process.env.GITHUB_SHA ?? "").slice(0, 7);
+          const filter = process.env.FILTER;
+          const out = [
+            `## Bench results${sha ? ` (${sha})` : ""}`,
+            "",
+            filter ? `Filter: \`${filter}\`` : "All benchmarks.",
+            "",
+            "hz = operations per second (higher is better); mean = ms per operation. " +
+              "One run on a shared runner: rme of 4-11% is normal, so treat differences " +
+              "inside ~15% as noise and compare rows within this run, not across runs.",
+            "",
+          ];
+          for (const file of report.files) {
+            for (const group of file.groups) {
+              out.push(`### ${group.fullName}`, "", "| name | hz | mean (ms) | rme | samples |", "|---|--:|--:|--:|--:|");
+              for (const b of group.benchmarks) {
+                out.push(
+                  `| ${cell(b.name)} | ${num(b.hz, b.hz >= 100 ? 0 : 2)} | ${num(b.mean, 4)} | ±${num(b.rme, 2)}% | ${b.sampleCount} |`,
+                );
+              }
+              out.push("");
+            }
+          }
+          process.stdout.write(out.join("\n"));
+          EOF
