@@ -592,3 +592,185 @@ describe('wrap', () => {
     );
   });
 });
+
+describe('rule caching — custom key', () => {
+  function counted() {
+    let calls = 0;
+    return {
+      check: async () => {
+        calls++;
+        return true;
+      },
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  it('keys the answer on whatever the function returns', async () => {
+    const c = counted();
+    // graphql-shield's `cache: fn` escape hatch: the parent and args are
+    // ignored, only the returned key matters.
+    const r = rule(c.check, { cache: (_parent, _args, _context, info) => info.fieldName });
+    const ctx = {};
+    const title = { fieldName: 'title' } as GraphQLResolveInfo;
+    const body = { fieldName: 'body' } as GraphQLResolveInfo;
+    await r(vi.fn(), { id: 1 }, { a: 1 }, ctx, title);
+    await r(vi.fn(), { id: 2 }, { a: 2 }, ctx, title);
+    expect(c.calls).toBe(1);
+    await r(vi.fn(), { id: 1 }, { a: 1 }, ctx, body);
+    expect(c.calls).toBe(2);
+    // A new request starts from scratch.
+    await r(vi.fn(), { id: 1 }, { a: 1 }, {}, title);
+    expect(c.calls).toBe(3);
+  });
+
+  it('skips the cache for a call whose key is undefined', async () => {
+    const c = counted();
+    const r = rule(c.check, { cache: (parent) => (parent as { id?: string }).id });
+    const ctx = {};
+    await r(vi.fn(), {}, {}, ctx, info);
+    await r(vi.fn(), {}, {}, ctx, info);
+    expect(c.calls).toBe(2);
+    await r(vi.fn(), { id: 'a' }, {}, ctx, info);
+    await r(vi.fn(), { id: 'a' }, {}, ctx, info);
+    expect(c.calls).toBe(3);
+  });
+
+  it('shares one in-flight call per key', async () => {
+    let calls = 0;
+    const r = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { cache: (parent) => (parent as { id: string }).id },
+    );
+    const ctx = {};
+    const resolve = vi.fn().mockResolvedValue('ok');
+    await Promise.all([
+      r(resolve, { id: 'a' }, {}, ctx, info),
+      r(resolve, { id: 'a' }, {}, ctx, info),
+      r(resolve, { id: 'b' }, {}, ctx, info),
+    ]);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('rule caching — unkeyable arguments', () => {
+  it('evaluates every time when strict cannot serialise the arguments', async () => {
+    // Circular or BigInt-bearing args have no JSON form. The rule must neither
+    // throw nor hand back a stale answer; it just runs uncached for that call.
+    let calls = 0;
+    const r = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { cache: 'strict' },
+    );
+    const ctx = {};
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    await r(vi.fn(), null, circular, ctx, info);
+    await r(vi.fn(), null, circular, ctx, info);
+    expect(calls).toBe(2);
+    await r(vi.fn(), null, { n: 1n }, ctx, info);
+    await r(vi.fn(), null, { n: 1n }, ctx, info);
+    expect(calls).toBe(4);
+    // Serialisable args still hit the cache.
+    await r(vi.fn(), null, { n: 1 }, ctx, info);
+    await r(vi.fn(), null, { n: 1 }, ctx, info);
+    expect(calls).toBe(5);
+  });
+
+  it('keys nested arguments by content, not by identity', async () => {
+    let calls = 0;
+    const r = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { cache: 'strict' },
+    );
+    const ctx = {};
+    await r(vi.fn(), null, { filter: { tag: 'a', ids: [1, 2] } }, ctx, info);
+    await r(vi.fn(), null, { filter: { ids: [1, 2], tag: 'a' } }, ctx, info);
+    expect(calls).toBe(1);
+    await r(vi.fn(), null, { filter: { ids: [2, 1], tag: 'a' } }, ctx, info);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('rule — synchronous checks', () => {
+  // A resolver that answers without a promise, as graphql-js resolvers may.
+  const syncResolve = (value: string) => (() => value) as unknown as Parameters<Rule>[0];
+
+  it('hands back whatever resolve returned when a synchronous check passes', () => {
+    // The sync fast path: no promise is allocated for a field whose check
+    // answered synchronously. Callers awaiting the result see no difference.
+    const r = rule(() => true);
+    expect(r(syncResolve('ok'), null, null, {}, info)).toBe('ok');
+  });
+
+  it('still rejects, rather than throws, on a synchronous denial', async () => {
+    const r = rule(() => 'nope');
+    const out = r(vi.fn(), null, null, {}, info);
+    expect(out).toBeInstanceOf(Promise);
+    await expect(out).rejects.toThrow('nope');
+  });
+
+  it('still rejects, rather than throws, when the check throws synchronously', async () => {
+    const r = rule(() => {
+      throw new Error('boom');
+    });
+    let threw = false;
+    let out: Promise<unknown> | undefined;
+    try {
+      out = r(vi.fn(), null, null, {}, info);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    await expect(out).rejects.toThrow('boom');
+  });
+
+  it('lets combinators of synchronous checks answer without a promise', () => {
+    expect(
+      and(
+        rule(() => true),
+        rule(() => true),
+      ).check(null, null, {}, info),
+    ).toBe(true);
+    expect(
+      or(
+        rule(() => false),
+        rule(() => true),
+      ).check(null, null, {}, info),
+    ).toBe(true);
+    const denied = chain(
+      rule(() => true),
+      rule(() => 'no'),
+    ).check(null, null, {}, info);
+    expect(denied).toBeInstanceOf(Error);
+    expect((denied as Error).message).toContain('no');
+    expect(not(rule(() => true)).check(null, null, {}, info)).not.toBeInstanceOf(Promise);
+  });
+
+  it('goes asynchronous as soon as one operand does', async () => {
+    const mixed = and(
+      rule(() => true),
+      rule(async () => true),
+    );
+    const answer = mixed.check(null, null, {}, info);
+    expect(answer).toBeInstanceOf(Promise);
+    await expect(answer).resolves.toBe(true);
+  });
+
+  it('keeps a synchronous answer synchronous through the cache', () => {
+    const r = rule(() => true, { cache: 'strict' });
+    const ctx = {};
+    expect(r(syncResolve('first'), { id: 1 }, {}, ctx, info)).toBe('first');
+    expect(r(syncResolve('second'), { id: 1 }, {}, ctx, info)).toBe('second');
+  });
+});

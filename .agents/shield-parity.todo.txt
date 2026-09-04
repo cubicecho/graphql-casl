@@ -103,15 +103,23 @@ TIER 1 — structural (no workaround exists today)
                  every rule from one createCan shares a request's ability. A
                  rejected build is evicted so it can't poison the rest of the
                  request; a non-object context falls back to no memo.
-        [ ] S4b. General rule caching. Must stay ZERO-DEP (shield pulls in
-                 object-hash; this package has no runtime deps and should keep
-                 it that way). A small deterministic sorted-key stringifier
-                 covers 'strict', with a `hashFunction` option as the escape
-                 hatch for consumers who want object-hash /
-                 fast-json-stable-stringify.
-                 Put the cache behind a module-level Symbol on context, NOT a
-                 string key like shield's `_shield` — a string key can collide
-                 with app context fields.
+        [x] S4b. DONE (perf-caching pass, 2026-09-03). General rule caching,
+                 ZERO-DEP: rule(check, { cache }) with 'no_cache' | 'strict' |
+                 'contextual' | (parent, args, ctx, info) => key. The custom
+                 key function is the escape hatch instead of shield's
+                 `hashFunction` — shield keys `${name}-${key}` in
+                 ctx._shield.cache; here the key selects a slot in the rule's
+                 own per-request WeakMap, and `undefined` means "skip the
+                 cache for this call". 'strict' uses a sorted-key JSON
+                 stringifier (empty args short-circuit to ''; unkeyable args
+                 such as BigInt/circular run uncached rather than throw).
+                 The cache is NOT on the context at all (neither a string key
+                 nor a Symbol): each rule owns a WeakMap<context, ...>, so
+                 nothing can collide with app context fields and there is no
+                 per-rule-name collision either (shield needs unique names;
+                 we don't — see S14). createCan rules accept the same option
+                 as a 4th argument. See .agents/perf-pass.todo.txt for the
+                 measurements.
 
 [!] S5. FRAGMENTS — WON'T SHIP VIA graphql-middleware. See the FINDING under E2
         in ecosystem-parity.todo.txt: the fragment never reaches execution, so
@@ -248,7 +256,7 @@ DESIGN DECISION (recorded — do not relitigate) — NOW IMPLEMENTED
 ----------------------------------------------------------------
 Shipped as described, with two deviations: `fragment` was dropped from the
 options (it cannot work — see the FINDING under E2 in ecosystem-parity), and
-`cache` is deferred to S4b. Otherwise as written.
+`cache` was deferred to S4b (since shipped — see S4b). Otherwise as written.
 
 For S1, the user chose the ADDITIVE `CheckableRule` approach over redefining
 `Rule` as a shield-style predicate:

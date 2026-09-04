@@ -13,7 +13,9 @@ import {
   type CheckableRule,
   denialFrom,
   isCheckableRule,
+  isThenable,
   type Rule,
+  type RuleResult,
   rule,
 } from './rules.js';
 
@@ -59,19 +61,54 @@ function label(combinator: string, rules: readonly Rule[]): string {
  */
 type Outcome = { readonly denial: Error | undefined } | { readonly thrown: unknown };
 
-/** Runs one operand, catching a throw instead of letting it reject the group. */
-async function outcomeOf(
+/**
+ * Runs one operand, catching a throw instead of letting it reject the group.
+ * Synchronous when the operand is, like everything else in this module: a
+ * combinator of synchronous checks is itself a synchronous check, so the field
+ * it guards resolves without a promise.
+ */
+function outcomeOf(
   check: Check,
   parent: unknown,
   args: unknown,
   context: unknown,
   info: GraphQLResolveInfo,
-): Promise<Outcome> {
+): Outcome | Promise<Outcome> {
+  let answer: RuleResult | Promise<RuleResult>;
   try {
-    return { denial: denialFrom(await check(parent, args, context, info)) };
+    answer = check(parent, args, context, info);
   } catch (thrown) {
     return { thrown };
   }
+  if (isThenable(answer)) {
+    return Promise.resolve(answer).then(
+      (result) => ({ denial: denialFrom(result) }),
+      (thrown) => ({ thrown }),
+    );
+  }
+  return { denial: denialFrom(answer) };
+}
+
+/** Whether any of the operands' answers is still pending. */
+function anyPending<T>(values: readonly (T | Promise<T>)[]): values is Promise<T>[] {
+  return values.some(isThenable);
+}
+
+/** Runs every operand in parallel, settling synchronously when all of them do. */
+function outcomesOf(
+  checks: readonly Check[],
+  parent: unknown,
+  args: unknown,
+  context: unknown,
+  info: GraphQLResolveInfo,
+): Outcome[] | Promise<Outcome[]> {
+  const outcomes = checks.map((check) => outcomeOf(check, parent, args, context, info));
+  return anyPending(outcomes) ? Promise.all(outcomes) : (outcomes as Outcome[]);
+}
+
+/** Whether an outcome is a pass. */
+function passed(outcome: Outcome): boolean {
+  return 'denial' in outcome && outcome.denial === undefined;
 }
 
 /**
@@ -103,14 +140,19 @@ function failureOf(outcomes: readonly Outcome[]): Error {
  */
 export function and(...rules: Rule[]): CheckableRule {
   const checks = checksOf('and', rules);
+  function firstDenial(results: readonly RuleResult[]): RuleResult {
+    for (const result of results) {
+      const denial = denialFrom(result);
+      if (denial) return denial;
+    }
+    return true;
+  }
   return rule(
-    async (parent, args, context, info) => {
-      const results = await Promise.all(checks.map((check) => check(parent, args, context, info)));
-      for (const result of results) {
-        const denial = denialFrom(result);
-        if (denial) return denial;
-      }
-      return true;
+    (parent, args, context, info) => {
+      const answers = checks.map((check) => check(parent, args, context, info));
+      return anyPending(answers)
+        ? Promise.all(answers).then(firstDenial)
+        : firstDenial(answers as RuleResult[]);
     },
     { name: label('and', rules) },
   );
@@ -141,15 +183,13 @@ export function and(...rules: Rule[]): CheckableRule {
  */
 export function or(...rules: Rule[]): CheckableRule {
   const checks = checksOf('or', rules);
+  function decide(outcomes: readonly Outcome[]): RuleResult {
+    return outcomes.some(passed) ? true : failureOf(outcomes);
+  }
   return rule(
-    async (parent, args, context, info) => {
-      const outcomes = await Promise.all(
-        checks.map((check) => outcomeOf(check, parent, args, context, info)),
-      );
-      if (outcomes.some((outcome) => 'denial' in outcome && outcome.denial === undefined)) {
-        return true;
-      }
-      return failureOf(outcomes);
+    (parent, args, context, info) => {
+      const outcomes = outcomesOf(checks, parent, args, context, info);
+      return isThenable(outcomes) ? outcomes.then(decide) : decide(outcomes);
     },
     { name: label('or', rules) },
   );
@@ -171,12 +211,21 @@ export function or(...rules: Rule[]): CheckableRule {
 export function chain(...rules: Rule[]): CheckableRule {
   const checks = checksOf('chain', rules);
   return rule(
-    async (parent, args, context, info) => {
-      for (const check of checks) {
-        const denial = denialFrom(await check(parent, args, context, info));
-        if (denial) return denial;
+    (parent, args, context, info) => {
+      // Synchronous operands are consumed in a plain loop; the first pending
+      // one hands the rest of the walk to a promise.
+      function from(index: number): RuleResult | Promise<RuleResult> {
+        for (let i = index; i < checks.length; i++) {
+          const answer = (checks[i] as Check)(parent, args, context, info);
+          if (isThenable(answer)) {
+            return Promise.resolve(answer).then((result) => denialFrom(result) ?? from(i + 1));
+          }
+          const denial = denialFrom(answer);
+          if (denial) return denial;
+        }
+        return true;
       }
-      return true;
+      return from(0);
     },
     { name: label('chain', rules) },
   );
@@ -200,14 +249,25 @@ export function chain(...rules: Rule[]): CheckableRule {
 export function race(...rules: Rule[]): CheckableRule {
   const checks = checksOf('race', rules);
   return rule(
-    async (parent, args, context, info) => {
+    (parent, args, context, info) => {
       const outcomes: Outcome[] = [];
-      for (const check of checks) {
-        const outcome = await outcomeOf(check, parent, args, context, info);
-        if ('denial' in outcome && outcome.denial === undefined) return true;
-        outcomes.push(outcome);
+      // As in `chain`: a plain loop until an operand is pending.
+      function from(index: number): RuleResult | Promise<RuleResult> {
+        for (let i = index; i < checks.length; i++) {
+          const outcome = outcomeOf(checks[i] as Check, parent, args, context, info);
+          if (isThenable(outcome)) {
+            return outcome.then((settled) => {
+              if (passed(settled)) return true;
+              outcomes.push(settled);
+              return from(i + 1);
+            });
+          }
+          if (passed(outcome)) return true;
+          outcomes.push(outcome);
+        }
+        return failureOf(outcomes);
       }
-      return failureOf(outcomes);
+      return from(0);
     },
     { name: label('race', rules) },
   );
@@ -229,10 +289,11 @@ export function race(...rules: Rule[]): CheckableRule {
  */
 export function not(operand: Rule, error?: string | Error): CheckableRule {
   const [check] = checksOf('not', [operand]);
+  const invert = (result: RuleResult): RuleResult => (denialFrom(result) ? true : (error ?? false));
   return rule(
-    async (parent, args, context, info) => {
-      const denial = denialFrom(await check(parent, args, context, info));
-      return denial ? true : (error ?? false);
+    (parent, args, context, info) => {
+      const answer = (check as Check)(parent, args, context, info);
+      return isThenable(answer) ? Promise.resolve(answer).then(invert) : invert(answer);
     },
     { name: label('not', [operand]) },
   );

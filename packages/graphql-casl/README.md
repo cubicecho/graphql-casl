@@ -415,8 +415,34 @@ Introspection is never guarded, so `fallbackRule: deny` does not break it.
 > action with no matching rule is denied. That is a different guarantee from
 > *schema coverage*, which is what `fallbackRule` provides. You want both.
 
-`fallbackRule` is one of five options. The other four govern what a denial looks
-like to the client — see [Error control](#error-control).
+`fallbackRule` is one of six options. Four govern what a denial looks like to
+the client — see [Error control](#error-control). The last, `inPlace`, is about
+apply time:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  fallbackRule: deny,
+  inPlace: true, // guard `baseSchema` itself instead of building a copy
+});
+```
+
+By default `applyPermissions` returns a guarded *copy* built by
+`graphql-middleware`. That rebuild is where all the apply time goes — tens of
+milliseconds per thousand types, seconds on a large generated CRUD schema —
+while the rules themselves resolve in a fraction of that. `inPlace: true` skips
+the copy and replaces the guarded fields' resolvers on the schema you passed,
+with the same field selection and the same enforcement.
+
+This is an **apply-time** saving only; per-request cost is identical in both
+modes. For a long-lived server that builds its schema once, the difference is a
+one-off few tens of milliseconds and the default is the right choice. Reach for
+`inPlace` where `applyPermissions` runs over and over: a test suite that guards a
+fresh schema per test, hot reload in development, per-tenant schemas, or a
+gateway that recomposes. The schema is mutated and also returned; apply it once
+per schema, since guarding an already-guarded schema throws rather than stacking
+two maps. If something else already holds the schema and expects it unguarded,
+leave `inPlace` off, or use the
+[envelop plugin](#enforcing-the-map-through-envelop-optional), which never rebuilds.
 
 ## Guides
 
@@ -595,10 +621,39 @@ rule(check, { name: 'canEdit',     cache: 'strict' })     // once per (parent, a
 
 The cache is per rule and per request: entries hang off the context object in a
 `WeakMap`, so they are unreachable once the request is, and nothing is shared
-between requests. The *pending promise* is stored rather than the resolved value,
-so concurrent field resolutions on one list share a single in-flight call instead
-of stampeding. A rejection is cached alongside it, so a broken check fails the
-request once rather than 500 times.
+between requests. An async check's *pending promise* is stored rather than the
+resolved value, so concurrent field resolutions on one list share a single
+in-flight call instead of stampeding. A rejection is cached alongside it, so a
+broken check fails the request once rather than 500 times. A synchronous check
+is stored as its plain answer, and a rule whose check answers synchronously
+never allocates a promise of its own.
+
+`'strict'` keys on the parent's *identity* and the arguments' *content* (keys
+are sorted, so `{ a, b }` and `{ b, a }` match). It does not key on the field
+name: a rule whose answer differs per field of the same parent — `createCan.fields`
+is one — needs `'no_cache'` or a key function. Arguments that cannot be
+serialised (a `BigInt`, a cycle) make that call run uncached rather than throw.
+
+When neither level fits, pass a function and key on whatever you like.
+Returning `undefined` skips the cache for that call:
+
+```ts
+// One answer per org per request, whichever rows or fields ask.
+rule(check, { name: 'isOrgMember', cache: (parent) => parent?.orgId });
+// One answer per (parent, field).
+rule(check, { cache: (parent, _args, _ctx, info) => `${parent.id}:${info.fieldName}` });
+```
+
+Rules built by `createCan` take the same option as a fourth argument. The bare
+form is already answered once per ability, so it matters for the conditioned
+form, where `'strict'` matches the CASL conditions once per row rather than
+once per selected field of it:
+
+```ts
+canUser(Actions.update, 'Note', (_args, parent) => ({ userId: parent.userId }), {
+  cache: 'strict',
+});
+```
 
 `'no_cache'` stays the default because it is the safe one — caching a check that
 reads something mutable is a correctness bug, and only you know whether yours
@@ -1227,6 +1282,8 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `debug` | same option |
 | `ValidationError` for a rule on a field the schema lacks | `PermissionsError`, aggregating *every* problem in the map rather than the first |
 | `cache: 'contextual' \| 'strict'` per rule | [same option, same three levels](#caching-a-rules-answer), same default (`'no_cache'`) — and `createCan` memoizes `getAbility(context)` per request on top |
+| `cache: (parent, args, ctx, info) => key` | same escape hatch; returning `undefined` skips the cache for that call. No `hashFunction`: `'strict'` keys arguments with a built-in sorted-key stringifier rather than `object-hash` |
+| unique rule names required (the cache is keyed by name) | not required — each rule instance owns its cache, so two rules named `isOwner` never share an answer |
 | `inputRule` (yup-backed argument validation) | no equivalent — validate arguments in a `rule()` check or in the resolver |
 | `rule({ fragment })` | not supported, deliberately — see [the note below](#three-differences-that-will-bite) |
 

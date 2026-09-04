@@ -6,7 +6,16 @@
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
 import { CAN_INTERNALS, type CanInternals } from './internal.js';
-import { type CheckableRule, denialFrom, type Rule, rule } from './rules.js';
+import {
+  type CacheKey,
+  type CacheMode,
+  type CheckableRule,
+  denialFrom,
+  isThenable,
+  type Rule,
+  type RuleResult,
+  rule,
+} from './rules.js';
 
 /**
  * What {@link createCan} does when a bare-subject check is made against a subject
@@ -87,6 +96,19 @@ function isUnconditionedCheck(ability: AbilityLike, action: Action, subject: str
   return rules.every((rule) => rule.inverted !== true && rule.conditions != null);
 }
 
+/**
+ * The object an ability-level memo is keyed on.
+ *
+ * CASL's `PureAbility` replaces its `rules` array on every `update()`, so the
+ * array's identity changes exactly when a verdict derived from the rules could.
+ * An ability that does not expose `rules` as an object cannot be memoized
+ * safely — it may be mutated in place — so no key is returned for it.
+ */
+function rulesKeyOf(ability: AbilityLike): object | undefined {
+  const rules = (ability as { rules?: unknown }).rules;
+  return typeof rules === 'object' && rules !== null ? rules : undefined;
+}
+
 function unconditionedMessage(action: Action, subject: string): string {
   return (
     `graphql-casl: \`can('${action}', '${subject}')\` was checked without \`getSubjectData\`, ` +
@@ -153,6 +175,7 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
     action: Action,
     subject: K,
     getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
+    options?: CanRuleOptions,
   ): CheckableRule;
 
   /**
@@ -276,7 +299,27 @@ export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
 >(
   action: Action,
   subject: K,
+  getSubjectData?: undefined,
+  options?: CanRuleOptions,
 ) => CheckableRule;
+
+/**
+ * Options for one rule built by a {@link RequireCan} builder.
+ */
+export interface CanRuleOptions {
+  /**
+   * Reuses the rule's verdict within a request — a {@link CacheMode}, or a
+   * {@link CacheKey} function. Default `'no_cache'`.
+   *
+   * A bare-subject check is already answered once per ability, so this is for
+   * the conditioned form: `'strict'` evaluates the CASL conditions once per
+   * parent row rather than once per selected field of it, which on a list of
+   * 100 rows with 5 guarded fields is 100 condition matches instead of 500.
+   * Reach for it when `getSubjectData` reads only `parent` and `args`, which
+   * is what `'strict'` keys on.
+   */
+  cache?: CacheMode | CacheKey;
+}
 
 /**
  * Factory that returns a `requireCan(action, subject, getSubjectData?)` rule
@@ -363,9 +406,14 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   // the context, which GraphQL creates per request, so entries die with it; the
   // WeakMap is per-`createCan` so two factories with different `getAbility`
   // implementations can't read each other's abilities.
-  const abilityCache = new WeakMap<object, Promise<AbilityLike>>();
+  //
+  // The entry starts as the pending build and is replaced by the built ability
+  // once it settles, so every field after the first reads it without a promise
+  // hop — which, together with `rule()`'s synchronous path, lets a whole list
+  // resolve without touching the microtask queue.
+  const abilityCache = new WeakMap<object, AbilityLike | Promise<AbilityLike>>();
 
-  function resolveAbility(context: TContext): Promise<AbilityLike> {
+  function resolveAbility(context: TContext): AbilityLike | Promise<AbilityLike> {
     // A non-object context (undefined, a string) can't key a WeakMap. Rare, but
     // it must still work — just without the memo.
     if (context === null || (typeof context !== 'object' && typeof context !== 'function')) {
@@ -376,8 +424,11 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     if (cached) return cached;
     const pending = Promise.resolve(getAbility(context));
     abilityCache.set(key, pending);
-    // Don't let one failed build poison every later field on the same request.
-    pending.catch(() => abilityCache.delete(key));
+    pending.then(
+      (ability) => abilityCache.set(key, ability),
+      // Don't let one failed build poison every later field on the same request.
+      () => abilityCache.delete(key),
+    );
     return pending;
   }
 
@@ -389,6 +440,20 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     return resolveAbility(context);
   }
 
+  /**
+   * Runs `decide` against the request's ability, synchronously when the
+   * ability is already built. The authentication check comes first so an
+   * anonymous caller never triggers a build.
+   */
+  function withAbility(
+    context: TContext,
+    decide: (ability: AbilityLike) => RuleResult,
+  ): RuleResult | Promise<RuleResult> {
+    if (!isAuthenticated(context)) return new Error('Not authenticated');
+    const ability = resolveAbility(context);
+    return isThenable(ability) ? ability.then(decide) : decide(ability);
+  }
+
   function requireCan<
     K extends keyof TSubjectMap & string,
     TArgs extends Record<string, unknown> = Record<string, unknown>,
@@ -397,6 +462,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     action: Action,
     subject: K,
     getSubjectData?: (args: TArgs, parent: TParent) => Partial<TSubjectMap[K]>,
+    ruleOptions?: CanRuleOptions,
   ): CheckableRule {
     // Guards the footgun the overloads already forbid at the type level, for
     // callers reaching this via plain JS or a cast: a subject built without a
@@ -413,40 +479,62 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     // only exists per request — so this can't be checked at construction time.
     // Warn at most once per rule instead of once per field resolution.
     let warned = false;
+
+    /** The verdict on a subject instance, with a `because(...)` reason on denial. */
+    function verdict(ability: AbilityLike, instance: unknown): RuleResult {
+      // `instance` is an opaque subject value or name here; the ability's `can`
+      // is narrowly overloaded, so check through the loose AbilityLike shape.
+      if (ability.can(action, instance)) return true;
+      // A `cannot(...).because('...')` reason is the rule author's own words
+      // for this denial; prefer it over the generic message.
+      return reasonFor(ability, action, instance) ?? false;
+    }
+
+    // A bare-subject check is a function of the ability's rules alone — no
+    // parent, no args — so its answer is memoized per rules array. That
+    // covers the footgun detection too, which is the expensive half: it walks
+    // every rule for the action. One lookup per request instead of one per
+    // field per row, and a warning is still logged at most once per rule.
+    const bareVerdicts = new WeakMap<object, RuleResult>();
+    function bareVerdict(ability: AbilityLike): RuleResult {
+      const key = rulesKeyOf(ability);
+      const memo = key && bareVerdicts.get(key);
+      if (memo !== undefined) return memo;
+
+      let result: RuleResult | undefined;
+      if (
+        onUnconditionedSubject !== 'allow' &&
+        (onUnconditionedSubject === 'throw' || !warned) &&
+        isUnconditionedCheck(ability, action, subject)
+      ) {
+        if (onUnconditionedSubject === 'throw') {
+          result = new Error(unconditionedMessage(action, subject));
+        } else {
+          warned = true;
+          console.warn(unconditionedMessage(action, subject));
+        }
+      }
+      result ??= verdict(ability, subject);
+      if (key) bareVerdicts.set(key, result);
+      return result;
+    }
+
+    const decide =
+      getSubjectData && buildSubject
+        ? (ability: AbilityLike, parent: unknown, args: unknown) =>
+            verdict(
+              ability,
+              buildSubject(subject, getSubjectData(args as TArgs, parent as TParent)),
+            )
+        : bareVerdict;
+
     // A pre-execution check reaches its verdict without the resolver, so this is
     // a `rule()` rather than raw middleware — which is what makes it usable as an
     // operand of `and` / `or` / `not` / `chain` / `race`.
     return rule(
-      async (parent, args, context) => {
-        if (!isAuthenticated(context as TContext)) return new Error('Not authenticated');
-        const ability = await resolveAbility(context as TContext);
-        const instance =
-          getSubjectData && buildSubject
-            ? buildSubject(subject, getSubjectData(args as TArgs, parent as TParent))
-            : subject;
-
-        if (
-          !getSubjectData &&
-          onUnconditionedSubject !== 'allow' &&
-          isUnconditionedCheck(ability, action, subject)
-        ) {
-          if (onUnconditionedSubject === 'throw') {
-            return new Error(unconditionedMessage(action, subject));
-          }
-          if (!warned) {
-            warned = true;
-            console.warn(unconditionedMessage(action, subject));
-          }
-        }
-
-        // `instance` is an opaque subject value or name here; the ability's `can`
-        // is narrowly overloaded, so check through the loose AbilityLike shape.
-        if (ability.can(action, instance)) return true;
-        // A `cannot(...).because('...')` reason is the rule author's own words
-        // for this denial; prefer it over the generic message.
-        return reasonFor(ability, action, instance) ?? false;
-      },
-      { name: `can(${action}, ${subject})` },
+      (parent, args, context) =>
+        withAbility(context as TContext, (ability) => decide(ability, parent, args)),
+      { name: `can(${action}, ${subject})`, cache: ruleOptions?.cache },
     );
   }
 
@@ -468,25 +556,24 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     }
     const tag = buildSubject;
     return rule(
-      async (parent, args, context, info) => {
-        if (!isAuthenticated(context as TContext)) return new Error('Not authenticated');
-        const ability = await resolveAbility(context as TContext);
+      (parent, args, context, info) =>
+        withAbility(context as TContext, (ability) => {
+          // A root Query/Mutation field has no parent to be the subject. Fall
+          // back to the bare name, which asks whether the field is readable at
+          // all.
+          const instance =
+            getSubjectData || (typeof parent === 'object' && parent !== null)
+              ? tag(
+                  subject,
+                  getSubjectData
+                    ? getSubjectData(parent as TParent, args as TArgs)
+                    : (parent as Partial<TSubjectMap[K]>),
+                )
+              : subject;
 
-        // A root Query/Mutation field has no parent to be the subject. Fall back
-        // to the bare name, which asks whether the field is readable at all.
-        const instance =
-          getSubjectData || (typeof parent === 'object' && parent !== null)
-            ? tag(
-                subject,
-                getSubjectData
-                  ? getSubjectData(parent as TParent, args as TArgs)
-                  : (parent as Partial<TSubjectMap[K]>),
-              )
-            : subject;
-
-        if (ability.can(action, instance, info.fieldName)) return true;
-        return reasonFor(ability, action, instance) ?? false;
-      },
+          if (ability.can(action, instance, info.fieldName)) return true;
+          return reasonFor(ability, action, instance) ?? false;
+        }),
       { name: `can(${action}, ${subject}, <field>)` },
     );
   };

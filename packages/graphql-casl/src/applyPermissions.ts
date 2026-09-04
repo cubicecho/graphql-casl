@@ -8,7 +8,9 @@
  */
 
 import {
+  defaultFieldResolver,
   type GraphQLField,
+  type GraphQLFieldResolver,
   type GraphQLNamedType,
   type GraphQLOutputType,
   type GraphQLResolveInfo,
@@ -29,7 +31,19 @@ import {
   type IMiddlewareTypeMap,
 } from 'graphql-middleware';
 import { SCOPE_INFO, type ScopeInfo } from './internal.js';
-import { type AnyResolvers, denialKindOf, type PermissionsMap, type Rule } from './rules.js';
+import {
+  type AnyResolvers,
+  type Check,
+  type CheckableRule,
+  denialFrom,
+  denialKindOf,
+  isThenable,
+  type PermissionsMap,
+  PLAIN_RULE,
+  passes,
+  type Rule,
+  type RuleResult,
+} from './rules.js';
 
 /** The wildcard key, in either the type or the field position. */
 const WILDCARD = '*';
@@ -275,29 +289,48 @@ async function resolveFallbackError(
  * nulls the whole branch. A non-null field of any other kind has no value that
  * satisfies it, so it keeps throwing.
  */
-function maskFor(fieldType: GraphQLOutputType): (() => unknown) | undefined {
-  if (!isNonNullType(fieldType)) return () => null;
-  if (isListType(fieldType.ofType)) return () => [];
+function maskFor(fieldType: GraphQLOutputType): Mask | undefined {
+  if (!isNonNullType(fieldType)) return MASK_NULL;
+  if (isListType(fieldType.ofType)) return MASK_LIST;
   return undefined;
+}
+
+type Mask = () => unknown;
+
+// Shared instances, so a wrapper built for one mask can serve every field with
+// the same one — see `withErrorControl`.
+const MASK_NULL: Mask = () => null;
+const MASK_LIST: Mask = () => [];
+
+/** A rule whose middleware is exactly "run `.check`, then `resolve`". */
+function isPlainRule(rule: Rule): rule is CheckableRule {
+  return (rule as Partial<Record<typeof PLAIN_RULE, boolean>>)[PLAIN_RULE] === true;
 }
 
 /**
  * Wraps one field's rule with the error-control options.
  *
- * Three kinds of failure arrive here as thrown errors and have to be told apart:
- * a **denial** (the rule did its job), a **rule failure** (the rule itself
- * broke — a `getAbility` that threw), and a **resolver error** (the field was
- * allowed and the resolver failed). Denials carry a marker from `rule()`;
- * resolver errors are identified by capturing what the wrapped `resolve` threw.
- * Anything left over is a rule failure.
+ * Three kinds of failure have to be told apart: a **denial** (the rule did its
+ * job), a **rule failure** (the rule itself broke — a `getAbility` that threw),
+ * and a **resolver error** (the field was allowed and the resolver failed).
+ *
+ * A rule built by `rule()` — which is every rule this library produces except
+ * `onResult`, `scopeArgs` and `wrap` — exposes its decision as a check, and the
+ * wrapper asks that directly. A denial is then a *returned* value, not a thrown
+ * one, so masking it costs no `Error` construction and no stack capture: on a
+ * 100-row list with 5 masked fields that is 500 errors never built. It also
+ * keeps a synchronous check synchronous end to end. Anything the check throws
+ * is a rule failure; anything the resolver throws is a resolver error.
+ *
+ * Any other rule is run as middleware, and the three kinds arrive as thrown
+ * errors: denials carry a marker from `rule()`, resolver errors are identified
+ * by capturing what the wrapped `resolve` threw, and the rest are rule failures.
  */
-function withErrorControl(
-  rule: Rule,
-  options: ErrorControl,
-  mask: (() => unknown) | undefined,
-): Rule {
+function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
   const { fallbackError, allowExternalErrors, debug } = options;
   if (!fallbackError && allowExternalErrors && !debug && !mask) return rule;
+
+  if (isPlainRule(rule)) return withCheckedErrorControl(rule.check, options, mask);
 
   return async (resolve, parent, args, context, info) => {
     // Identity, not a flag: the rule may catch and rethrow, and a denial thrown
@@ -342,6 +375,101 @@ function withErrorControl(
 
       throw await resolveFallbackError(fallbackError, error, parent, args, context, info);
     }
+  };
+}
+
+/** The check-based wrapper — see {@link withErrorControl}. */
+function withCheckedErrorControl(
+  check: Check,
+  options: ErrorControl,
+  mask: Mask | undefined,
+): Rule {
+  const { fallbackError, allowExternalErrors, debug } = options;
+  const replaceResolverErrors = !allowExternalErrors && fallbackError !== undefined;
+
+  /** Rejects with the `fallbackError` built for `original`. */
+  function replaced(
+    fallback: FallbackError,
+    original: unknown,
+    parent: unknown,
+    args: unknown,
+    context: unknown,
+    info: GraphQLResolveInfo,
+  ): Promise<never> {
+    return resolveFallbackError(fallback, original, parent, args, context, info).then((error) => {
+      throw error;
+    });
+  }
+
+  /** A rule failure: rethrown untouched under `debug`, else `fallbackError`. */
+  function failed(
+    error: unknown,
+    parent: unknown,
+    args: unknown,
+    context: unknown,
+    info: GraphQLResolveInfo,
+  ): Promise<never> {
+    if (debug || !fallbackError) return Promise.reject(error);
+    return replaced(fallbackError, error, parent, args, context, info);
+  }
+
+  /** The field was allowed: run the resolver, replacing its errors if asked. */
+  function allowed(
+    resolve: Parameters<Rule>[0],
+    parent: unknown,
+    args: unknown,
+    context: unknown,
+    info: GraphQLResolveInfo,
+  ): unknown {
+    if (!replaceResolverErrors) return resolve(parent, args, context, info);
+    let result: unknown;
+    try {
+      result = resolve(parent, args, context, info);
+    } catch (error) {
+      return replaced(fallbackError, error, parent, args, context, info);
+    }
+    return isThenable(result)
+      ? Promise.resolve(result).catch((error) =>
+          replaced(fallbackError, error, parent, args, context, info),
+        )
+      : result;
+  }
+
+  /** The check answered: mask or reject a denial, or run the resolver. */
+  function settle(
+    result: RuleResult,
+    resolve: Parameters<Rule>[0],
+    parent: unknown,
+    args: unknown,
+    context: unknown,
+    info: GraphQLResolveInfo,
+  ): unknown {
+    if (passes(result)) return allowed(resolve, parent, args, context, info);
+    // Masking replaces a decision the rule made, whatever words it chose.
+    if (mask) return mask();
+    const denial = denialFrom(result) as Error;
+    // An explicit denial is the rule author's own words; only the generic
+    // default is replaced.
+    if (!fallbackError || denialKindOf(denial) === 'explicit') return Promise.reject(denial);
+    return replaced(fallbackError, denial, parent, args, context, info);
+  }
+
+  return (resolve, parent, args, context, info) => {
+    let answer: RuleResult | Promise<RuleResult>;
+    try {
+      answer = check(parent, args, context, info);
+    } catch (error) {
+      return failed(error, parent, args, context, info);
+    }
+    if (isThenable(answer)) {
+      return Promise.resolve(answer).then(
+        (result) => settle(result, resolve, parent, args, context, info),
+        (error) => failed(error, parent, args, context, info),
+      );
+    }
+    // Synchronous end to end when the check and the resolver both are; see
+    // `Rule` on why that is within contract.
+    return settle(answer, resolve, parent, args, context, info) as Promise<unknown>;
   };
 }
 
@@ -435,6 +563,25 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
   const fallbackRule = options?.fallbackRule;
   const resolved = new Map<string, Rule | undefined>();
 
+  // One wrapper per distinct (rule, mask) pair rather than one per field. The
+  // wrapper depends on nothing else, and with a `fallbackRule` set every field
+  // in the schema gets one — on a 35,000-field generated CRUD schema that is
+  // 35,000 closures for what is really three.
+  const wrappers = new Map<Rule, Map<Mask | undefined, Rule>>();
+  function wrapped(rule: Rule, mask: Mask | undefined): Rule {
+    let byMask = wrappers.get(rule);
+    if (!byMask) {
+      byMask = new Map();
+      wrappers.set(rule, byMask);
+    }
+    let wrapper = byMask.get(mask);
+    if (!wrapper) {
+      wrapper = withErrorControl(rule, errorControl, mask);
+      byMask.set(mask, wrapper);
+    }
+    return wrapper;
+  }
+
   return (typeName, fieldName) => {
     const key = `${typeName}.${fieldName}`;
     const cached = resolved.get(key);
@@ -446,17 +593,13 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     const field =
       isObjectType(type) && !isIntrospectionType(type) ? type.getFields()[fieldName] : undefined;
     const rule = field ? ruleForField(raw, typeName, fieldName, fallbackRule) : undefined;
-    const wrapped =
+    const guard =
       rule && field
-        ? withErrorControl(
-            rule,
-            errorControl,
-            errorControl.maskDenials ? maskFor(field.type) : undefined,
-          )
+        ? wrapped(rule, errorControl.maskDenials ? maskFor(field.type) : undefined)
         : undefined;
 
-    resolved.set(key, wrapped);
-    return wrapped;
+    resolved.set(key, guard);
+    return guard;
   };
 }
 
@@ -486,6 +629,67 @@ function resolveFieldRules(
   }
 
   return middleware;
+}
+
+/**
+ * Fields already guarded in place, across every schema this module has touched.
+ * Guarding a field twice would stack two rules on it, and a second `inPlace`
+ * apply to a schema that was already guarded is far more likely to be a test
+ * reusing one base schema than a deliberate layering, so it is refused.
+ */
+const guardedInPlace = new WeakSet<AnyField>();
+
+/**
+ * Wraps one field's resolver in a rule, the same way `graphql-middleware` does:
+ * the `resolve` handed to the rule defaults every argument to the current call,
+ * so a rule may call it bare or with rewritten arguments.
+ */
+function wrapResolver(
+  resolver: GraphQLFieldResolver<unknown, unknown>,
+  rule: Rule,
+): GraphQLFieldResolver<unknown, unknown> {
+  return (parent, args, context, info) =>
+    rule(
+      (p = parent, a = args, c = context, i = info) =>
+        resolver(p, a as Record<string, unknown>, c, i as GraphQLResolveInfo) as Promise<unknown>,
+      parent,
+      args,
+      context,
+      info,
+    );
+}
+
+/**
+ * Guards the schema's fields by replacing their resolvers in place, with the
+ * same field selection `graphql-middleware` makes: a field's own resolver if it
+ * has one, else a subscription field's `subscribe`, else the default resolver.
+ */
+function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (!isObjectType(type) || isIntrospectionType(type)) continue;
+
+    for (const field of Object.values(type.getFields())) {
+      const rule = permissionFor(type.name, field.name);
+      if (!rule) continue;
+      if (guardedInPlace.has(field)) {
+        throw new Error(
+          `graphql-casl: \`${type.name}.${field.name}\` is already guarded. ` +
+            '`applyPermissions` with `inPlace: true` mutates the schema, so apply it once per ' +
+            'schema — or drop `inPlace` to get a guarded copy each time.',
+        );
+      }
+      guardedInPlace.add(field);
+
+      if (field.resolve && field.resolve !== defaultFieldResolver) {
+        field.resolve = wrapResolver(field.resolve, rule);
+      } else if (field.subscribe) {
+        field.subscribe = wrapResolver(field.subscribe, rule);
+      } else {
+        field.resolve = wrapResolver(defaultFieldResolver, rule);
+      }
+    }
+  }
+  return schema;
 }
 
 /**
@@ -606,6 +810,35 @@ export interface ApplyPermissionsOptions {
    *   would hide outages as permission decisions.
    */
   maskDenials?: boolean;
+
+  /**
+   * Whether to guard the schema you passed in, instead of a guarded copy.
+   * Defaults to `false`.
+   *
+   * By default `applyPermissions` hands the map to `graphql-middleware`, which
+   * rebuilds the schema. That rebuild is the whole cost of applying: on a
+   * 1,000-type schema it is tens of milliseconds, and on a large generated CRUD
+   * schema it is seconds. `inPlace: true` skips it — the rules are resolved
+   * exactly as before, then each guarded field's resolver is replaced on the
+   * schema itself, in a single walk. Enforcement is identical: the same fields
+   * are guarded, the same resolver (a field's own, a subscription's
+   * `subscribe`, or the default resolver) is wrapped.
+   *
+   * This saves apply time only; per-request cost is the same either way. A
+   * server that builds its schema once gains a few tens of milliseconds at
+   * startup and should keep the default. It is meant for the places
+   * `applyPermissions` runs repeatedly — a test suite guarding a fresh schema
+   * per test, hot reload, per-tenant schemas, a recomposing gateway.
+   *
+   * The schema is **mutated** and returned for convenience. Apply once per
+   * schema — guarding a schema that is already guarded throws, since stacking
+   * two maps is almost always a test reusing one base schema. Leave this off
+   * when you need the unguarded original too, or when something else already
+   * holds the schema and expects it to stay as built.
+   *
+   * Ignored by `resolvePermissions` and the envelop plugin, which apply nothing.
+   */
+  inPlace?: boolean;
 }
 
 /**
@@ -631,11 +864,17 @@ export interface ApplyPermissionsOptions {
  * reporting them as denials, and {@link ApplyPermissionsOptions.maskDenials}
  * resolves a denied field to `null`/`[]` rather than raising an error.
  *
+ * The returned schema is a guarded *copy* built by `graphql-middleware`. That
+ * rebuild is where all the time goes on a big schema;
+ * {@link ApplyPermissionsOptions.inPlace} guards the schema you passed instead
+ * and skips it.
+ *
  * @typeParam TResolvers - Your generated `Resolvers` type.
  * @param schema - The executable schema to guard.
  * @param permissions - The permissions map to enforce.
  * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns The schema wrapped with the permission middleware.
+ * @returns The schema wrapped with the permission middleware — or, with
+ * `inPlace`, the same schema, now guarded.
  * @throws {@link PermissionsError} if the map does not line up with the schema.
  * @example
  * ```ts
@@ -651,5 +890,6 @@ export function applyPermissions<TResolvers = AnyResolvers>(
   options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
   const permissionFor = resolvePermissions(schema, permissions, options);
+  if (options?.inPlace) return guardInPlace(schema, permissionFor);
   return applyMiddleware(schema, resolveFieldRules(schema, permissionFor));
 }

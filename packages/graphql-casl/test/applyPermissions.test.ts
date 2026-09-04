@@ -1,5 +1,13 @@
 import { makeExecutableSchema } from '@graphql-tools/schema';
-import { GraphQLError, type GraphQLResolveInfo, type GraphQLSchema, graphql } from 'graphql';
+import {
+  type ExecutionResult,
+  GraphQLError,
+  type GraphQLResolveInfo,
+  type GraphQLSchema,
+  graphql,
+  parse,
+  subscribe,
+} from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type AnyResolvers,
@@ -779,9 +787,9 @@ describe('resolvePermissions', () => {
       { maskDenials: true },
     );
     const rule = permissionFor('Query', 'note');
-    await expect(
-      rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
-    ).resolves.toBeNull();
+    // `await` rather than `.resolves`: a masked denial of a synchronous check
+    // is handed back synchronously, as `Rule` documents an allowed value may be.
+    expect(await rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo)).toBeNull();
   });
 });
 
@@ -964,5 +972,286 @@ describe('validatePermissions', () => {
     const before = schema.getQueryType()?.getFields().note?.resolve;
     validatePermissions(schema, { Query: { note: deny } });
     expect(schema.getQueryType()?.getFields().note?.resolve).toBe(before);
+  });
+});
+
+describe('applyPermissions — error control on a check-then-resolve rule', () => {
+  // `rule()` marks its middleware, and error control then talks to the check
+  // directly instead of catching a thrown denial. Same contract as the generic
+  // wrapper, different code path, so each branch is pinned here.
+  function scenario(
+    guard: Rule,
+    options?: ApplyPermissionsOptions,
+    resolver: () => unknown = () => 'ok',
+  ) {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { note: String  other: String }`,
+      resolvers: { Query: { note: resolver, other: () => 'ok' } },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(
+      schema,
+      { Query: { note: guard, other: guard } },
+      options,
+    );
+  }
+
+  async function run(schema: GraphQLSchema, source = '{ note }') {
+    const result = await graphql({ schema, source, contextValue: {} });
+    return result.errors?.[0];
+  }
+
+  it('replaces a generic denial from a synchronous check', async () => {
+    const error = await run(
+      scenario(
+        rule(() => false),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('replaces a generic denial from an asynchronous check', async () => {
+    const error = await run(
+      scenario(
+        rule(async () => false),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('leaves an explicit denial alone, sync or async', async () => {
+    const sync = await run(
+      scenario(
+        rule(() => 'Trial expired'),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(sync?.message).toBe('Trial expired');
+    const async = await run(
+      scenario(
+        rule(async () => new Error('Trial expired')),
+        { fallbackError: 'Not Authorised!' },
+      ),
+    );
+    expect(async?.message).toBe('Trial expired');
+  });
+
+  it('masks an asynchronous rule failure by default and surfaces it under debug', async () => {
+    const broken = rule(async () => {
+      throw new Error('getAbility exploded');
+    });
+    const masked = await run(scenario(broken, { fallbackError: 'Not Authorised!' }));
+    expect(masked?.message).toBe('Not Authorised!');
+    const surfaced = await run(scenario(broken, { fallbackError: 'Not Authorised!', debug: true }));
+    expect(surfaced?.message).toBe('getAbility exploded');
+  });
+
+  it('propagates a rule failure untouched when there is no fallbackError', async () => {
+    const broken = rule(() => {
+      throw new Error('getAbility exploded');
+    });
+    const error = await run(scenario(broken, { allowExternalErrors: false }));
+    expect(error?.message).toBe('getAbility exploded');
+  });
+
+  it('masks an asynchronous resolver rejection when allowExternalErrors is false', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { fallbackError: 'Not Authorised!', allowExternalErrors: false },
+        async () => {
+          throw new Error('connection refused: 10.0.0.4:5432');
+        },
+      ),
+    );
+    expect(error?.message).toBe('Not Authorised!');
+  });
+
+  it('lets a resolver rejection through by default', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { fallbackError: 'Not Authorised!' },
+        async () => {
+          throw new Error('connection refused');
+        },
+      ),
+    );
+    expect(error?.message).toBe('connection refused');
+  });
+
+  it('surfaces resolver errors under allowExternalErrors: false when nothing can replace them', async () => {
+    const error = await run(
+      scenario(
+        rule(() => true),
+        { allowExternalErrors: false },
+        () => {
+          throw new Error('connection refused');
+        },
+      ),
+    );
+    expect(error?.message).toBe('connection refused');
+  });
+
+  it('masks an explicit denial when maskDenials is on, ignoring fallbackError', async () => {
+    const schema = scenario(
+      rule(() => 'Trial expired'),
+      { maskDenials: true, fallbackError: 'Not Authorised!' },
+    );
+    const result = await graphql({ schema, source: '{ note }', contextValue: {} });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: null });
+  });
+
+  it('still applies the check cache underneath error control', async () => {
+    // The wrapper must consult the cached check, not the raw one, or the
+    // cache silently stops working the moment fallbackError is set.
+    let calls = 0;
+    const counted = rule(
+      async () => {
+        calls++;
+        return true;
+      },
+      { cache: 'contextual' },
+    );
+    const error = await run(
+      scenario(counted, { fallbackError: 'Not Authorised!' }),
+      '{ note other }',
+    );
+    expect(error).toBeUndefined();
+    expect(calls).toBe(1);
+  });
+});
+
+describe('applyPermissions — inPlace', () => {
+  /** A schema with a resolver-less field, a list, and a subscription. */
+  function richSchema() {
+    return makeExecutableSchema({
+      typeDefs: /* GraphQL */ `
+        type Note { id: ID! body: String secret: String }
+        type Query { note: Note! notes: [Note!]! }
+        type Subscription { tick: Int }
+      `,
+      resolvers: {
+        Query: { note: () => note, notes: () => [note] },
+        Subscription: {
+          tick: {
+            subscribe: async function* () {
+              yield { tick: 1 };
+              yield { tick: 2 };
+            },
+          },
+        },
+      },
+    });
+  }
+
+  type RichMap = PermissionsMap<Record<string, Record<string, unknown>>>;
+
+  /** Runs one query against the map applied both ways, and returns both results. */
+  async function bothWays(map: RichMap, source: string, options?: ApplyPermissionsOptions) {
+    const copied = await graphql({
+      schema: applyPermissions(richSchema(), map, options),
+      source,
+      contextValue: {},
+    });
+    const mutated = await graphql({
+      schema: applyPermissions(richSchema(), map, { ...options, inPlace: true }),
+      source,
+      contextValue: {},
+    });
+    return { copied, mutated };
+  }
+
+  it('returns the very schema it was given, now guarded', async () => {
+    const base = richSchema();
+    const guarded = applyPermissions(base, { Query: { note: deny } } as RichMap, {
+      inPlace: true,
+    });
+    expect(guarded).toBe(base);
+    const result = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('enforces exactly what the middleware path enforces', async () => {
+    const map: RichMap = { Note: { secret: deny, '*': accept }, '*': { notes: deny } };
+    const source = '{ note { id body secret } notes { id } }';
+    for (const options of [
+      undefined,
+      { fallbackRule: deny },
+      { fallbackRule: deny, maskDenials: true },
+      { fallbackError: 'Not Authorised!' },
+    ] satisfies (ApplyPermissionsOptions | undefined)[]) {
+      const { copied, mutated } = await bothWays(map, source, options);
+      expect(mutated.data).toEqual(copied.data);
+      expect(mutated.errors?.map((e) => e.message)).toEqual(copied.errors?.map((e) => e.message));
+    }
+  });
+
+  it('guards a field that has no resolver of its own', async () => {
+    const { copied, mutated } = await bothWays({ Note: { body: deny } }, '{ note { id body } }');
+    expect(copied.errors?.[0]?.message).toBe('Forbidden');
+    expect(mutated.errors?.[0]?.message).toBe('Forbidden');
+    expect(mutated.data).toEqual({ note: { id: '1', body: null } });
+  });
+
+  it("guards a subscription field's subscribe, as graphql-middleware does", async () => {
+    async function firstEvent(schema: GraphQLSchema) {
+      const out = await subscribe({ schema, document: parse('subscription { tick }') });
+      if (Symbol.asyncIterator in out) {
+        const { value } = await out[Symbol.asyncIterator]().next();
+        return (value as ExecutionResult).data;
+      }
+      return out.errors?.[0]?.message;
+    }
+    const denied = { Subscription: { tick: deny } } as RichMap;
+    expect(await firstEvent(applyPermissions(richSchema(), denied))).toBe('Forbidden');
+    expect(await firstEvent(applyPermissions(richSchema(), denied, { inPlace: true }))).toBe(
+      'Forbidden',
+    );
+    const allowed = { Subscription: { tick: accept } } as RichMap;
+    expect(await firstEvent(applyPermissions(richSchema(), allowed, { inPlace: true }))).toEqual({
+      tick: 1,
+    });
+  });
+
+  it('validates the map before touching the schema', async () => {
+    const base = richSchema();
+    expect(() =>
+      applyPermissions(base, { Query: { note: deny }, Nope: deny } as RichMap, { inPlace: true }),
+    ).toThrow(PermissionsError);
+    const result = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('refuses to guard a schema twice', () => {
+    const base = richSchema();
+    applyPermissions(base, { Query: { note: accept } } as RichMap, { inPlace: true });
+    expect(() =>
+      applyPermissions(base, { Query: { note: deny } } as RichMap, { inPlace: true }),
+    ).toThrow(/already guarded/);
+  });
+
+  it('leaves introspection working under fallbackRule: deny', async () => {
+    const schema = applyPermissions(richSchema(), {} as RichMap, {
+      fallbackRule: deny,
+      inPlace: true,
+    });
+    const result = await graphql({ schema, source: '{ __schema { queryType { name } } }' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ __schema: { queryType: { name: 'Query' } } });
+  });
+
+  it('lets a scoping-style rule rewrite the arguments it forwards', async () => {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { echo(word: String): String }`,
+      resolvers: { Query: { echo: (_: unknown, args: { word: string }) => args.word } },
+    });
+    const rewrite: Rule = (resolve, parent, _args, context, info) =>
+      resolve(parent, { word: 'rewritten' }, context, info);
+    applyPermissions(schema, { Query: { echo: rewrite } } as RichMap, { inPlace: true });
+    const result = await graphql({ schema, source: '{ echo(word: "original") }' });
+    expect(result.data).toEqual({ echo: 'rewritten' });
   });
 });
