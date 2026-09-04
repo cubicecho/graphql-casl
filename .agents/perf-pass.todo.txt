@@ -194,10 +194,14 @@ not own and a change here would not remove it.
         the unguarded baseline anyway (2,974 vs 2,954), so there is nothing
         to recover. If envelop ever ships a "resolver-only" hook, switch.
 
-[ ] X9. Bench in CI. SMALL. `npm run bench` exists; wire it as a manual
+[x] X9. Bench in CI. SMALL. `npm run bench` exists; wire it as a manual
         workflow_dispatch job (not on PRs — the numbers are too noisy to gate
         on, rme 4-11%). Publish the table into the job summary so regressions
         are visible without local runs.
+        SHIPPED 2026-09-04: `.github/workflows/bench.yml`, workflow_dispatch only,
+        optional `filter` input (-> `vitest -t`); runs `npm run bench -w
+        packages/graphql-casl -- --outputJson` and an inline node script renders
+        name/hz/mean/rme/samples per group into $GITHUB_STEP_SUMMARY.
 
 Correctness notes recorded during the pass
 -----------------------------------------

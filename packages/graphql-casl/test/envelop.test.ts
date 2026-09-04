@@ -45,7 +45,10 @@ const canUser = createCan<Context, M>(
 function schemaWith(resolvers: Record<string, Record<string, unknown>> = {}) {
   return makeExecutableSchema({
     typeDefs: /* GraphQL */ `
-      type Note {
+      interface Node {
+        id: ID!
+      }
+      type Note implements Node {
         id: ID!
         userId: ID!
         body: String!
@@ -60,6 +63,7 @@ function schemaWith(resolvers: Record<string, Record<string, unknown>> = {}) {
       }
     `,
     resolvers: {
+      Node: { __resolveType: () => 'Note' },
       Query: {
         note: (_p: unknown, args: { id: string }) => NOTES.find((n) => n.id === args.id) ?? null,
         notes: () => NOTES,
@@ -127,6 +131,15 @@ describe('useGraphQLCasl', () => {
     const execute = run({ Note: { id: counting } });
     await execute('{ notes { id } }');
     expect(checks).toBe(NOTES.length);
+  });
+
+  it('inherits a rule from an interface to the implementing type', async () => {
+    // `Node.id` guards `Note.id`: the plugin looks the field up by its concrete
+    // parent type, which is where resolvePermissions resolves the inheritance.
+    const execute = run({ Node: { id: deny }, Note: { body: accept } });
+    const result = await execute('{ note(id: "n1") { id body } }');
+    expect(result.data).toEqual({ note: null });
+    expect(result.errors?.map((e) => e.path)).toEqual([['note', 'id']]);
   });
 
   it('guards a field that has no resolver of its own', async () => {

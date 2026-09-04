@@ -24,6 +24,10 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
 - **Monorepo:** npm workspaces; run scripts at root (delegates to packages via
   `--workspaces`) or target one with `-w packages/<name>`
 - **Tests:** Vitest (`npm test`)
+- **Bench:** Vitest bench (`npm run bench -w packages/graphql-casl`, `bench/hotpath.bench.ts`);
+  in CI only by hand — `.github/workflows/bench.yml` is `workflow_dispatch` (optional
+  name-filter input) and writes the results table to the job summary; it never runs on
+  push/PR because the numbers are too noisy (rme 4-11%) to gate on
 - **Formatting/linting:** Biome (`npm run check`) — single root config, whole repo
 - **Build:** `tsc` per package (`npm run build`) — outputs to each package's `dist/`
 - **API docs:** TypeDoc (`npm run docs`) — `packages/graphql-casl/docs/api/`
@@ -64,6 +68,8 @@ packages/
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       validateGraphQLRules.ts — checks stored ability rules (subjects, fields, conditions) against
                             the runtime schema; the DB-rules counterpart of validatePermissions
+      validateArgs.ts     — validateArgs: argument validation as a rule over any Standard Schema
+                            (the spec's interface is vendored here); the resolver gets the parsed args
       subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
       grants.ts           — granted scopes: grants / granted, a parent field's decision reused
@@ -78,6 +84,7 @@ packages/
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       validateGraphQLRules.test.ts       — stored rules vs the schema: every rejection, and what rehydration lets through
+      validateArgs.test.ts               — validateArgs: a hand-rolled Standard Schema, zod, and error control through applyPermissions
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit
@@ -133,13 +140,15 @@ vitest.config.ts (per package) — dedupes/inlines graphql so it loads as a sing
 
 ## CI & releases
 
-Two GitHub Actions workflows:
+Three GitHub Actions workflows:
 
 - **`.github/workflows/test.yml`** — runs on every push: biome check, typecheck,
   test, coverage, build (all via root scripts that fan out to workspaces), then
   publishes TypeDoc from `packages/graphql-casl/docs/api/` to the wiki on `main`.
 - **`.github/workflows/release.yml`** — runs after **Test** succeeds on `main`,
   then runs `npx semantic-release` once at the repo root.
+- **`.github/workflows/bench.yml`** — manual (`workflow_dispatch`) only: runs the
+  hot-path benchmarks and publishes the table to the job summary. Never a gate.
 
 Releases use a **single, repo-wide version** ([semantic-release](https://semantic-release.gitbook.io/)
 at the root, `.releaserc.json`): one `v${version}` git tag and one GitHub release
