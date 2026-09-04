@@ -21,6 +21,7 @@
  * - `graphqlAbility` — the schema-typed `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
  * - `subjects` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
  * - `createCan` — the factory tying abilities to rules
+ * - `grants` — granted scopes: `grants` / `granted`, a parent's decision reused by its fields
  *
  * @packageDocumentation
  */
@@ -65,6 +66,7 @@ export type {
   UnconditionedSubjectMode,
 } from './createCan.js';
 export { createCan } from './createCan.js';
+export { granted, grants } from './grants.js';
 export type {
   GraphQLAbilities,
   GraphQLAbility,

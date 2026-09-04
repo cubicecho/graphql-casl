@@ -208,12 +208,46 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
             cannot add fields to the selection set the parent resolver sees.
             That needs an onExecute/document-level hook, not on-resolve.
 
-[ ] E7. GRANTED SCOPES — a parent grants authorization to its children.
-        Source: Pothos grantScopes / $granted. "$granted scopes are separate
-        from other scopes" and do not inherit transitively.
-        Avoids re-authorizing Post.author when Post itself was already
-        authorized. Meaningful on nested and list-heavy queries, and it composes
-        with the per-request cache from S4b.
+[x] E7. GRANTED SCOPES — SHIPPED 2026-09-04 (src/grants.ts: grants / granted).
+        `grants(rule, scope)` wraps any rule; once it passes and the resolver
+        returns, the returned object (or each element of a list, nested lists
+        included; null/scalars ignored) is tagged with the scope for the
+        request — a WeakMap<context, WeakMap<object, Set<scope>>>, so a
+        non-object context grants nothing. `granted(scope)` is a CheckableRule
+        built with rule(), sync check, passes when `parent` carries the scope,
+        Forbidden otherwise (deny-by-default on its own — a scope, not a
+        bypass). Pothos parity kept: not transitive (Post.author's User is not
+        granted 'post'; chain with `grants(granted('post'), 'user')`), only
+        what the field actually returned (a deny, a throw, an onResult
+        rejection grant nothing), per request. `grants` is deliberately NOT
+        combinable (a combinator calling .check would skip the tagging), so
+        checksOf rejects it by position and the message points at wrap();
+        combine the inner rule instead. Works under onDeny filter/mask and
+        with cache modes; forwards the scopeArgs SCOPE_INFO marker so
+        validation still sees the injected argument.
+        Documented shape is race(granted('post'), canUser.fields(...)) — race,
+        not or, because or evaluates every operand in parallel and would pay
+        for the check it was meant to skip.
+        Left out: a `canUser(..., { grant })` option — it would flip the
+        return type between CheckableRule and plain Rule on an option, which
+        does not fit createCan; `grants(canUser(...), 'post')` is the API.
+        Measured (bench/hotpath.bench.ts, 100 rows x 5 fields, rme 4-7%,
+        requests/second; two back-to-back passes on a machine other work was
+        sharing, so read the ratios, not the absolutes):
+                                                                  run 1   run 2
+          unguarded schema (graphql-js baseline)                  1,784   1,969
+          createCan.fields on the type                              868   1,378
+          createCan conditioned from parent, cache: 'strict'        632   1,139
+          race(granted, createCan.fields) on the type, list grants 1,247   1,681
+          granted alone on the type, list grants                   1,643   1,643
+        So 500 CASL checks per request become 1, and the request runs
+        1.2-1.4x faster than fields-alone (1.5-1.8x vs the cached conditioned
+        check); granted alone lands within 8-17% of the baseline like the
+        other sync rules. Honest reading: the sync fields check is already
+        cheap, so the wall-clock gain is bounded and noisy; the evaluation
+        count is the win, and it scales with what a check costs (PDP round
+        trip, wide conditioned rows, abilities with many rules). Shipped as
+        opt-in either way — the map has to ask for it on both ends.
 
 [ ] E8. WILDCARD PRECEDENCE, PROPERLY SPECIFIED.
         If S3 (wildcards) gets built, copy graphql-authz's spec rather than

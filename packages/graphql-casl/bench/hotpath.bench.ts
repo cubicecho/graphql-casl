@@ -20,7 +20,10 @@ import {
   createGraphQLAbility,
   createTyped,
   deny,
+  granted,
+  grants,
   type PermissionsMap,
+  race,
   resolvePermissions,
   rule,
 } from '../src/index.js';
@@ -138,6 +141,32 @@ describe('100 rows x 5 fields', () => {
 
   const fields = makeCan(false).fields('read', 'Note');
   bench('createCan.fields on the type', guarded({ Query: { notes: accept }, Note: fields }));
+
+  // Granted scopes: the list field authorizes once and grants the rows, so the
+  // row fields are decided by a WeakMap lookup instead of a CASL check. Rows
+  // to compare against: `createCan.fields on the type` (one field-level check
+  // per field per row), and the cached conditioned check below, which is the
+  // README's advice for a per-row verdict (one condition match per row).
+  const allRowsStrict = createCan<Context, SubjectMap>(
+    async (ctx) => abilityFor(ctx.userId, false),
+    (ctx) => ctx.userId != null,
+    typed,
+  )('read', 'Note', (_args, parent: Note) => ({ author: parent.author }), { cache: 'strict' });
+  bench(
+    "createCan conditioned check from parent, cache: 'strict'",
+    guarded({ Query: { notes: accept }, Note: allRowsStrict }),
+  );
+
+  const grantingList = grants(makeCan(false)('read', 'Note'), 'note');
+  bench(
+    'race(granted, createCan.fields) on the type, list field grants',
+    guarded({ Query: { notes: grantingList }, Note: race(granted('note'), fields) }),
+  );
+
+  bench(
+    'granted alone on the type, list field grants',
+    guarded({ Query: { notes: grantingList }, Note: granted('note') }),
+  );
 
   bench(
     'and(sync, sync) on every field',

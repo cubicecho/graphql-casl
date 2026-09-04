@@ -210,3 +210,27 @@ Correctness notes recorded during the pass
 * A masked denial under maskDenials resolves to null/[] synchronously; the
   resolvePermissions test was updated to `await` the result.
 * 'strict' does not key on fieldName (README + JSDoc say so).
+
+Granted scopes (ecosystem-parity E7, 2026-09-04)
+------------------------------------------------
+Three rows added to the "100 rows x 5 fields" suite. `grants(rule, scope)` on
+the list field tags every returned row for the request; `granted(scope)` on
+the type is a sync WeakMap lookup. Same machine as the tables above but a
+different day, with other work sharing it, so compare within this block only
+(hz, rme 4-7%, two back-to-back passes):
+
+                                                              run 1   run 2
+  createCan.fields on the type                                  868   1,378
+  createCan conditioned from parent, cache: 'strict'            632   1,139
+  race(granted, createCan.fields) on the type, list grants    1,247   1,681   1.2-1.4x fields
+  granted alone on the type, list grants                      1,643   1,643   1.2-1.9x fields
+  unguarded schema (graphql-js baseline)                      1,784   1,969
+
+Effect: 500 CASL checks per request -> 1. The race row still pays for the
+race machinery per field (`granted` short-circuits before `fields` runs, but
+race goes through the generic operand loop), which is the gap between it and
+`granted` alone in run 1; `granted` alone sits within 8-17% of the baseline
+like the other sync rules. The remaining cost is per field, not per CASL
+check, so this is worth more the more a check costs — for a plain sync
+ability it is a modest, noisy wall-clock win and a large evaluation-count
+win. Shipped opt-in; nothing changes for maps that do not use it.

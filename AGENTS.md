@@ -66,10 +66,14 @@ packages/
                             the runtime schema; the DB-rules counterpart of validatePermissions
       subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
+      grants.ts           — granted scopes: grants / granted, a parent field's decision reused
+                            by the fields of what it returned (per request, never transitive)
     test/
       permissions.test.ts                — unit tests for the rule primitives
       applyPermissions.test.ts           — the schema walk: enforcement + validation errors
       combinators.test.ts                — rule(), the combinators, wrap, operand validation
+      grants.test.ts                     — granted scopes: object/list grants, no transitive inheritance,
+                                           per-request isolation, composition, onDeny, the sync path
       accessibleBy.test.ts               — ability -> query filter, priority flattening, adapters
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
