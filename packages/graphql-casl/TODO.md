@@ -103,6 +103,14 @@ A soundness pass, taken from the lists above:
   against the schema by default; `conditionFields: 'none'` relaxes that for
   subjects that are database models with columns the schema does not expose.
 
+- **The trust boundary, stated** (`prior-art` C2, E1, F1) — documented, not
+  built. The README now says why a GraphQL-specific CASL binding exists at all
+  (`__typename` is a schema-checked subject name, where `@casl/prisma` has to
+  wrap every record in `subject()`), that ownership enforced in the data layer
+  is strictly stronger than any resolver gate with this library as defense in
+  depth on top of it, and that rooting authorized reads at `viewer`/`me`
+  removes the IDOR class from the schema rather than guarding against it.
+
 - **`__isTypeOf` / `__resolveType` are excluded from `PermissionsMap`**
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
