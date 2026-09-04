@@ -5,7 +5,8 @@ import { defineConfig } from 'vitest/config';
 // so dedupe it to a single instance and inline it (plus the graphql-tools /
 // middleware / envelop packages that also import it) through vitest's transform:
 // an externalized dependency gets the CJS build while the inlined source gets
-// the ESM one — two realms, one schema.
+// the ESM one — two realms, one schema. `@apollo/server` (a devDependency, for
+// the `/apollo` tests) imports graphql too, so it is inlined for the same reason.
 export default defineConfig({
   resolve: {
     dedupe: ['graphql'],
@@ -13,7 +14,7 @@ export default defineConfig({
   test: {
     server: {
       deps: {
-        inline: ['graphql', /@graphql-tools\//, /@envelop\//, 'graphql-middleware'],
+        inline: ['graphql', /@graphql-tools\//, /@envelop\//, /@apollo\//, 'graphql-middleware'],
       },
     },
     coverage: {

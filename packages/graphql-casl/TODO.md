@@ -164,6 +164,20 @@ A soundness pass, taken from the lists above:
   cannot drift. It shipped briefly as a separate `@vantreeseba/graphql-casl-envelop`
   package and was folded back in before that package was ever published.
 
+- **`strict`, `disabled`, and an Apollo Server plugin** (`ecosystem-parity` E9
+  and E11, plus the `reportDenials` gap the filtering work left open) — three
+  small additions to the option surface. `strict: true` is the 2.0 defaults
+  today (`onDeny: 'filter'`, `allowExternalErrors: false`; an explicit key still
+  wins, and `maskDenials` still masks), and the README frames `fallbackRule` /
+  `strict` as the granular / protect-all / strict modes E9 asked for.
+  `disabled: true` is the test escape hatch: the map is still validated, the
+  schema comes back unguarded on both apply paths, and the envelop plugin wraps
+  nothing. The `/apollo` subpath export ([`src/apollo.ts`](./src/apollo.ts)),
+  `reportDenialsPlugin()`, calls `reportDenials` from Apollo Server's
+  `willSendResponse`, so `applyPermissions` users on Apollo no longer wire that
+  call by hand. It is typed structurally, so `@apollo/server` is not a
+  dependency; `@defer` bodies are left alone, and documented as such.
+
 Note on fragments (`shield-parity` S5 / `ecosystem-parity` E2): the earlier plan
 was to gate parent-aware rules behind fragment support, so the fields a rule
 reads would be guaranteed present. **That guarantee is not available.** A probe

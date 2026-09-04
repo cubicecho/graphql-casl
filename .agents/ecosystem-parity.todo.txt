@@ -199,10 +199,19 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
           - This package is NOT zero-dependency: it depends on
             @envelop/on-resolve. Peers: @envelop/core >=5, graphql >=16,
             @vantreeseba/graphql-casl >=1.
-          - Apollo Server plugin: NOT shipped. Apollo 4 has an envelop
-            integration, so the plugin above already covers it; a separate
-            Apollo-native package would be a second implementation for no new
-            reach.
+          - Apollo Server plugin: NOT shipped as an enforcement path. Apollo 4
+            has an envelop integration, so the plugin above already covers it;
+            a separate Apollo-native package would be a second implementation
+            for no new reach.
+            UPDATE (2026-09-04): a REPORTING plugin did ship, as the `/apollo`
+            subpath export (src/apollo.ts, `reportDenialsPlugin()`). It is not
+            enforcement — the schema is still guarded by applyPermissions — it
+            is `reportDenials` called from Apollo's willSendResponse, closing
+            the one gap applyPermissions-on-Apollo had under onDeny 'filter'
+            (a non-null list's `[]` and everything under report 'extensions'
+            were silently masked without a hand-wired call). Typed against a
+            structural slice of ApolloServerPlugin, so @apollo/server is a
+            devDependency only. Incremental (@defer) bodies are left alone.
           - STILL OPEN, re-scoped here from E2/S5: selection-set injection. The
             plugin runs per RESOLVER, so it can wrap and it can mask, but it
             cannot add fields to the selection set the parent resolver sees.
@@ -263,7 +272,7 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         T.f > I.f > T['*'] > I['*'] > '*'.f > '*'['*'] > fallbackRule. Each row
         is pinned by a test in applyPermissions.test.ts.
 
-[ ] E9. DENY-BY-DEFAULT AS A NAMED MODE.
+[x] E9. DENY-BY-DEFAULT AS A NAMED MODE.
         Source: envelop generic-auth modes — protect-all / protect-granular /
         resolve-only (plus @skipAuth to opt individual fields out of
         protect-all).
@@ -271,6 +280,14 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         legible in docs than an options flag, and it makes the schema-coverage
         guarantee explicit rather than implicit. Recommend adopting the framing
         even if the implementation is just fallbackRule underneath.
+        SHIPPED (2026-09-04) — as framing, exactly as recommended: the README's
+        "Apply to the schema" section now reads the options as three modes —
+        granular (the default), protect-all (`fallbackRule: deny`) and strict
+        (`strict: true`, the error-side 2.0 defaults: onDeny 'filter' and
+        allowExternalErrors false), composable. `strict` is the one new option
+        (ApplyPermissionsOptions.strict, so the envelop plugin takes it too);
+        it moves defaults only — an explicit key wins, maskDenials still masks.
+        No @skipAuth equivalent needed: a per-field `accept` already opts out.
 
 [x] E10. INTERFACE / UNION RULE INHERITANCE.
          SHIPPED 2026-09-04: an interface entry in the PermissionsMap is
@@ -293,9 +310,16 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
          so attaching a rule to one is a compile error. The rest of E10 —
          inheriting rules from an interface to its implementors — is untouched.
 
-[ ] E11. TEST ESCAPE HATCH — disable authorization wholesale.
+[x] E11. TEST ESCAPE HATCH — disable authorization wholesale.
          Source: Pothos disableScopeAuth. Small, cheap, and consumers will
          otherwise hand-roll it badly (or worse, ship the hand-rolled version).
+         SHIPPED (2026-09-04) — ApplyPermissionsOptions.disabled. The map (and
+         the option pair) is still validated, so drift is still caught; the
+         schema comes back as given on both the copy path and inPlace (nothing
+         is marked guarded, so a real apply can follow), resolvePermissions
+         returns a lookup that guards nothing, and useGraphQLCasl validates in
+         onSchemaChange but installs no resolver hook. Documented as test-only,
+         with the "do not wire it to an env var you do not control" warning.
 
 [x] E12. EXTERNAL PDP ESCAPE HATCH — OPA / Cerbos / OpenFGA / Oso.
          CASL cannot express relationship-derived (ReBAC / Zanzibar-style)

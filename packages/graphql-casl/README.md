@@ -9,7 +9,7 @@ The library is **schema-agnostic** — the subject names and condition types are
 derived from your own generated `Resolvers` / `ResolversTypes`, so there is no
 manual type listing.
 
-There are two optional entry points, neither of which the main one pulls in:
+There are three optional entry points, none of which the main one pulls in:
 
 - `@vantreeseba/graphql-casl/scoping` for
   [scoping generated resolvers](#scoping-generated-resolvers-optional) — narrowing
@@ -17,6 +17,9 @@ There are two optional entry points, neither of which the main one pulls in:
 - `@vantreeseba/graphql-casl/envelop` for
   [enforcing the map through envelop](#enforcing-the-map-through-envelop-optional)
   instead of `graphql-middleware`.
+- `@vantreeseba/graphql-casl/apollo` for
+  [reporting filtered denials on Apollo Server](#where-filtered-denials-are-reported)
+  — the one response hook `applyPermissions` cannot reach on its own.
 
 ## Install
 
@@ -31,7 +34,8 @@ npm install @envelop/core @envelop/on-resolve
 
 `@envelop/core` and `@envelop/on-resolve` are *optional* peer dependencies, so npm
 will not install them unless you ask for them. The package itself has no runtime
-dependencies.
+dependencies. The `/apollo` entry point needs nothing extra — it is typed against
+the shape of Apollo Server's plugin contract, not against `@apollo/server`.
 
 ### Generating the types
 
@@ -480,9 +484,22 @@ Introspection is never guarded, so `fallbackRule: deny` does not break it.
 > action with no matching rule is denied. That is a different guarantee from
 > *schema coverage*, which is what `fallbackRule` provides. You want both.
 
-`fallbackRule` is one of six options. Four govern what a denial looks like to
-the client — see [Error control](#error-control). The last, `inPlace`, is about
-apply time:
+Read as modes, the way `@envelop/generic-auth` names its own, the choice is:
+
+| Mode | Spelling | What it guarantees |
+| --- | --- | --- |
+| **Granular** | the default | only what the map names is guarded; a field it does not mention is open |
+| **Protect all** | `fallbackRule: deny` | every field is guarded; the map is the allow-list, and a field added later ships closed |
+| **Strict** | `strict: true`, on top of either | the error-side defaults of 2.0 — a denial filters instead of nulling the branch, and a resolver error is masked rather than passed through — see [The 2.0 defaults](#the-20-defaults) |
+
+Each mode is one option underneath, so they compose: `fallbackRule: deny` with
+`strict: true` is deny-by-default with the stricter delivery, and either alone is
+exactly what it says.
+
+`fallbackRule` is one of several options. Four govern what a denial looks like to
+the client — see [Error control](#error-control) — and `strict` picks the 2.0
+defaults for them. `disabled` is [the test switch](#testing-your-permissions).
+The last, `inPlace`, is about apply time:
 
 ```ts
 const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
@@ -906,7 +923,8 @@ says — see [Filtering denials](#filtering-denials) below.
 > here, the opposite of shield, which masks resolver errors by default. Masking
 > is the safer behaviour, but it is not what this library has done since 1.0 and
 > silently swallowing resolver errors on upgrade would be worse than leaving the
-> choice explicit. Set it to `false` deliberately.
+> choice explicit. Set it to `false` deliberately — or set `strict: true`, which
+> flips it along with `onDeny`; see [The 2.0 defaults](#the-20-defaults).
 
 #### Filtering denials
 
@@ -988,6 +1006,30 @@ Skip that call and those denials are silently masked — the one way `'filter'`
 degrades. The record is keyed on the context value, so it must be an object,
 one per request.
 
+**On Apollo Server** that hook is `willSendResponse`, and the `/apollo` entry
+point is `reportDenials` already wired to it:
+
+```ts
+import { ApolloServer } from '@apollo/server';
+import { reportDenialsPlugin } from '@vantreeseba/graphql-casl/apollo';
+
+const server = new ApolloServer<Context>({
+  schema: applyPermissions<Resolvers>(baseSchema, permissions, { onDeny: 'filter' }),
+  plugins: [reportDenialsPlugin()],
+});
+```
+
+The plugin reads the request's `contextValue` and merges the held denials into
+the response before it is sent — into `errors`, formatted as Apollo formats its
+own, or into `extensions.authorizationErrors` under `report: 'extensions'`. A
+request with nothing held is left untouched, so it is harmless under `'reject'`
+or `'mask'`. It is typed against the shape of Apollo's plugin contract rather
+than against `@apollo/server`, so it adds no dependency; Apollo Server 4 and 5
+share that shape. One limit: only a single-result response is reported into.
+Under incremental delivery (`@defer`, `@stream`) the body is a stream the plugin
+does not follow, and a denial held for a deferred payload is masked — the same
+degradation as no hook at all.
+
 `report: 'extensions'` moves every filtered denial out of `errors` and into
 `extensions.authorizationErrors` (the router's key again). That keeps `errors`
 clean for clients that treat any entry there as a failed request — Apollo
@@ -1010,7 +1052,33 @@ the query were filtered. In this mode every denial goes through `reportDenials`.
 ```
 
 The default stays `'reject'`, so nothing changes on upgrade. `'filter'` is the
-better choice for new code and is the planned default for 2.0.
+better choice for new code and is the default in 2.0 — which `strict: true`
+gives you today.
+
+#### The 2.0 defaults
+
+Two defaults above are compatibility choices rather than the better ones:
+`onDeny: 'reject'` is what 1.0 did, and `allowExternalErrors: true` is what this
+library has always done. Both change in 2.0. `strict: true` makes that change
+now, so a map written against it will not change behaviour on the upgrade:
+
+```ts
+const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
+  strict: true, // onDeny: 'filter' and allowExternalErrors: false, unless you say otherwise
+  fallbackError: new GraphQLError('Not authorized', { extensions: { code: 'FORBIDDEN' } }),
+});
+```
+
+| Option | 1.x default | Under `strict: true` |
+| --- | --- | --- |
+| `onDeny` | `'reject'` | `'filter'` |
+| `allowExternalErrors` | `true` | `false` |
+
+It moves defaults, nothing more. A key you pass still wins —
+`{ strict: true, onDeny: 'reject' }` rejects — and `maskDenials: true`, being a
+choice of mode itself, still masks. `report` is accepted alongside it, since the
+mode is `'filter'`. The [envelop plugin](#enforcing-the-map-through-envelop-optional)
+takes it too.
 
 #### Denial reasons from CASL
 
@@ -1382,6 +1450,9 @@ reimplementing any of it. Beyond that:
 - **Filtered denials are reported for you.** Under `onDeny: 'filter'` the plugin
   merges each request's held denials into the result as execution finishes, so
   there is no `reportDenials` call to wire.
+- **`strict` and `disabled` work here too.** `strict: true` defaults the plugin
+  to `'filter'`, report hook included; `disabled: true` validates the map and
+  wraps nothing.
 
 - **The map is validated when the schema arrives**, not on the first query that
   touches the offending field, so a map naming a type or field the schema does
@@ -1594,6 +1665,20 @@ the schema. On a generated CRUD schema of 4,400 types and 35,200 fields,
 `applyPermissions` takes ~1.6s where `validatePermissions` takes ~8ms. That cost
 is paid once at startup, which is the right place for it; it is the wrong thing
 to pay in every test file that only wants the drift check.
+
+The opposite need — the schema *without* its rules, to seed a fixture through
+the same resolvers or to prove a failure is the resolver's and not
+authorization's — is `disabled: true`:
+
+```ts
+const open = applyPermissions<Resolvers>(baseSchema, permissions, { disabled: true });
+```
+
+The map is still validated, so a stale rule still throws; the schema comes back
+as it went in — the same object, with or without `inPlace` — and the envelop
+plugin does the same, validating and wrapping nothing. It is a test-only switch.
+Do not wire it to an environment variable you do not control, or a
+misconfigured deploy ships with every rule off and nothing to say so.
 
 ## Coming from `graphql-shield`
 

@@ -15,7 +15,8 @@
     "middleware",
     "typescript",
     "envelop",
-    "graphql-yoga"
+    "graphql-yoga",
+    "apollo-server"
   ],
   "type": "module",
   "repository": {
@@ -41,6 +42,10 @@
     "./envelop": {
       "types": "./dist/envelop.d.ts",
       "import": "./dist/envelop.js"
+    },
+    "./apollo": {
+      "types": "./dist/apollo.d.ts",
+      "import": "./dist/apollo.js"
     },
     "./package.json": "./package.json"
   },
@@ -77,6 +82,7 @@
     }
   },
   "devDependencies": {
+    "@apollo/server": "^5.5.1",
     "@casl/ability": "^7.0.0",
     "@envelop/core": "^5.6.0",
     "@envelop/on-resolve": "^7.0.0",
