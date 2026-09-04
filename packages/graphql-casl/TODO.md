@@ -112,6 +112,24 @@ A soundness pass, taken from the lists above:
   against the schema by default; `conditionFields: 'none'` relaxes that for
   subjects that are database models with columns the schema does not expose.
 
+- **Argument validation as a rule** (`shield-parity` S11) —
+  `validateArgs(schema, options?)` is the `inputRule` counterpart, built on
+  [Standard Schema](https://standardschema.dev) rather than yup: any zod
+  (3.24+), valibot, arktype or yup (1.7+) schema works, the spec's interface is
+  vendored, and the package stays zero-dep. On success the resolver receives
+  the parsed output (defaults, coercion, transforms); `replace: false` validates
+  only. On failure it rejects with a `GraphQLError` carrying
+  `extensions.code: 'BAD_USER_INPUT'` and `extensions.issues`, marked as an
+  explicit denial so `fallbackError` never rewords it and `onDeny: 'filter'`
+  keeps its code. Plain `Rule`, like `scopeArgs`; composes through `wrap`.
+- **The trust boundary, stated** (`prior-art` C2, E1, F1) — documented, not
+  built. The README now says why a GraphQL-specific CASL binding exists at all
+  (`__typename` is a schema-checked subject name, where `@casl/prisma` has to
+  wrap every record in `subject()`), that ownership enforced in the data layer
+  is strictly stronger than any resolver gate with this library as defense in
+  depth on top of it, and that rooting authorized reads at `viewer`/`me`
+  removes the IDOR class from the schema rather than guarding against it.
+
 - **`__isTypeOf` / `__resolveType` are excluded from `PermissionsMap`**
   (the sharp edge under `ecosystem-parity` E10) — rules attached to them never
   ran, and are now a compile error.
