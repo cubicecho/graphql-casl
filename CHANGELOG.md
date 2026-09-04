@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/cubicecho/graphql-casl/compare/v1.9.0...v1.10.0) (2026-09-04)
+
+
+### Features
+
+* **directives:** add [@can](https://github.com/can) / [@rule](https://github.com/rule) SDL directives package ([64bb050](https://github.com/cubicecho/graphql-casl/commit/64bb050a79c4e89a32aebafd93b55c16f82c20e8))
+
 # [1.9.0](https://github.com/cubicecho/graphql-casl/compare/v1.8.0...v1.9.0) (2026-09-04)
 
 

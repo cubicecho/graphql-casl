@@ -1,6 +1,6 @@
 {
   "name": "@vantreeseba/graphql-casl-directives",
-  "version": "1.5.0",
+  "version": "1.10.0",
   "description": "Declare @vantreeseba/graphql-casl permissions in SDL: translates @can and @rule directives on a GraphQLSchema into the PermissionsMap the runtime enforces.",
   "keywords": [
     "graphql",
