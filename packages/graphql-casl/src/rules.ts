@@ -484,17 +484,27 @@ export type AnyResolvers = Record<string, Record<string, unknown>>;
  * from the field keys — `graphql-middleware` never wraps them, so a rule attached
  * to one would never run.
  *
+ * An interface is a type key too: its field keys are the fields it declares (as
+ * `typescript-resolvers` emits them on the interface's resolver type), and a
+ * rule under it guards that field on every implementing type. A union's resolver
+ * type has no field keys, so only `'*'` can be attached to one.
+ *
  * {@link Wildcard} (`'*'`) is accepted in either position. Wildcards never
  * compose: exactly one rule guards a field, and the most specific entry wins.
- * From highest precedence to lowest:
+ * From highest precedence to lowest, for a `Note` implementing `Node`:
  *
  * 1. `{ Note: { body: rule } }` — a named field of a named type
- * 2. `{ Note: { '*': rule } }` (or `{ Note: rule }`) — any field of a named type
- * 3. `{ '*': { body: rule } }` — a named field of any type
- * 4. `{ '*': { '*': rule } }` (or `{ '*': rule }`) — any field of any type
+ * 2. `{ Node: { body: rule } }` — a named field of an interface the type implements
+ * 3. `{ Note: { '*': rule } }` (or `{ Note: rule }`) — any field of a named type
+ * 4. `{ Node: { '*': rule } }` (or `{ Node: rule }`) — any field of any implementor
+ *    (a union's `'*'` sits here too, for its members)
+ * 5. `{ '*': { body: rule } }` — a named field of any type
+ * 6. `{ '*': { '*': rule } }` (or `{ '*': rule }`) — any field of any type
  *
  * Below all of those sits `applyPermissions`'s `fallbackRule` option, and below
- * that, no guard at all.
+ * that, no guard at all. Two interfaces that both cover a field of one
+ * implementor, at the same tier, are ambiguous: `applyPermissions` rejects the
+ * map until the implementor's own entry chooses.
  *
  * @typeParam TResolvers - Your generated `Resolvers` type. Defaults to
  * {@link AnyResolvers}, which accepts any type and field name and leaves the

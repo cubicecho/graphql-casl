@@ -215,7 +215,7 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         authorized. Meaningful on nested and list-heavy queries, and it composes
         with the per-request cache from S4b.
 
-[ ] E8. WILDCARD PRECEDENCE, PROPERLY SPECIFIED.
+[x] E8. WILDCARD PRECEDENCE, PROPERLY SPECIFIED.
         If S3 (wildcards) gets built, copy graphql-authz's spec rather than
         shield's — it is strictly more complete:
           - '*' usable as a TYPE name and as a FIELD name, in any combination
@@ -224,6 +224,10 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
           - precedence: (1) any field of a NAMED type, (2) a NAMED field of any
             type, (3) any field of any type
         Shield only implements the per-type '*' field default.
+        SHIPPED 2026-09-04: the precedence table (README "Wildcards",
+        PermissionsMap docs) now states every tier, interface tiers included:
+        T.f > I.f > T['*'] > I['*'] > '*'.f > '*'['*'] > fallbackRule. Each row
+        is pinned by a test in applyPermissions.test.ts.
 
 [ ] E9. DENY-BY-DEFAULT AS A NAMED MODE.
         Source: envelop generic-auth modes — protect-all / protect-granular /
@@ -234,7 +238,16 @@ authorization); Hasura & PostGraphile RLS (database-layer, different niche).
         guarantee explicit rather than implicit. Recommend adopting the framing
         even if the implementation is just fallbackRule underneath.
 
-[ ] E10. INTERFACE / UNION RULE INHERITANCE.
+[x] E10. INTERFACE / UNION RULE INHERITANCE.
+         SHIPPED 2026-09-04: an interface entry in the PermissionsMap is
+         inherited by every implementor (transitively, via
+         schema.getImplementations), a union takes '*' for every member's
+         fields, and an implementor's own entry overrides either. Two
+         interfaces covering the same field of one implementor without the
+         implementor choosing is a PermissionsError, not a silent pick.
+         Both applyPermissions (copy and inPlace) and the envelop plugin get
+         it through resolvePermissions. Unions still take no named field —
+         they declare none. Details below are the pre-ship analysis.
          graphql-authz attaches rules to INTERFACE types and inherits them to
          implementors (and Pothos has skipInterfaceScopes to opt out).
          Nothing in src/ is abstract-type aware: no __resolveType / __isTypeOf
