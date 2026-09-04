@@ -39,6 +39,15 @@ Two analysis-only workstreams, recorded but not scheduled:
 
 A soundness pass, taken from the lists above:
 
+- **Directive-based declaration** (`ecosystem-parity` E5, `prior-art` A2 + A3)
+  — a third package, `@vantreeseba/graphql-casl-directives`, with
+  `@can(action:, subject:)` and `@rule(names: [[String!]!]!)` on
+  `FIELD_DEFINITION | OBJECT | INTERFACE`. `permissionsFromDirectives(schema,
+  { can, rules })` translates them into a `PermissionsMap`; enforcement stays in
+  `applyPermissions` / `useGraphQLCasl`. Nested arrays encode AND/OR, several
+  directives on one site AND, an OBJECT directive is the type's `'*'` entry,
+  INTERFACE directives project onto implementors, and every problem is reported
+  at once through `PermissionsError`.
 - **Bare-subject checks no longer fail silently.** `ability.can(action, 'Note')`
   is a possibility check, so a conditions-only grant makes it pass for everyone.
   `createCan` now detects that at request time and warns once per rule;

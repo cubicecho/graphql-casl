@@ -1,0 +1,64 @@
+{
+  "name": "@vantreeseba/graphql-casl-directives",
+  "version": "1.5.0",
+  "description": "Declare @vantreeseba/graphql-casl permissions in SDL: translates @can and @rule directives on a GraphQLSchema into the PermissionsMap the runtime enforces.",
+  "keywords": [
+    "graphql",
+    "graphql-directives",
+    "directives",
+    "sdl",
+    "schema-first",
+    "casl",
+    "authorization",
+    "permissions",
+    "access-control",
+    "typescript"
+  ],
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cubicecho/graphql-casl.git",
+    "directory": "packages/graphql-casl-directives"
+  },
+  "homepage": "https://github.com/cubicecho/graphql-casl#readme",
+  "bugs": {
+    "url": "https://github.com/cubicecho/graphql-casl/issues"
+  },
+  "license": "MIT",
+  "author": "Benjamin Van Treese <vantreeseba@gmail.com>",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "@vantreeseba/graphql-casl": ">=1.5.0",
+    "graphql": ">=16"
+  },
+  "devDependencies": {
+    "@casl/ability": "^7.0.0",
+    "@envelop/core": "^5.6.0",
+    "@envelop/on-resolve": "^7.0.0",
+    "@envelop/testing": "^10.2.0",
+    "@graphql-tools/schema": "^10.0.33",
+    "@vantreeseba/graphql-casl": "*",
+    "graphql": "^16.14.0",
+    "graphql-middleware": "^6.1.35"
+  }
+}
