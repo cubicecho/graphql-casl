@@ -1,5 +1,13 @@
 import { makeExecutableSchema } from '@graphql-tools/schema';
-import { GraphQLError, type GraphQLResolveInfo, type GraphQLSchema, graphql } from 'graphql';
+import {
+  type ExecutionResult,
+  GraphQLError,
+  type GraphQLResolveInfo,
+  type GraphQLSchema,
+  graphql,
+  parse,
+  subscribe,
+} from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type AnyResolvers,
@@ -858,6 +866,16 @@ describe('applyPermissions — filtering denials', () => {
     expect(result.errors?.[0]?.extensions).toEqual({});
   });
 
+  it('filters under inPlace: true as well', async () => {
+    const schema = filtering({ Query: { list: deny, nullable: deny } }, { inPlace: true });
+    const result = await query(schema, '{ list { id } nullable }');
+    expect(result.data).toEqual({ list: [], nullable: null });
+    expect(result.errors?.map((error) => error.path)).toEqual(
+      expect.arrayContaining([['list'], ['nullable']]),
+    );
+    expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE]);
+  });
+
   it('rejects instead of recording when the context is not an object', async () => {
     const result = await query(filtering({ Query: { list: deny } }), '{ list { id } }', 42);
     expect(result.data).toBeNull();
@@ -1365,5 +1383,137 @@ describe('applyPermissions — error control on a check-then-resolve rule', () =
     );
     expect(error).toBeUndefined();
     expect(calls).toBe(1);
+  });
+});
+
+describe('applyPermissions — inPlace', () => {
+  /** A schema with a resolver-less field, a list, and a subscription. */
+  function richSchema() {
+    return makeExecutableSchema({
+      typeDefs: /* GraphQL */ `
+        type Note { id: ID! body: String secret: String }
+        type Query { note: Note! notes: [Note!]! }
+        type Subscription { tick: Int }
+      `,
+      resolvers: {
+        Query: { note: () => note, notes: () => [note] },
+        Subscription: {
+          tick: {
+            subscribe: async function* () {
+              yield { tick: 1 };
+              yield { tick: 2 };
+            },
+          },
+        },
+      },
+    });
+  }
+
+  type RichMap = PermissionsMap<Record<string, Record<string, unknown>>>;
+
+  /** Runs one query against the map applied both ways, and returns both results. */
+  async function bothWays(map: RichMap, source: string, options?: ApplyPermissionsOptions) {
+    const copied = await graphql({
+      schema: applyPermissions(richSchema(), map, options),
+      source,
+      contextValue: {},
+    });
+    const mutated = await graphql({
+      schema: applyPermissions(richSchema(), map, { ...options, inPlace: true }),
+      source,
+      contextValue: {},
+    });
+    return { copied, mutated };
+  }
+
+  it('returns the very schema it was given, now guarded', async () => {
+    const base = richSchema();
+    const guarded = applyPermissions(base, { Query: { note: deny } } as RichMap, {
+      inPlace: true,
+    });
+    expect(guarded).toBe(base);
+    const result = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('enforces exactly what the middleware path enforces', async () => {
+    const map: RichMap = { Note: { secret: deny, '*': accept }, '*': { notes: deny } };
+    const source = '{ note { id body secret } notes { id } }';
+    for (const options of [
+      undefined,
+      { fallbackRule: deny },
+      { fallbackRule: deny, maskDenials: true },
+      { fallbackError: 'Not Authorised!' },
+    ] satisfies (ApplyPermissionsOptions | undefined)[]) {
+      const { copied, mutated } = await bothWays(map, source, options);
+      expect(mutated.data).toEqual(copied.data);
+      expect(mutated.errors?.map((e) => e.message)).toEqual(copied.errors?.map((e) => e.message));
+    }
+  });
+
+  it('guards a field that has no resolver of its own', async () => {
+    const { copied, mutated } = await bothWays({ Note: { body: deny } }, '{ note { id body } }');
+    expect(copied.errors?.[0]?.message).toBe('Forbidden');
+    expect(mutated.errors?.[0]?.message).toBe('Forbidden');
+    expect(mutated.data).toEqual({ note: { id: '1', body: null } });
+  });
+
+  it("guards a subscription field's subscribe, as graphql-middleware does", async () => {
+    async function firstEvent(schema: GraphQLSchema) {
+      const out = await subscribe({ schema, document: parse('subscription { tick }') });
+      if (Symbol.asyncIterator in out) {
+        const { value } = await out[Symbol.asyncIterator]().next();
+        return (value as ExecutionResult).data;
+      }
+      return out.errors?.[0]?.message;
+    }
+    const denied = { Subscription: { tick: deny } } as RichMap;
+    expect(await firstEvent(applyPermissions(richSchema(), denied))).toBe('Forbidden');
+    expect(await firstEvent(applyPermissions(richSchema(), denied, { inPlace: true }))).toBe(
+      'Forbidden',
+    );
+    const allowed = { Subscription: { tick: accept } } as RichMap;
+    expect(await firstEvent(applyPermissions(richSchema(), allowed, { inPlace: true }))).toEqual({
+      tick: 1,
+    });
+  });
+
+  it('validates the map before touching the schema', async () => {
+    const base = richSchema();
+    expect(() =>
+      applyPermissions(base, { Query: { note: deny }, Nope: deny } as RichMap, { inPlace: true }),
+    ).toThrow(PermissionsError);
+    const result = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('refuses to guard a schema twice', () => {
+    const base = richSchema();
+    applyPermissions(base, { Query: { note: accept } } as RichMap, { inPlace: true });
+    expect(() =>
+      applyPermissions(base, { Query: { note: deny } } as RichMap, { inPlace: true }),
+    ).toThrow(/already guarded/);
+  });
+
+  it('leaves introspection working under fallbackRule: deny', async () => {
+    const schema = applyPermissions(richSchema(), {} as RichMap, {
+      fallbackRule: deny,
+      inPlace: true,
+    });
+    const result = await graphql({ schema, source: '{ __schema { queryType { name } } }' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ __schema: { queryType: { name: 'Query' } } });
+  });
+
+  it('lets a scoping-style rule rewrite the arguments it forwards', async () => {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { echo(word: String): String }`,
+      resolvers: { Query: { echo: (_: unknown, args: { word: string }) => args.word } },
+    });
+    const rewrite: Rule = (resolve, parent, _args, context, info) =>
+      resolve(parent, { word: 'rewritten' }, context, info);
+    applyPermissions(schema, { Query: { echo: rewrite } } as RichMap, { inPlace: true });
+    const result = await graphql({ schema, source: '{ echo(word: "original") }' });
+    expect(result.data).toEqual({ echo: 'rewritten' });
   });
 });

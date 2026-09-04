@@ -8,7 +8,7 @@
 import { envelop, useEngine, useSchema } from '@envelop/core';
 import { makeExecutableSchema } from '@graphql-tools/schema';
 import * as GraphQLJS from 'graphql';
-import { type GraphQLSchema, graphql, parse } from 'graphql';
+import { type GraphQLSchema, graphql, isObjectType, parse } from 'graphql';
 import { bench, describe } from 'vitest';
 import { useGraphQLCasl } from '../src/envelop.js';
 import {
@@ -21,6 +21,7 @@ import {
   createTyped,
   deny,
   type PermissionsMap,
+  resolvePermissions,
   rule,
 } from '../src/index.js';
 
@@ -212,4 +213,39 @@ describe('apply time', () => {
       { fallbackRule: deny, maskDenials: true, fallbackError: 'Nope' },
     );
   });
+
+  // The half this package owns: validation plus the per-field rule lookup for
+  // every field, without graphql-middleware's rebuild.
+  bench(`resolvePermissions only, ${TYPES} types x ${FIELDS} fields, fallbackRule: deny`, () => {
+    const permissionFor = resolvePermissions(
+      big,
+      { Query: { t0: accept } },
+      { fallbackRule: deny },
+    );
+    for (const type of Object.values(big.getTypeMap())) {
+      if (!isObjectType(type)) continue;
+      for (const fieldName of Object.keys(type.getFields())) permissionFor(type.name, fieldName);
+    }
+  });
+
+  // `inPlace` mutates, and refuses a second pass over the same schema, so each
+  // iteration has to build a fresh one — and vitest's bench options carry no
+  // per-iteration hook to keep that out of the timing. So the build is timed
+  // on its own, and the in-place rows are read as "row minus baseline".
+  bench(`makeExecutableSchema only, ${TYPES} types x ${FIELDS} fields (baseline)`, () => {
+    makeExecutableSchema({ typeDefs: bigTypeDefs });
+  });
+
+  bench(`build + applyPermissions inPlace, ${TYPES} types x ${FIELDS} fields, sparse map`, () => {
+    const fresh = makeExecutableSchema({ typeDefs: bigTypeDefs });
+    applyPermissions(fresh, { Query: { t0: accept } }, { inPlace: true });
+  });
+
+  bench(
+    `build + applyPermissions inPlace, ${TYPES} types x ${FIELDS} fields, fallbackRule: deny`,
+    () => {
+      const fresh = makeExecutableSchema({ typeDefs: bigTypeDefs });
+      applyPermissions(fresh, { Query: { t0: accept } }, { fallbackRule: deny, inPlace: true });
+    },
+  );
 });
