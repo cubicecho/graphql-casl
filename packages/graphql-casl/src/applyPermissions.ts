@@ -454,7 +454,7 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  * and a **resolver error** (the field was allowed and the resolver failed).
  *
  * A rule built by `rule()` — which is every rule this library produces except
- * `onResult`, `scopeArgs` and `wrap` — exposes its decision as a check, and the
+ * `onResult`, `scopeArgs`, `validateArgs` and `wrap` — exposes its decision as a check, and the
  * wrapper asks that directly. A denial is then a *returned* value, not a thrown
  * one, so masking it costs no `Error` construction and no stack capture: on a
  * 100-row list with 5 masked fields that is 500 errors never built. It also

@@ -458,6 +458,7 @@ Everything past the four steps, in rough order of how often it comes up.
 | [Wildcards](#wildcards) | One rule should cover a whole type, or one field across every type |
 | [Row-level filtering](#row-level-filtering) | A list should return fewer rows rather than be denied outright |
 | [Scoping generated resolvers](#scoping-generated-resolvers-optional) | The resolver is generated and you can only reach its arguments |
+| [Validating arguments](#validating-arguments) | The arguments need checking the SDL cannot express — blank strings, ranges, one field against another |
 | [Using the map without `graphql-middleware`](#using-the-map-without-graphql-middleware) | You're building your own integration |
 | [Enforcing the map through envelop](#enforcing-the-map-through-envelop-optional) | Yoga, Apollo 4+, a gateway, or any schema you don't own |
 | [Delegating to an external policy engine](#delegating-to-an-external-policy-engine) | Permissions are relationship-derived — OpenFGA, Cerbos, OPA, Oso |
@@ -1061,6 +1062,81 @@ mutations outright: scoping happens *before* the resolver, so nothing has
 happened yet when it decides. Keep `onDenyAll: 'deny'` there, though: a
 forbidden delete should fail, not succeed while matching nothing.
 
+### Validating arguments
+
+GraphQL's input coercion checks *shape* — the right scalars in the right
+places. It has nothing to say about a title that is blank, an end date before
+its start, or a page size of ten million, so those checks end up hand-written at
+the top of each resolver. `validateArgs` lifts them into the permissions map,
+next to the authorization the same field needs.
+
+It takes any [Standard Schema](https://standardschema.dev) — a zod (3.24+),
+valibot, arktype or yup (1.7+) schema, or anything else with a `~standard`
+property — so you bring the validator you already use and the package adds no
+dependency:
+
+```ts
+import { validateArgs, wrap } from '@vantreeseba/graphql-casl';
+import { z } from 'zod';
+
+const CreateNoteArgs = z.object({
+  input: z.object({
+    title: z.string().trim().min(1, 'A note needs a title'),
+    tags: z.array(z.string()).max(10).default([]),
+  }),
+});
+
+const permissions = {
+  Mutation: {
+    createNote: wrap(canUser(Actions.create, Subject.Note), validateArgs(CreateNoteArgs)),
+  },
+} satisfies PermissionsMap<Resolvers>;
+```
+
+On success the resolver receives the schema's **parsed output** as its `args` —
+`title` trimmed, `tags` defaulted — which is the point of running a schema
+rather than a predicate. `ValidatedArgs<typeof CreateNoteArgs>` names that type.
+Pass `{ replace: false }` to validate only and leave the arguments exactly as
+GraphQL coerced them.
+
+On failure the field rejects with a `GraphQLError` whose message lists the
+issues, with `extensions.code: 'BAD_USER_INPUT'` and an `extensions.issues`
+array of `{ message, path }`:
+
+```json
+{
+  "message": "input.title: A note needs a title",
+  "path": ["createNote"],
+  "extensions": {
+    "code": "BAD_USER_INPUT",
+    "issues": [{ "message": "A note needs a title", "path": ["input", "title"] }]
+  }
+}
+```
+
+That failure is **not a permission denial**, and [error control](#error-control)
+treats it accordingly: `fallbackError` never rewords it, since it named its own
+error; `debug` has nothing to reveal; and under `onDeny: 'filter'` it keeps
+`BAD_USER_INPUT` rather than taking `UNAUTHORIZED_FIELD_OR_TYPE`. The one mode
+that treats it like a denial is `onDeny: 'mask'`, which nulls the field and says
+nothing — bad input then reads as a missing record, the trade-off `'mask'`
+already makes everywhere. An error thrown by the validator *itself* is a rule
+failure, not a validation result, and is replaced or revealed as one.
+
+Three things to know:
+
+- **It is not a gate**, and like `scopeArgs` it cannot be an operand of `and` /
+  `or` / `not` / `chain` / `race` — it decides by rewriting arguments and calling
+  the resolver. Compose it with `wrap`, and put the authorization rule *first*:
+  a caller who may not run the field at all should learn that, not what is wrong
+  with their input.
+- **Rewritten arguments bypass GraphQL's coercion**, exactly as `scopeArgs`'s do.
+  A transform that changes a value's *type* — a string into a `Date` — hands the
+  resolver something the SDL never promised. Often that is the point; make sure
+  the resolver expects it.
+- **Coming from `graphql-shield`'s `inputRule`**: same idea, no yup dependency,
+  and the parsed output reaches the resolver instead of being thrown away.
+
 ### Using the map without `graphql-middleware`
 
 `applyPermissions` is `resolvePermissions` plus `graphql-middleware`.
@@ -1364,7 +1440,7 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, options);
 | `cache: 'contextual' \| 'strict'` per rule | [same option, same three levels](#caching-a-rules-answer), same default (`'no_cache'`) — and `createCan` memoizes `getAbility(context)` per request on top |
 | `cache: (parent, args, ctx, info) => key` | same escape hatch; returning `undefined` skips the cache for that call. No `hashFunction`: `'strict'` keys arguments with a built-in sorted-key stringifier rather than `object-hash` |
 | unique rule names required (the cache is keyed by name) | not required — each rule instance owns its cache, so two rules named `isOwner` never share an answer |
-| `inputRule` (yup-backed argument validation) | no equivalent — validate arguments in a `rule()` check or in the resolver |
+| `inputRule` (yup-backed argument validation) | [`validateArgs(schema)`](#validating-arguments), taking any Standard Schema (zod, valibot, arktype, yup 1.7+) — no validator dependency, and the parsed output reaches the resolver |
 | `rule({ fragment })` | not supported, deliberately — see [the note below](#three-differences-that-will-bite) |
 
 ### Three differences that will bite

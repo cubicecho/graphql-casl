@@ -64,6 +64,8 @@ packages/
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       validateGraphQLRules.ts — checks stored ability rules (subjects, fields, conditions) against
                             the runtime schema; the DB-rules counterpart of validatePermissions
+      validateArgs.ts     — validateArgs: argument validation as a rule over any Standard Schema
+                            (the spec's interface is vendored here); the resolver gets the parsed args
       subjects.ts         — subjectsOf / createTyped
       createCan.ts        — factory tying a CASL ability to the rule layer
     test/
@@ -74,6 +76,7 @@ packages/
       conditions.test.ts                 — the leaf walker, plus a row-by-row cross-check vs ability.can
       graphqlAbility.test.ts             — typed ability: conditions, operators, stored-rule rehydration
       validateGraphQLRules.test.ts       — stored rules vs the schema: every rejection, and what rehydration lets through
+      validateArgs.test.ts               — validateArgs: a hand-rolled Standard Schema, zod, and error control through applyPermissions
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit
