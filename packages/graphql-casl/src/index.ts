@@ -31,13 +31,18 @@ export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
 export type {
   ApplyPermissionsOptions,
+  DenialMode,
+  DenialReport,
   FallbackError,
   PermissionResolver,
 } from './applyPermissions.js';
 export {
+  AUTHORIZATION_ERRORS_EXTENSION,
   applyPermissions,
   PermissionsError,
+  reportDenials,
   resolvePermissions,
+  UNAUTHORIZED_FIELD_OR_TYPE,
   validatePermissions,
 } from './applyPermissions.js';
 export { and, chain, not, or, race, wrap } from './combinators.js';

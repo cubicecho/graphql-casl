@@ -9,6 +9,8 @@
 
 import {
   defaultFieldResolver,
+  type ExecutionResult,
+  GraphQLError,
   type GraphQLField,
   type GraphQLFieldResolver,
   type GraphQLNamedType,
@@ -24,6 +26,8 @@ import {
   isObjectType,
   isScalarType,
   isUnionType,
+  locatedError,
+  responsePathAsArray,
 } from 'graphql';
 import {
   applyMiddleware,
@@ -302,6 +306,141 @@ type Mask = () => unknown;
 const MASK_NULL: Mask = () => null;
 const MASK_LIST: Mask = () => [];
 
+/**
+ * The `extensions.code` a denial carries under `onDeny: 'filter'`.
+ *
+ * It is Apollo Router's code for a field its authorization directives removed
+ * from a query, so clients and tooling that already handle the router's partial
+ * responses handle these without learning a second vocabulary.
+ */
+export const UNAUTHORIZED_FIELD_OR_TYPE = 'UNAUTHORIZED_FIELD_OR_TYPE';
+
+/**
+ * The response extension {@link reportDenials} fills under
+ * `report: 'extensions'` — again Apollo Router's key, holding the same error
+ * objects it would otherwise put in `errors`.
+ */
+export const AUTHORIZATION_ERRORS_EXTENSION = 'authorizationErrors';
+
+/** What a denied field does — see {@link ApplyPermissionsOptions.onDeny}. */
+export type DenialMode = 'reject' | 'filter' | 'mask';
+
+/** Where a filtered denial is reported — see {@link ApplyPermissionsOptions.report}. */
+export type DenialReport = 'errors' | 'extensions';
+
+/** Filtered denials the response itself could not carry, per request context. */
+interface DenialRecord {
+  report: DenialReport;
+  errors: GraphQLError[];
+}
+
+const recorded = new WeakMap<object, DenialRecord>();
+
+/** Whether a context value can key the record — a `WeakMap` needs an object. */
+function isRecordable(context: unknown): context is object {
+  return (typeof context === 'object' && context !== null) || typeof context === 'function';
+}
+
+/**
+ * The error a filtered denial is reported as: the denial's own words under the
+ * standard code. A denial that already names a code — a check that returned a
+ * `GraphQLError` with one, or a `fallbackError` that built one — is the rule
+ * author's deliberate choice and is kept as is.
+ */
+function standardized(denial: Error): Error {
+  const extensions = (denial as { extensions?: unknown }).extensions;
+  const own =
+    typeof extensions === 'object' && extensions !== null
+      ? (extensions as Record<string, unknown>)
+      : undefined;
+  if (typeof own?.code === 'string') return denial;
+  return new GraphQLError(denial.message, {
+    originalError: denial,
+    extensions: { ...own, code: UNAUTHORIZED_FIELD_OR_TYPE },
+  });
+}
+
+/**
+ * Delivers a denial under `onDeny: 'filter'`: the field resolves to its mask and
+ * the denial is reported.
+ *
+ * Where the field can carry the report itself it does — a nullable field that
+ * rejects *is* `null` plus an error at that path, and needs no response hook.
+ * Everything else goes through the per-request record {@link reportDenials}
+ * drains: a non-null list, whose `[]` cannot also be an error, and every denial
+ * under `report: 'extensions'`. A field with no mask at all — non-null, not a
+ * list — cannot be filtered, and rejects with the standard code so the denial
+ * propagates exactly as Apollo Router's does. So does a denial with nowhere to
+ * be recorded, when the context is not an object.
+ */
+function deliver(
+  denial: Error,
+  mask: Mask | undefined,
+  report: DenialReport,
+  context: unknown,
+  info: GraphQLResolveInfo,
+): unknown {
+  const error = standardized(denial);
+  if (!mask || (mask === MASK_NULL && report === 'errors') || !isRecordable(context)) {
+    return Promise.reject(error);
+  }
+  let record = recorded.get(context);
+  if (!record) {
+    record = { report, errors: [] };
+    recorded.set(context, record);
+  }
+  record.errors.push(locatedError(error, info.fieldNodes, responsePathAsArray(info.path)));
+  return mask();
+}
+
+/**
+ * Merges the denials `onDeny: 'filter'` recorded for a request into its
+ * execution result — the ones the response could not carry through the denied
+ * field itself (see {@link ApplyPermissionsOptions.onDeny}).
+ *
+ * The `/envelop` entry point calls this for you. Under `applyPermissions` no
+ * hook sees the finished response, so call it from your server's own — Apollo
+ * Server's `willSendResponse`, or straight after `execute`:
+ *
+ * ```ts
+ * const result = reportDenials(contextValue, await execute({ schema, document, contextValue }));
+ * ```
+ *
+ * Under `report: 'errors'` the denials are appended to `result.errors`; under
+ * `report: 'extensions'` they are formatted into
+ * `result.extensions.authorizationErrors`. The record is drained, so a context
+ * is reported once, and a context with nothing recorded returns the result
+ * untouched. Nothing is recorded under `'reject'` or `'mask'`.
+ *
+ * @param context - The request's context value: the one the resolvers saw.
+ * @param result - The execution result to report into.
+ * @returns The result with the denials merged in, or `result` itself if there were none.
+ */
+export function reportDenials<TResult extends ExecutionResult>(
+  context: unknown,
+  result: TResult,
+): TResult {
+  if (!isRecordable(context)) return result;
+  const record = recorded.get(context);
+  if (!record) return result;
+  recorded.delete(context);
+  if (record.report === 'errors') {
+    return { ...result, errors: [...(result.errors ?? []), ...record.errors] };
+  }
+  const existing = result.extensions?.[AUTHORIZATION_ERRORS_EXTENSION];
+  const previous = Array.isArray(existing) ? existing : [];
+  return {
+    ...result,
+    extensions: {
+      ...result.extensions,
+      [AUTHORIZATION_ERRORS_EXTENSION]: [
+        ...previous,
+        ...record.errors.map((error) => error.toJSON()),
+      ],
+    },
+  };
+}
+
 /** A rule whose middleware is exactly "run `.check`, then `resolve`". */
 function isPlainRule(rule: Rule): rule is CheckableRule {
   return (rule as Partial<Record<typeof PLAIN_RULE, boolean>>)[PLAIN_RULE] === true;
@@ -327,8 +466,8 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  * by capturing what the wrapped `resolve` threw, and the rest are rule failures.
  */
 function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
-  const { fallbackError, allowExternalErrors, debug } = options;
-  if (!fallbackError && allowExternalErrors && !debug && !mask) return rule;
+  const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
+  if (!fallbackError && allowExternalErrors && !debug && !mask && onDeny !== 'filter') return rule;
 
   if (isPlainRule(rule)) return withCheckedErrorControl(rule.check, options, mask);
 
@@ -363,6 +502,17 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
       // bug as an authorization decision, so `debug` rethrows it untouched.
       if (denialKind === undefined && !isResolverError && debug) throw error;
 
+      // Filtering changes how a decision is delivered, not what it says: the
+      // denial keeps its words, `fallbackError` still rewords a generic one,
+      // and only then is it masked and reported.
+      if (denialKind !== undefined && onDeny === 'filter') {
+        const denial =
+          fallbackError && denialKind === 'default'
+            ? await resolveFallbackError(fallbackError, error, parent, args, context, info)
+            : (error as Error);
+        return deliver(denial, mask, report, context, info);
+      }
+
       // Masking replaces a decision the rule made, never a failure it suffered:
       // a broken rule or a broken resolver still surfaces.
       if (mask && denialKind !== undefined) return mask();
@@ -384,7 +534,7 @@ function withCheckedErrorControl(
   options: ErrorControl,
   mask: Mask | undefined,
 ): Rule {
-  const { fallbackError, allowExternalErrors, debug } = options;
+  const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
   const replaceResolverErrors = !allowExternalErrors && fallbackError !== undefined;
 
   /** Rejects with the `fallbackError` built for `original`. */
@@ -446,11 +596,20 @@ function withCheckedErrorControl(
   ): unknown {
     if (passes(result)) return allowed(resolve, parent, args, context, info);
     // Masking replaces a decision the rule made, whatever words it chose.
-    if (mask) return mask();
+    if (mask && onDeny === 'mask') return mask();
     const denial = denialFrom(result) as Error;
     // An explicit denial is the rule author's own words; only the generic
     // default is replaced.
-    if (!fallbackError || denialKindOf(denial) === 'explicit') return Promise.reject(denial);
+    const explicit = denialKindOf(denial) === 'explicit';
+    if (onDeny === 'filter') {
+      if (fallbackError && !explicit) {
+        return resolveFallbackError(fallbackError, denial, parent, args, context, info).then(
+          (error) => deliver(error, mask, report, context, info),
+        );
+      }
+      return deliver(denial, mask, report, context, info);
+    }
+    if (!fallbackError || explicit) return Promise.reject(denial);
     return replaced(fallbackError, denial, parent, args, context, info);
   }
 
@@ -558,7 +717,8 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     fallbackError: options?.fallbackError,
     allowExternalErrors: options?.allowExternalErrors ?? true,
     debug: options?.debug ?? false,
-    maskDenials: options?.maskDenials ?? false,
+    onDeny: denialModeOf(options),
+    report: options?.report ?? 'errors',
   };
   const fallbackRule = options?.fallbackRule;
   const resolved = new Map<string, Rule | undefined>();
@@ -595,7 +755,7 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     const rule = field ? ruleForField(raw, typeName, fieldName, fallbackRule) : undefined;
     const guard =
       rule && field
-        ? wrapped(rule, errorControl.maskDenials ? maskFor(field.type) : undefined)
+        ? wrapped(rule, errorControl.onDeny === 'reject' ? undefined : maskFor(field.type))
         : undefined;
 
     resolved.set(key, guard);
@@ -715,7 +875,25 @@ interface ErrorControl {
   fallbackError: FallbackError | undefined;
   allowExternalErrors: boolean;
   debug: boolean;
-  maskDenials: boolean;
+  onDeny: DenialMode;
+  report: DenialReport;
+}
+
+/** Resolves `onDeny` and its `maskDenials` shorthand, rejecting a contradiction. */
+function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {
+  const onDeny = options?.onDeny ?? (options?.maskDenials ? 'mask' : 'reject');
+  const problems: string[] = [];
+  if (options?.maskDenials && onDeny !== 'mask') {
+    problems.push(
+      `\`maskDenials: true\` is \`onDeny: 'mask'\`, which contradicts \`onDeny: '${onDeny}'\``,
+    );
+  }
+  if (options?.report !== undefined && onDeny !== 'filter') {
+    problems.push(`\`report\` only applies under \`onDeny: 'filter'\`, not \`'${onDeny}'\``);
+  }
+  if (problems.length > 0)
+    throw new PermissionsError(problems, 'the options contradict each other');
+  return onDeny;
 }
 
 /** Options for {@link applyPermissions}. */
@@ -786,28 +964,67 @@ export interface ApplyPermissionsOptions {
   debug?: boolean;
 
   /**
-   * Whether a denied field resolves to an empty value instead of raising an
-   * error. Defaults to `false`.
+   * What a denied field does. Defaults to `'reject'`.
    *
-   * A thrown denial propagates up the non-null chain: deny one field of
-   * `todos: [Todo!]!` and the *entire* `data` payload becomes `null`, so an
-   * unauthorized corner of a query destroys the authorized rest of it. Masking
-   * makes partial responses usable — the denied field comes back as `null`, or
-   * as `[]` where the field is a non-null list, and the rest of the response
-   * survives.
+   * - `'reject'` throws the denial. GraphQL null propagation then applies: deny
+   *   one field of `todos: [Todo!]!` and the *entire* `data` payload becomes
+   *   `null`, so an unauthorized corner of a query destroys the authorized rest
+   *   of it.
+   * - `'filter'` resolves the denied field to `null`, or to `[]` where it is a
+   *   non-null list, keeps executing, and reports the denial under the standard
+   *   code {@link UNAUTHORIZED_FIELD_OR_TYPE} with the field's path — the
+   *   partial-response contract Apollo Router's authorization directives set,
+   *   so clients that handle those handle this. Where it lands is
+   *   {@link report}. `fallbackError` still rewords a generic denial first, and
+   *   a denial that names its own code keeps it.
+   * - `'mask'` resolves the field the same way and says nothing, so "you may
+   *   not read this" and "this does not exist" become the same response. That
+   *   is the point when the existence of a record is itself privileged, and a
+   *   support burden otherwise.
    *
-   * The trade-off is that the client is no longer told *why* something is
-   * missing: "you may not read this" and "this does not exist" become the same
-   * response. That is a feature when the existence of the record is itself
-   * privileged, and a support burden otherwise.
-   *
-   * Two limits worth knowing:
+   * Two limits bound both `'filter'` and `'mask'`:
    *
    * - A non-null field that is not a list — `id: ID!` — has no value that
-   *   satisfies it, so it still throws. Masking is bounded by the schema.
-   * - Only *denials* are masked. A rule that threw a bug of its own, or a
-   *   resolver that failed, still surfaces its error; silently nulling those
-   *   would hide outages as permission decisions.
+   *   satisfies it, so it still rejects (under the standard code with
+   *   `'filter'`) and propagates to the nearest nullable ancestor, exactly as
+   *   the router's do. Filtering is bounded by the schema.
+   * - Only *denials* are filtered or masked. A rule that threw a bug of its
+   *   own, or a resolver that failed, still surfaces its error; silently
+   *   nulling those would hide outages as permission decisions.
+   *
+   * Under `'filter'`, a denial the field cannot carry itself — a non-null list
+   * resolved to `[]`, and everything under `report: 'extensions'` — is held per
+   * request until {@link reportDenials} merges it into the result. The
+   * `/envelop` entry point does that for you; under `applyPermissions`, call it
+   * from your server's response hook. Without that call those denials are
+   * silently masked, which is the one way `'filter'` degrades. The record keys
+   * on the context value, so it must be an object; with any other context the
+   * denial rejects instead.
+   *
+   * The default stays `'reject'` for compatibility. `'filter'` is the better
+   * choice for new code and is planned to become the default in 2.0.
+   */
+  onDeny?: DenialMode;
+
+  /**
+   * Where a filtered denial is reported. Defaults to `'errors'`. Only applies
+   * under `onDeny: 'filter'`, and is rejected alongside any other mode.
+   *
+   * - `'errors'` puts it in the response's `errors` array, as Apollo Router
+   *   does by default. A nullable field carries it by rejecting — `null` plus
+   *   an error at that path, no hook needed — and a non-null list's `[]` goes
+   *   through {@link reportDenials}.
+   * - `'extensions'` keeps `errors` clean and lists them under
+   *   `extensions.authorizationErrors` instead — the router's key — for clients
+   *   that treat any entry in `errors` as a failed request but still want to
+   *   know which parts of the query were filtered. Every denial goes through
+   *   {@link reportDenials} in this mode.
+   */
+  report?: DenialReport;
+
+  /**
+   * Shorthand for `onDeny: 'mask'`, from before {@link onDeny} existed. Setting
+   * the two to different things is rejected.
    */
   maskDenials?: boolean;
 
@@ -861,8 +1078,8 @@ export interface ApplyPermissionsOptions {
  * generic denial error, {@link ApplyPermissionsOptions.allowExternalErrors}
  * governs whether resolver errors reach the client, and
  * {@link ApplyPermissionsOptions.debug} surfaces a rule's own failures instead of
- * reporting them as denials, and {@link ApplyPermissionsOptions.maskDenials}
- * resolves a denied field to `null`/`[]` rather than raising an error.
+ * reporting them as denials, and {@link ApplyPermissionsOptions.onDeny} filters
+ * or masks a denied field rather than raising an error.
  *
  * The returned schema is a guarded *copy* built by `graphql-middleware`. That
  * rebuild is where all the time goes on a big schema;

@@ -223,7 +223,7 @@ One sharp edge is visible in row two. `todos` is `[Todo!]!`, so a denial there
 has no `null` to land on and bubbles to the root — `data` comes back `null` and
 an authorized `health` in the same query is destroyed with it. That is standard
 GraphQL non-null propagation rather than anything this library does, and
-[`maskDenials`](#masking-denials) is the way out.
+[`onDeny: 'filter'`](#filtering-denials) is the way out.
 
 Both messages are replaceable: see [Error control](#error-control) for
 `GraphQLError`s with codes, and
@@ -454,7 +454,7 @@ Everything past the four steps, in rough order of how often it comes up.
 | [Field-level rules](#field-level-rules) | A single field of a type needs its own rule |
 | [Field permissions from the ability](#field-permissions-from-the-ability) | The ability already lists fields (`can('read', 'User', ['id'])`) and you don't want to restate them |
 | [Combining rules](#combining-rules) | A field needs more than one check — `and` / `or` / `not` / `chain` / `race` / `wrap` |
-| [Error control](#error-control) | `Forbidden` isn't enough: you need codes, masking, or a look at what actually broke |
+| [Error control](#error-control) | `Forbidden` isn't enough: you need codes, filtering, or a look at what actually broke |
 | [Wildcards](#wildcards) | One rule should cover a whole type, or one field across every type |
 | [Row-level filtering](#row-level-filtering) | A list should return fewer rows rather than be denied outright |
 | [Scoping generated resolvers](#scoping-generated-resolvers-optional) | The resolver is generated and you can only reach its arguments |
@@ -751,8 +751,8 @@ Three failures reach a client as errors and the options treat them differently:
 | **Resolver error** — the field was allowed, the resolver failed | reaches the client verbatim | `allowExternalErrors: false` masks it |
 | **Rule failure** — `getAbility` threw, a check has a bug | reported as a denial | `debug: true` rethrows it untouched |
 
-A fourth option, `maskDenials`, removes the denial from the response entirely
-rather than rewording it — see [Masking denials](#masking-denials) below.
+A fourth option, `onDeny`, changes how a denial is delivered rather than what it
+says — see [Filtering denials](#filtering-denials) below.
 
 > **Note for `graphql-shield` users:** `allowExternalErrors` defaults to `true`
 > here, the opposite of shield, which masks resolver errors by default. Masking
@@ -760,33 +760,109 @@ rather than rewording it — see [Masking denials](#masking-denials) below.
 > silently swallowing resolver errors on upgrade would be worse than leaving the
 > choice explicit. Set it to `false` deliberately.
 
-#### Masking denials
+#### Filtering denials
 
 A thrown denial propagates up the non-null chain. Deny one field of
 `todos: [Todo!]!` and the *whole* `data` payload becomes `null` — an
-unauthorized corner of a query destroys the authorized rest of it.
-`maskDenials` resolves a denied field to an empty value instead:
+unauthorized corner of a query destroys the authorized rest of it. `onDeny`
+chooses what a denied field does instead:
 
 ```ts
 const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
-  maskDenials: true,
+  onDeny: 'filter', // 'reject' (the default) | 'filter' | 'mask'
 });
 ```
+
+| `onDeny` | Denied field | The caller is told |
+| --- | --- | --- |
+| `'reject'` | throws, and non-null propagation applies | an `errors` entry, `Forbidden` |
+| `'filter'` | resolves to `null` / `[]`; the rest of the query survives | an `errors` entry with the standard code and the field's path |
+| `'mask'` | resolves to `null` / `[]`; the rest of the query survives | nothing |
+
+**`'filter'`** is Apollo Router's partial-response contract. The response
+carries the data the caller may see and one error per filtered field, with
+`extensions.code: "UNAUTHORIZED_FIELD_OR_TYPE"` and the path, so clients and
+tooling that already handle the router's authorization directives handle this
+without learning anything new:
+
+```json
+{
+  "data": { "todos": [], "health": "ok" },
+  "errors": [
+    {
+      "message": "Forbidden",
+      "path": ["todos"],
+      "extensions": { "code": "UNAUTHORIZED_FIELD_OR_TYPE" }
+    }
+  ]
+}
+```
+
+Filtering changes how a denial is delivered, not what it says. A CASL reason or
+a check's own message is still the message, `fallbackError` still rewords a
+generic denial, and a denial that names its own `extensions.code` keeps it.
+
+**`'mask'`** says nothing at all, so "you may not read this" and "this does not
+exist" become indistinguishable. That is the point when the existence of a
+record is itself privileged, and a support burden otherwise. `maskDenials: true`
+is the older spelling of the same mode.
+
+Both are bounded by the schema:
 
 | Field | Denied result |
 | --- | --- |
 | `me: User` | `null` |
 | `todos: [Todo!]` | `null` |
 | `todos: [Todo!]!` | `[]` |
-| `id: ID!` | still throws — no value satisfies it |
+| `id: ID!` | still throws — no value satisfies it, so it propagates to the nearest nullable ancestor (with the standard code under `'filter'`) |
 
-The response carries no error at all, so "you may not read this" and "this does
-not exist" become indistinguishable. That is the point when the existence of a
-record is itself privileged, and a support burden otherwise.
-
-Only *denials* are masked. A rule that threw a bug of its own, and a resolver
+And both touch only *denials*. A rule that threw a bug of its own, and a resolver
 that failed on a permitted field, both still surface their errors — silently
 nulling those would hide an outage as a permission decision.
+
+##### Where filtered denials are reported
+
+A nullable field carries its own report: it resolves to `null` and the error
+sits at its path, which is how GraphQL delivers any field error. A non-null
+list is different — `[]` cannot also be an error — so that denial is held per
+request until `reportDenials` merges it into the finished result. Under
+[envelop](#enforcing-the-map-through-envelop-optional) that happens for you.
+`applyPermissions` never sees the finished response, so call it from your
+server's own response hook, or straight after `execute`:
+
+```ts
+import { reportDenials } from '@vantreeseba/graphql-casl';
+
+const result = reportDenials(contextValue, await execute({ schema, document, contextValue }));
+```
+
+Skip that call and those denials are silently masked — the one way `'filter'`
+degrades. The record is keyed on the context value, so it must be an object,
+one per request.
+
+`report: 'extensions'` moves every filtered denial out of `errors` and into
+`extensions.authorizationErrors` (the router's key again). That keeps `errors`
+clean for clients that treat any entry there as a failed request — Apollo
+Client's default `errorPolicy` among them — while still saying which parts of
+the query were filtered. In this mode every denial goes through `reportDenials`.
+
+```json
+{
+  "data": { "me": null },
+  "extensions": {
+    "authorizationErrors": [
+      {
+        "message": "Forbidden",
+        "path": ["me"],
+        "extensions": { "code": "UNAUTHORIZED_FIELD_OR_TYPE" }
+      }
+    ]
+  }
+}
+```
+
+The default stays `'reject'`, so nothing changes on upgrade. `'filter'` is the
+better choice for new code and is the planned default for 2.0.
 
 #### Denial reasons from CASL
 
@@ -991,7 +1067,7 @@ forbidden delete should fail, not succeed while matching nothing.
 `resolvePermissions` stops one step earlier and hands back the per-field lookup,
 so the same map can be enforced through another integration — the envelop entry
 point below, an Apollo plugin, hand-wrapped resolvers — with identical wildcard
-precedence, `fallbackRule` coverage, error control and masking:
+precedence, `fallbackRule` coverage, error control and filtering:
 
 ```ts
 const permissionFor = resolvePermissions<Resolvers>(schema, permissions, options);
@@ -1027,7 +1103,7 @@ const yoga = createYoga({
     useGraphQLCasl<Resolvers>({
       permissions,
       fallbackRule: deny,   // every option `applyPermissions` takes
-      maskDenials: true,
+      onDeny: 'filter',
     }),
   ],
 });
@@ -1035,9 +1111,13 @@ const yoga = createYoga({
 
 `options.permissions` is the map; every other key is an
 [`ApplyPermissionsOptions`](#error-control) field. Wildcard precedence,
-`fallbackRule` coverage, error control and masking all behave exactly as they do
-under `applyPermissions` — the plugin calls `resolvePermissions` rather than
+`fallbackRule` coverage, error control and filtering all behave exactly as they
+do under `applyPermissions` — the plugin calls `resolvePermissions` rather than
 reimplementing any of it. Beyond that:
+
+- **Filtered denials are reported for you.** Under `onDeny: 'filter'` the plugin
+  merges each request's held denials into the result as execution finishes, so
+  there is no `reportDenials` call to wire.
 
 - **The map is validated when the schema arrives**, not on the first query that
   touches the offending field, so a map naming a type or field the schema does
@@ -1100,8 +1180,8 @@ unchanged instead of becoming `Forbidden` — that is the intended behaviour her
 and it is why the example returns a string on a negative decision rather than
 throwing on both. Never `catch` and return `false`: that reports an unreachable
 authorization service as "you may not", which is indistinguishable from a real
-verdict in your logs and hides the outage. `maskDenials` respects the same line
-and will not mask it.
+verdict in your logs and hides the outage. `onDeny` respects the same line and
+will neither filter nor mask it.
 
 **Cache the decision per request.** One query can touch the same object dozens
 of times, and each one is a round trip. Set [`cache`](#caching-a-rules-answer)

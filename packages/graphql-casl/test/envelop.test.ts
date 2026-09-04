@@ -13,6 +13,7 @@ import {
   PermissionsError,
   type PermissionsMap,
   rule,
+  UNAUTHORIZED_FIELD_OR_TYPE,
 } from '../src/index.js';
 
 type M = { Note: { id: string; userId: string; body: string; secret: string } };
@@ -176,6 +177,38 @@ describe('useGraphQLCasl', () => {
     const result = await execute('{ notes { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data?.notes).toEqual([]);
+  });
+
+  it('filters a denied non-null list and reports it, with no hook to wire', async () => {
+    const execute = run({ Query: { notes: deny } }, { onDeny: 'filter' });
+    const result = await execute('{ notes { id } }');
+    expect(result.data?.notes).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+    expect(result.errors?.[0]?.path).toEqual(['notes']);
+    expect(result.errors?.[0]?.extensions).toEqual({ code: UNAUTHORIZED_FIELD_OR_TYPE });
+  });
+
+  it('reports filtered denials into extensions when asked', async () => {
+    const execute = run({ Query: { note: deny } }, { onDeny: 'filter', report: 'extensions' });
+    const result = await execute('{ note(id: "n1") { id } }');
+    expect(result.data?.note).toBeNull();
+    expect(result.errors).toBeUndefined();
+    expect(result.extensions?.authorizationErrors).toEqual([
+      expect.objectContaining({
+        message: 'Forbidden',
+        path: ['note'],
+        extensions: { code: UNAUTHORIZED_FIELD_OR_TYPE },
+      }),
+    ]);
+  });
+
+  it('leaves a result with nothing filtered untouched', async () => {
+    const execute = run({ Query: { notes: accept } }, { onDeny: 'filter', report: 'extensions' });
+    const result = await execute('{ notes { id } }');
+    expect(result.errors).toBeUndefined();
+    expect(result.extensions).toBeUndefined();
+    expect(result.data?.notes).toHaveLength(2);
   });
 
   it('rejects a map that does not match the schema', () => {

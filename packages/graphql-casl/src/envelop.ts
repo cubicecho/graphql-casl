@@ -11,8 +11,10 @@
  *
  * The permission logic itself is not reimplemented here: the plugin calls
  * {@link resolvePermissions}, so wildcard precedence, `fallbackRule` coverage,
- * error control, masking and map validation behave exactly as they do under
- * `applyPermissions`.
+ * error control, filtering and map validation behave exactly as they do under
+ * `applyPermissions`. One thing it can do that `applyPermissions` cannot: under
+ * `onDeny: 'filter'` it sees the finished result, so the denials a field could
+ * not carry itself are reported without any call to {@link reportDenials}.
  *
  * `@envelop/core` and `@envelop/on-resolve` are **optional** peer dependencies —
  * they are only needed by consumers who import this entry point, which is why
@@ -32,12 +34,13 @@
  * @packageDocumentation
  */
 
-import type { Plugin } from '@envelop/core';
+import { handleStreamOrSingleExecutionResult, type Plugin } from '@envelop/core';
 import { useOnResolve } from '@envelop/on-resolve';
 import type { GraphQLField, GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
   type PermissionResolver,
+  reportDenials,
   resolvePermissions,
 } from './applyPermissions.js';
 import type { PermissionsMap } from './rules.js';
@@ -106,7 +109,7 @@ export function useGraphQLCasl<
     return resolve;
   }
 
-  return {
+  const plugin: Plugin<TContext> = {
     onPluginInit({ addPlugin }) {
       addPlugin(
         useOnResolve<TContext>(({ info, resolver, replaceResolver }) => {
@@ -151,4 +154,21 @@ export function useGraphQLCasl<
       permissionsFor(schema);
     },
   };
+
+  // Under `onDeny: 'filter'` the denials a field could not carry itself — a
+  // non-null list's `[]`, everything under `report: 'extensions'` — are merged
+  // into the result once execution is done. This is the hook graphql-middleware
+  // never offers `applyPermissions`, and the reason `reportDenials` is public.
+  if (permissionOptions.onDeny === 'filter') {
+    plugin.onExecute = () => ({
+      onExecuteDone(payload) {
+        return handleStreamOrSingleExecutionResult(payload, ({ args, result, setResult }) => {
+          const reported = reportDenials(args.contextValue, result);
+          if (reported !== result) setResult(reported);
+        });
+      },
+    });
+  }
+
+  return plugin;
 }

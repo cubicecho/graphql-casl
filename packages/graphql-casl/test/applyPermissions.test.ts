@@ -23,9 +23,12 @@ import {
   PermissionsError,
   type PermissionsMap,
   type Rule,
+  reportDenials,
   resolvePermissions,
   rule,
+  UNAUTHORIZED_FIELD_OR_TYPE,
   validatePermissions,
+  wrap,
 } from '../src/index.js';
 
 const typeDefs = /* GraphQL */ `
@@ -692,6 +695,265 @@ describe('applyPermissions — masking denials', () => {
     const result = await graphql({ schema: maskedSchema(deny), source: '{ nullableList { id } }' });
     expect(result.data).toEqual({ nullableList: null });
     expect(result.errors).toBeUndefined();
+  });
+});
+
+describe('applyPermissions — filtering denials', () => {
+  const CODE = { code: UNAUTHORIZED_FIELD_OR_TYPE };
+
+  /** Every field shape filtering has to decide between, under `onDeny: 'filter'`. */
+  function filtering(permissions: LooseMap, options?: ApplyPermissionsOptions): GraphQLSchema {
+    const schema = makeExecutableSchema({
+      typeDefs: /* GraphQL */ `
+        type Todo {
+          id: ID!
+          body: String
+        }
+        type Query {
+          nullable: String
+          required: String!
+          list: [Todo!]!
+          nullableList: [Todo!]
+        }
+      `,
+      resolvers: {
+        Query: {
+          nullable: () => 'ok',
+          required: () => 'ok',
+          list: () => [{ id: '1', body: 'hi' }],
+          nullableList: () => [{ id: '1', body: 'hi' }],
+        },
+      },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(schema, permissions, {
+      onDeny: 'filter',
+      ...options,
+    });
+  }
+
+  /** Executes and reports, the way a server hook would. */
+  async function query(schema: GraphQLSchema, source: string, contextValue: unknown = {}) {
+    return reportDenials(contextValue, await graphql({ schema, source, contextValue }));
+  }
+
+  it('resolves a denied nullable field to null with the standard error, no hook needed', async () => {
+    const result = await graphql({
+      schema: filtering({ Query: { nullable: deny } }),
+      source: '{ nullable }',
+      contextValue: {},
+    });
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+    expect(result.errors?.[0]?.path).toEqual(['nullable']);
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it('resolves a denied non-null list to [] and reports it through reportDenials', async () => {
+    const schema = filtering({ Query: { list: deny } });
+    const unreported = await graphql({ schema, source: '{ list { id } }', contextValue: {} });
+    expect(unreported.data).toEqual({ list: [] });
+    expect(unreported.errors).toBeUndefined();
+
+    const result = await query(schema, '{ list { id } }');
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+    expect(result.errors?.[0]?.path).toEqual(['list']);
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+    expect(result.errors?.[0]?.locations).toEqual([{ line: 1, column: 3 }]);
+  });
+
+  it('keeps the rest of the response when one field is filtered', async () => {
+    const schema = filtering({ Query: { list: deny, nullable: accept } });
+    const result = await query(schema, '{ list { id } nullable }');
+    expect(result.data).toEqual({ list: [], nullable: 'ok' });
+    expect(result.errors?.map((error) => error.path)).toEqual([['list']]);
+  });
+
+  it('reports the path of a denied field inside a list item', async () => {
+    const schema = filtering({ Todo: { body: deny } });
+    const result = await query(schema, '{ list { id body } }');
+    expect(result.data).toEqual({ list: [{ id: '1', body: null }] });
+    expect(result.errors?.[0]?.path).toEqual(['list', 0, 'body']);
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it('still rejects a non-null field that is not a list, under the standard code', async () => {
+    const result = await query(filtering({ Query: { required: deny } }), '{ required }');
+    expect(result.data).toBeNull();
+    expect(result.errors?.[0]?.message).toBe('Forbidden');
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it("keeps a denial's own message as the report", async () => {
+    const schema = filtering({ Query: { list: rule(() => 'Trial expired') } });
+    const result = await query(schema, '{ list { id } }');
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors?.[0]?.message).toBe('Trial expired');
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it('keeps a code the denial named itself', async () => {
+    const paywalled = rule(() => new GraphQLError('Upgrade', { extensions: { code: 'PAYWALL' } }));
+    const result = await query(filtering({ Query: { nullable: paywalled } }), '{ nullable }');
+    expect(result.data).toEqual({ nullable: null });
+    expect(result.errors?.[0]?.extensions).toEqual({ code: 'PAYWALL' });
+  });
+
+  it('still rewords a generic denial with fallbackError, then adds the code', async () => {
+    const schema = filtering({ Query: { list: deny, nullable: deny } }, { fallbackError: 'Nope' });
+    const result = await query(schema, '{ list { id } nullable }');
+    expect(result.data).toEqual({ list: [], nullable: null });
+    expect(result.errors?.map((error) => error.message)).toEqual(['Nope', 'Nope']);
+    expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE]);
+  });
+
+  it('keeps the code a fallbackError chose', async () => {
+    const schema = filtering(
+      { Query: { nullable: deny } },
+      { fallbackError: new GraphQLError('No', { extensions: { code: 'FORBIDDEN' } }) },
+    );
+    const result = await query(schema, '{ nullable }');
+    expect(result.errors?.[0]?.extensions).toEqual({ code: 'FORBIDDEN' });
+  });
+
+  it('does not reword an explicit denial with fallbackError', async () => {
+    const schema = filtering(
+      { Query: { list: rule(() => 'Trial expired') } },
+      { fallbackError: 'Nope' },
+    );
+    const result = await query(schema, '{ list { id } }');
+    expect(result.errors?.[0]?.message).toBe('Trial expired');
+  });
+
+  it('filters a denial from a rule that is not check-based', async () => {
+    // `wrap` returns plain middleware, so the denial arrives thrown rather than
+    // as a check result — the other half of the error-control wrapper.
+    const schema = filtering(
+      {
+        Query: {
+          list: wrap(deny),
+          nullable: wrap(deny),
+          nullableList: wrap(rule(() => 'Trial expired')),
+        },
+      },
+      { fallbackError: 'Nope' },
+    );
+    const result = await query(schema, '{ list { id } nullable nullableList { id } }');
+    expect(result.data).toEqual({ list: [], nullable: null, nullableList: null });
+    const byPath = Object.fromEntries(
+      (result.errors ?? []).map((error) => [String(error.path?.[0]), error.message]),
+    );
+    expect(byPath).toEqual({ list: 'Nope', nullable: 'Nope', nullableList: 'Trial expired' });
+    expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE, CODE]);
+  });
+
+  it('masks a denial from a rule that is not check-based', async () => {
+    const schema = filtering({ Query: { list: wrap(deny) } }, { onDeny: 'mask' });
+    const result = await query(schema, '{ list { id } }');
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it('filters only denials — a broken rule still surfaces as itself', async () => {
+    const broken = rule(() => {
+      throw new Error('boom');
+    });
+    const result = await query(filtering({ Query: { list: broken } }), '{ list { id } }');
+    expect(result.data).toBeNull();
+    expect(result.errors?.[0]?.message).toBe('boom');
+    expect(result.errors?.[0]?.extensions).toEqual({});
+  });
+
+  it('filters under inPlace: true as well', async () => {
+    const schema = filtering({ Query: { list: deny, nullable: deny } }, { inPlace: true });
+    const result = await query(schema, '{ list { id } nullable }');
+    expect(result.data).toEqual({ list: [], nullable: null });
+    expect(result.errors?.map((error) => error.path)).toEqual(
+      expect.arrayContaining([['list'], ['nullable']]),
+    );
+    expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE]);
+  });
+
+  it('rejects instead of recording when the context is not an object', async () => {
+    const result = await query(filtering({ Query: { list: deny } }), '{ list { id } }', 42);
+    expect(result.data).toBeNull();
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  describe("report: 'extensions'", () => {
+    const options: ApplyPermissionsOptions = { report: 'extensions' };
+
+    it('keeps errors clean and lists every filtered denial under authorizationErrors', async () => {
+      const schema = filtering({ Query: { list: deny, nullable: deny } }, options);
+      const result = await query(schema, '{ list { id } nullable }');
+      expect(result.data).toEqual({ list: [], nullable: null });
+      expect(result.errors).toBeUndefined();
+      expect(result.extensions).toEqual({
+        authorizationErrors: [
+          expect.objectContaining({ message: 'Forbidden', path: ['list'], extensions: CODE }),
+          expect.objectContaining({ message: 'Forbidden', path: ['nullable'], extensions: CODE }),
+        ],
+      });
+    });
+
+    it('appends to extensions already on the result', async () => {
+      const schema = filtering({ Query: { nullable: deny } }, options);
+      const contextValue = {};
+      const executed = await graphql({ schema, source: '{ nullable }', contextValue });
+      const result = reportDenials(contextValue, {
+        ...executed,
+        extensions: { trace: 't1', authorizationErrors: [{ message: 'earlier' }] },
+      });
+      expect(result.extensions?.trace).toBe('t1');
+      expect(result.extensions?.authorizationErrors).toEqual([
+        { message: 'earlier' },
+        expect.objectContaining({ path: ['nullable'] }),
+      ]);
+    });
+  });
+
+  describe('reportDenials', () => {
+    it('drains the record, so a context is reported once', async () => {
+      const schema = filtering({ Query: { list: deny } });
+      const contextValue = {};
+      const executed = await graphql({ schema, source: '{ list { id } }', contextValue });
+      expect(reportDenials(contextValue, executed).errors).toHaveLength(1);
+      expect(reportDenials(contextValue, executed)).toBe(executed);
+    });
+
+    it('returns the result itself when nothing was recorded', () => {
+      const result = { data: { ok: true } };
+      expect(reportDenials({}, result)).toBe(result);
+      expect(reportDenials(undefined, result)).toBe(result);
+    });
+  });
+
+  describe('the option shape', () => {
+    it("treats maskDenials as onDeny: 'mask'", async () => {
+      const masked = filtering({ Query: { list: deny } }, { onDeny: 'mask' });
+      const result = await query(masked, '{ list { id } }');
+      expect(result.data).toEqual({ list: [] });
+      expect(result.errors).toBeUndefined();
+      expect(() =>
+        filtering({ Query: { list: deny } }, { onDeny: 'mask', maskDenials: true }),
+      ).not.toThrow();
+    });
+
+    it('rejects maskDenials alongside a different onDeny', () => {
+      expect(() => filtering({}, { onDeny: 'filter', maskDenials: true })).toThrow(
+        PermissionsError,
+      );
+      expect(() => filtering({}, { onDeny: 'reject', maskDenials: true })).toThrow(/contradicts/);
+    });
+
+    it("rejects report without onDeny: 'filter'", () => {
+      expect(() => filtering({}, { onDeny: 'reject', report: 'extensions' })).toThrow(
+        /only applies under/,
+      );
+      expect(() => filtering({}, { onDeny: 'mask', report: 'errors' })).toThrow(PermissionsError);
+    });
   });
 });
 

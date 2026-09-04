@@ -33,7 +33,8 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `wrap(...rules)` | Nests any rules as middleware — each receives the next as its `resolve`, outermost first. The escape hatch for rules the combinators reject (`onResult`, `scopeArgs`, hand-written middleware). Returns a plain `Rule`, so it is never itself a combinator operand. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives; both are combinable. |
 | `isCheckableRule(value)` | Whether a rule can be a combinator operand. |
-| `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `maskDenials`. |
+| `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `onDeny` (`'reject'` default, `'filter'`, `'mask'`), `report` (`'errors'` default, `'extensions'`), `maskDenials` (older spelling of `onDeny: 'mask'`). |
+| `reportDenials(contextValue, result)` | Merges the denials `onDeny: 'filter'` held for a request into its execution result — into `errors`, or `extensions.authorizationErrors` under `report: 'extensions'`. Needed only outside envelop, where the plugin does it. |
 | `validatePermissions(schema, permissions)` | The validation half of `applyPermissions` alone — throws the same aggregated `PermissionsError` without building any middleware; the cheap drift check for tests. |
 | `resolvePermissions(schema, permissions, options?)` | The same layer without the `graphql-middleware` binding: a memoized `(typeName, fieldName) => Rule \| undefined` lookup for building another integration. |
 | `PermissionsError` | Thrown when the map, or a set of stored rules, does not match the schema; aggregates every problem. |
@@ -136,7 +137,7 @@ import { applyPermissions, deny } from '@vantreeseba/graphql-casl';
 
 const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions, {
   fallbackRule: deny,  // deny-by-default across the whole schema
-  maskDenials: true,   // resolve a denied field to null/[] instead of throwing
+  onDeny: 'filter',    // resolve a denied field to null/[] and report it with code UNAUTHORIZED_FIELD_OR_TYPE ('mask' reports nothing; 'reject' throws)
 });
 ```
 
@@ -174,11 +175,11 @@ import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
 
 const yoga = createYoga({
   schema,
-  plugins: [useGraphQLCasl<Resolvers>({ permissions, fallbackRule: deny, maskDenials: true })],
+  plugins: [useGraphQLCasl<Resolvers>({ permissions, fallbackRule: deny, onDeny: 'filter' })],
 });
 ```
 
-`applyPermissions` wraps a schema up front, which needs a schema you own and can replace — awkward on Apollo Server 4+, on federated gateways, and anywhere the schema is built or swapped for you. This plugin hooks resolvers as envelop hands them over, so the same map works wherever envelop does (Yoga, Apollo with the envelop integration, Hive Gateway, `graphql-ws`). It calls `resolvePermissions` rather than reimplementing anything, so wildcard precedence, `fallbackRule` coverage, error control and masking are identical. The map is validated when the schema arrives rather than on the first query that touches the offending field, and a schema swapped at runtime is re-validated; introspection is never guarded; a field with no resolver of its own is guarded too (the default resolver is wrapped, which is what makes `requireCan.fields(...)` work); each field is wrapped once however many times it resolves. Use this **or** `applyPermissions`, never both — two layers would run every rule twice.
+`applyPermissions` wraps a schema up front, which needs a schema you own and can replace — awkward on Apollo Server 4+, on federated gateways, and anywhere the schema is built or swapped for you. This plugin hooks resolvers as envelop hands them over, so the same map works wherever envelop does (Yoga, Apollo with the envelop integration, Hive Gateway, `graphql-ws`). It calls `resolvePermissions` rather than reimplementing anything, so wildcard precedence, `fallbackRule` coverage, error control and filtering are identical (filtered denials are merged into the result for you, no `reportDenials` call needed). The map is validated when the schema arrives rather than on the first query that touches the offending field, and a schema swapped at runtime is re-validated; introspection is never guarded; a field with no resolver of its own is guarded too (the default resolver is wrapped, which is what makes `requireCan.fields(...)` work); each field is wrapped once however many times it resolves. Use this **or** `applyPermissions`, never both — two layers would run every rule twice.
 
 ## Key conventions
 
@@ -194,7 +195,7 @@ const yoga = createYoga({
 - `src/schemaTypes.ts` — type helpers derived from generated Resolvers/ResolversTypes
 - `src/rules.ts` — the rule layer (`Rule`, `CheckableRule`, `PermissionsMap`, `rule`, `accept`, `deny`)
 - `src/combinators.ts` — `and` / `or` / `not` / `chain` / `race`, plus `wrap`
-- `src/applyPermissions.ts` — schema walk, wildcard precedence, error control, masking
+- `src/applyPermissions.ts` — schema walk, wildcard precedence, error control, filtering/masking
 - `src/accessibleBy.ts` — the ability-to-query-filter fold
 - `src/conditions.ts` — the `FilterAdapter` union (skeleton/leaf) and the conditions walker
 - `src/scoping.ts` — the optional `/scoping` entry point: `scopeArgs`
