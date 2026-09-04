@@ -184,7 +184,9 @@ const yoga = createYoga({
 ## Key conventions
 
 - The library is schema-agnostic: type helpers (`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`) are derived from the consumer's generated `Resolvers` / `ResolversTypes` — never hardcode domain type names.
-- Runtime subject detection uses `__typename`, applied by `createGraphQLAbility().build()`, so consumers tag plain objects with `createTyped()` rather than CASL's `subject()`.
+- Runtime subject detection uses `__typename`, applied by `createGraphQLAbility().build()`, so consumers tag plain objects with `createTyped()` rather than CASL's `subject()`. That is the structural reason for a GraphQL-specific binding: `@casl/prisma` must wrap every record in `subject()` because Prisma DTOs carry no type information, whereas GraphQL names every object type and `__typename` carries it, checked against the `SubjectMap`.
+- A rule runs before the resolver and sees only args/context, so a condition built from an argument checks what the client asserted (the IDOR shape). Ownership enforced in the data layer (row-level security, a per-request scoped client) is strictly stronger than any resolver gate; the library is defense in depth on top of it — `requireCan.onResult` checks the loaded record, `accessibleBy` pushes the decision into the query.
+- Prefer rooting authorized reads at `viewer`/`me`: a resolver that takes no owner argument cannot be handed a forged one, which removes the IDOR class from the schema rather than guarding against it.
 - `createCan` / `subjectsOf` / `createTyped` are factories bound to the consumer's context shape and ability builder — keep auth/ability logic out of the library core.
 - Only *denials* are masked or reworded. A rule that failed with a bug of its own and a resolver that failed on a permitted field both keep their own errors, so an outage is never reported as a permission decision.
 - `allowExternalErrors` defaults to `true` — the opposite of `graphql-shield`, which masks resolver errors by default.

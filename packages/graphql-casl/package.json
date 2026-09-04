@@ -1,6 +1,6 @@
 {
   "name": "@vantreeseba/graphql-casl",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "GraphQL middleware plugin for defining CASL permission rules on resolvers, with optional argument scoping and an envelop/Yoga integration.",
   "keywords": [
     "graphql",
