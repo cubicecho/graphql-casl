@@ -16,7 +16,10 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
 ## Specifications
 
 Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
-`.agents/*.todo.txt`. Usage is documented in each package's README.
+`.agents/*.todo.txt`. Usage is documented in each package's README; the runtime's
+longer guides are one page per topic under `packages/graphql-casl/docs/guides/`
+(linked from the README's Guides index with absolute GitHub URLs, since the
+README is also published to npm).
 
 ## Stack
 

@@ -209,6 +209,7 @@ const yoga = createYoga({
 ## Optional
 
 - [README.md](./README.md) — full usage documentation
+- [Guides](./packages/graphql-casl/docs/guides/) — one page per topic: post-execution rules, field-level rules, combining and caching rules, error control and filtering, wildcards, row-level filtering, scoping, custom integrations, envelop, external policy engines, stored rules, testing, and migrating from `graphql-shield`
 - [AGENTS.md](./AGENTS.md) — project guidance, conventions, and structure
 - [CASL documentation](https://casl.js.org/) — the underlying authorization library
 - [graphql-middleware](https://github.com/maticzav/graphql-middleware) — the middleware layer this plugin builds on
