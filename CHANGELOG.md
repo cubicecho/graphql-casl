@@ -1,3 +1,11 @@
+# [1.9.0](https://github.com/cubicecho/graphql-casl/compare/v1.8.0...v1.9.0) (2026-09-04)
+
+
+### Features
+
+* add granted scopes, a parent field's decision reused by its children ([cb27495](https://github.com/cubicecho/graphql-casl/commit/cb2749509f40422e09196924ad947fd3f30a14d8))
+* add strict and disabled options, and an /apollo reporting plugin ([0a57637](https://github.com/cubicecho/graphql-casl/commit/0a576373644e9aab90d65cae322d3fa00cb6a384))
+
 # [1.8.0](https://github.com/cubicecho/graphql-casl/compare/v1.7.0...v1.8.0) (2026-09-04)
 
 
