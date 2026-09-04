@@ -30,6 +30,11 @@ Run a script in a single package with `-w`:
 npm run test -w packages/graphql-casl-codegen
 ```
 
+Hot-path benchmarks live in `packages/graphql-casl/bench/` (`npm run bench -w packages/graphql-casl`).
+In CI they run only on demand: the **Bench** workflow (Actions → Bench → Run workflow,
+optional name filter) writes the results table to the job summary. They never run on
+push or pull requests — the numbers are too noisy to gate on.
+
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and
 drive a single, repo-wide release via
 [semantic-release](https://semantic-release.gitbook.io/): one version and tag for

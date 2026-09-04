@@ -12,7 +12,7 @@ npm install @casl/ability graphql graphql-middleware
 
 Requires `@casl/ability >=6`, `graphql >=16`, and `graphql-middleware >=6` as peer dependencies. `@envelop/core >=5` and `@envelop/on-resolve >=7` are **optional** peer dependencies, installed only by consumers who import the `/envelop` entry point. TypeScript 5, ESM only. No runtime dependencies.
 
-Two optional sibling packages, `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings) and `@vantreeseba/graphql-casl-directives` (`@can` / `@rule` SDL directives translated into a `PermissionsMap`), plus two optional entry points on the runtime itself: `@vantreeseba/graphql-casl/scoping` (rewrites a field's filter argument instead of allowing or denying it) and `@vantreeseba/graphql-casl/envelop` (enforces the same map through envelop instead of `graphql-middleware`).
+Two optional sibling packages, `@vantreeseba/graphql-casl-codegen` (a GraphQL Code Generator plugin that emits the subject bindings) and `@vantreeseba/graphql-casl-directives` (`@can` / `@rule` SDL directives translated into a `PermissionsMap`), plus three optional entry points on the runtime itself: `@vantreeseba/graphql-casl/scoping` (rewrites a field's filter argument instead of allowing or denying it), `@vantreeseba/graphql-casl/envelop` (enforces the same map through envelop instead of `graphql-middleware`) and `@vantreeseba/graphql-casl/apollo` (an Apollo Server plugin that reports filtered denials from `willSendResponse`; typed structurally, so no `@apollo/server` dependency).
 
 ## Public API
 
@@ -31,19 +31,23 @@ All exports come from `@vantreeseba/graphql-casl` (re-exported through `src/inde
 | `rule(check, opts?)` | Wraps a predicate `(parent, args, ctx, info) => boolean \| string \| Error` into a combinable rule. |
 | `and` / `or` / `not` / `chain` / `race` | Combinators over combinable rules. `and`/`or` evaluate in parallel; `chain`/`race` short-circuit. A rule that needs the resolver to decide is rejected as an operand when the map is built. |
 | `wrap(...rules)` | Nests any rules as middleware — each receives the next as its `resolve`, outermost first. The escape hatch for rules the combinators reject (`onResult`, `scopeArgs`, hand-written middleware). Returns a plain `Rule`, so it is never itself a combinator operand. |
+| `validateArgs(schema, options?)` | A rule that validates a field's arguments against any [Standard Schema](https://standardschema.dev) (zod 3.24+, valibot, arktype, yup 1.7+ — no dependency added) and calls the resolver with the parsed output as `args` (`replace: false` validates only). A failure rejects with a `GraphQLError` carrying `extensions.code: 'BAD_USER_INPUT'` and `extensions.issues: [{ message, path }]`; error control passes it through verbatim. Not combinable; compose it with `wrap`, authorization first. |
 | `accept` / `deny` | Always-pass / always-fail rule primitives; both are combinable. |
+| `grants(rule, scope)` | Granted scopes (Pothos `grantScopes`): wraps any rule and, once it passes and the resolver returns, tags what was returned (the object, or each element of a list) with `scope` for the request. Per context, never transitive, tags only what the field actually returns. Returns a plain `Rule` — not combinable; compose with `wrap` or combine the rule inside it. |
+| `granted(scope)` | Combinable rule that passes when `parent` was granted `scope` in this request and denies with `Forbidden` otherwise. Synchronous `WeakMap` lookup, needs no `cache`. Deny-by-default on its own; the usual shape is `race(granted('post'), canUser.fields(...))` — `race`, not `or`, so the CASL check is skipped for granted rows. |
 | `isCheckableRule(value)` | Whether a rule can be a combinator operand. |
-| `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `onDeny` (`'reject'` default, `'filter'`, `'mask'`), `report` (`'errors'` default, `'extensions'`), `maskDenials` (older spelling of `onDeny: 'mask'`). |
-| `reportDenials(contextValue, result)` | Merges the denials `onDeny: 'filter'` held for a request into its execution result — into `errors`, or `extensions.authorizationErrors` under `report: 'extensions'`. Needed only outside envelop, where the plugin does it. |
+| `applyPermissions(schema, permissions, options?)` | Validates the map against the runtime schema and applies it via `applyMiddleware`. Options: `fallbackRule`, `fallbackError`, `allowExternalErrors`, `debug`, `onDeny` (`'reject'` default, `'filter'`, `'mask'`), `report` (`'errors'` default, `'extensions'`), `maskDenials` (older spelling of `onDeny: 'mask'`), `inPlace` (guard the given schema instead of a copy), `strict` (the 2.0 defaults today: `onDeny: 'filter'` and `allowExternalErrors: false`; an explicit key still wins, and `maskDenials` still masks), `disabled` (validate the map but guard nothing — the test-only switch; returns the schema as given). |
+| `reportDenials(contextValue, result)` | Merges the denials `onDeny: 'filter'` held for a request into its execution result — into `errors`, or `extensions.authorizationErrors` under `report: 'extensions'`. Needed only outside envelop and Apollo Server, where the plugins do it. |
 | `validatePermissions(schema, permissions)` | The validation half of `applyPermissions` alone — throws the same aggregated `PermissionsError` without building any middleware; the cheap drift check for tests. |
 | `resolvePermissions(schema, permissions, options?)` | The same layer without the `graphql-middleware` binding: a memoized `(typeName, fieldName) => Rule \| undefined` lookup for building another integration. |
 | `PermissionsError` | Thrown when the map, or a set of stored rules, does not match the schema; aggregates every problem. |
 | `accessibleBy(ability, action, subject, adapter?)` | Folds the ability's rules into a query filter for row-level filtering. `null` means deny-all; `{}` means no restriction. |
 | `scopeArgs(requireCan, action, subject, options)` | **Subpath export `@vantreeseba/graphql-casl/scoping`.** A rule that rewrites a field's filter argument (`into`, default `'where'`) with the ability's filter instead of allowing or denying the field — for generated CRUD resolvers you cannot edit. Not combinable; compose it with `wrap`. |
-| `useGraphQLCasl<Resolvers>(options)` | **Subpath export `@vantreeseba/graphql-casl/envelop`.** An envelop `Plugin` that enforces the same `PermissionsMap` by wrapping resolvers as envelop hands them over, instead of wrapping the schema with `graphql-middleware`. `options.permissions` is the map; every other key is an `ApplyPermissionsOptions` field. |
+| `useGraphQLCasl<Resolvers>(options)` | **Subpath export `@vantreeseba/graphql-casl/envelop`.** An envelop `Plugin` that enforces the same `PermissionsMap` by wrapping resolvers as envelop hands them over, instead of wrapping the schema with `graphql-middleware`. `options.permissions` is the map; every other key is an `ApplyPermissionsOptions` field (`strict` and `disabled` included). |
+| `reportDenialsPlugin()` | **Subpath export `@vantreeseba/graphql-casl/apollo`.** An Apollo Server 4/5 plugin whose `willSendResponse` calls `reportDenials(contextValue, singleResult)` and merges the result back, so a schema guarded with `applyPermissions` under `onDeny: 'filter'` reports the denials a non-null list (or `report: 'extensions'`) could not carry. Untouched response when nothing is held; incremental (`@defer`) bodies are left alone. Typed against a minimal structural interface, not `@apollo/server`. |
 | `Actions` | Const map of `create` / `read` / `update` / `delete` / `manage`. |
 
-Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `Subjects`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`. From `/envelop`: `GraphQLCaslPluginOptions`.
+Type helpers: `PermissionsMap`, `Rule`, `CheckableRule`, `Check`, `RuleResult`, `Wildcard`, `RequireCan`, `RequireCanBare`, `RequireCanFields`, `RequireCanOnResult`, `BuildSubject`, `CreateCanOptions`, `UnconditionedSubjectMode`, `SubjectName`, `SubjectMap`, `Subjects`, `ArgsOf`, `ParentOf`, `ContextOf`, `Action`, `AbilityLike`, `GraphQLAbility`, `GraphQLAbilities`, `GraphQLRule`, `GraphQLAbilityOptions`, `ApplyPermissionsOptions`, `FallbackError`, `PermissionResolver`, `AccessibleFilter`, `FilterAdapter` (`SkeletonAdapter` | `LeafAdapter`), `AdapterCore`, `LeafCondition`, `LeafOperator`, `StandardSchemaV1` (the vendored spec), `ValidateArgsOptions`, `ValidatedArgs<Schema>` (the parsed args type), `ArgumentIssue`, plus the `BAD_USER_INPUT` code constant. From `/scoping`: `ScopeOptions`, `OnDenyAll`, `Scopable`. From `/envelop`: `GraphQLCaslPluginOptions`. From `/apollo`: `ReportDenialsApolloPlugin`, `ApolloResponseBody`.
 
 A failed authentication check throws `Not authenticated`; a failed ability check throws `Forbidden`, or the matched rule's `cannot(...).because('...')` reason.
 
@@ -130,6 +134,8 @@ export const permissions: PermissionsMap<Resolvers> = {
 
 `'*'` works as a type key and as a field key. Precedence, highest first: a named field of a named type, any field of a named type, a named field of any type, any field of any type, then `fallbackRule`. Wildcards never compose — exactly one rule guards a field.
 
+An interface is a type key too: `Node: { id: rule }` guards `id` on every type implementing `Node` (transitively), and `Node: rule` / `Node: { '*': rule }` every field of every implementor; a union takes only `'*'`. Full precedence: `T.f` > `I.f` > `T['*']` > `I['*']` (a union's `'*'` sits here) > `'*'.f` > `'*'['*']` > `fallbackRule`. Two interfaces both covering a field of one implementor, with no entry on the implementor to choose, is a `PermissionsError`.
+
 ### 4. Apply to the schema
 
 ```ts
@@ -142,6 +148,8 @@ const schemaWithPermissions = applyPermissions<Resolvers>(schema, permissions, {
 ```
 
 The map is validated against the runtime schema: a rule on a type or field the schema lacks throws `PermissionsError` naming every problem. Introspection types are never guarded.
+
+Read as modes: granular (the default — only what the map names is guarded), protect-all (`fallbackRule: deny` — the map is the allow-list), and `strict: true` for the error-side 2.0 defaults (`onDeny: 'filter'`, `allowExternalErrors: false`), composable with either. `disabled: true` validates the map and returns the schema unguarded — for tests only; never wire it to an env var you do not control.
 
 ### 5. Row-level filtering (optional)
 
@@ -181,13 +189,28 @@ const yoga = createYoga({
 
 `applyPermissions` wraps a schema up front, which needs a schema you own and can replace — awkward on Apollo Server 4+, on federated gateways, and anywhere the schema is built or swapped for you. This plugin hooks resolvers as envelop hands them over, so the same map works wherever envelop does (Yoga, Apollo with the envelop integration, Hive Gateway, `graphql-ws`). It calls `resolvePermissions` rather than reimplementing anything, so wildcard precedence, `fallbackRule` coverage, error control and filtering are identical (filtered denials are merged into the result for you, no `reportDenials` call needed). The map is validated when the schema arrives rather than on the first query that touches the offending field, and a schema swapped at runtime is re-validated; introspection is never guarded; a field with no resolver of its own is guarded too (the default resolver is wrapped, which is what makes `requireCan.fields(...)` work); each field is wrapped once however many times it resolves. Use this **or** `applyPermissions`, never both — two layers would run every rule twice.
 
+### 8. Reporting filtered denials on Apollo Server (optional)
+
+```ts
+import { reportDenialsPlugin } from '@vantreeseba/graphql-casl/apollo';
+
+const server = new ApolloServer<Context>({
+  schema: applyPermissions<Resolvers>(schema, permissions, { onDeny: 'filter' }),
+  plugins: [reportDenialsPlugin()],
+});
+```
+
+Under `onDeny: 'filter'` a denied non-null list resolves to `[]` and its denial (and every denial under `report: 'extensions'`) is held per context until `reportDenials` runs. `applyPermissions` never sees the finished response; this plugin calls `reportDenials` from Apollo's `willSendResponse` and merges the result back into `errors` (formatted like Apollo's own) or `extensions.authorizationErrors`. Harmless under `'reject'`/`'mask'`. Limit: `kind: 'incremental'` responses (`@defer`/`@stream`) are left alone, so a denial held for a deferred payload is masked.
+
 ## Key conventions
 
 - The library is schema-agnostic: type helpers (`SubjectName`, `SubjectMap`, `ArgsOf`, `ParentOf`, `ContextOf`) are derived from the consumer's generated `Resolvers` / `ResolversTypes` — never hardcode domain type names.
-- Runtime subject detection uses `__typename`, applied by `createGraphQLAbility().build()`, so consumers tag plain objects with `createTyped()` rather than CASL's `subject()`.
+- Runtime subject detection uses `__typename`, applied by `createGraphQLAbility().build()`, so consumers tag plain objects with `createTyped()` rather than CASL's `subject()`. That is the structural reason for a GraphQL-specific binding: `@casl/prisma` must wrap every record in `subject()` because Prisma DTOs carry no type information, whereas GraphQL names every object type and `__typename` carries it, checked against the `SubjectMap`.
+- A rule runs before the resolver and sees only args/context, so a condition built from an argument checks what the client asserted (the IDOR shape). Ownership enforced in the data layer (row-level security, a per-request scoped client) is strictly stronger than any resolver gate; the library is defense in depth on top of it — `requireCan.onResult` checks the loaded record, `accessibleBy` pushes the decision into the query.
+- Prefer rooting authorized reads at `viewer`/`me`: a resolver that takes no owner argument cannot be handed a forged one, which removes the IDOR class from the schema rather than guarding against it.
 - `createCan` / `subjectsOf` / `createTyped` are factories bound to the consumer's context shape and ability builder — keep auth/ability logic out of the library core.
 - Only *denials* are masked or reworded. A rule that failed with a bug of its own and a resolver that failed on a permitted field both keep their own errors, so an outage is never reported as a permission decision.
-- `allowExternalErrors` defaults to `true` — the opposite of `graphql-shield`, which masks resolver errors by default.
+- `allowExternalErrors` defaults to `true` — the opposite of `graphql-shield`, which masks resolver errors by default. `strict: true` flips it (and `onDeny` to `'filter'`): the 2.0 defaults, opt-in now.
 
 ## Source modules
 
@@ -196,15 +219,18 @@ const yoga = createYoga({
 - `src/rules.ts` — the rule layer (`Rule`, `CheckableRule`, `PermissionsMap`, `rule`, `accept`, `deny`)
 - `src/combinators.ts` — `and` / `or` / `not` / `chain` / `race`, plus `wrap`
 - `src/applyPermissions.ts` — schema walk, wildcard precedence, error control, filtering/masking
+- `src/validateArgs.ts` — `validateArgs`, argument validation as a rule over any Standard Schema (spec vendored)
 - `src/accessibleBy.ts` — the ability-to-query-filter fold
 - `src/conditions.ts` — the `FilterAdapter` union (skeleton/leaf) and the conditions walker
 - `src/scoping.ts` — the optional `/scoping` entry point: `scopeArgs`
 - `src/envelop.ts` — the optional `/envelop` entry point: `useGraphQLCasl`
+- `src/apollo.ts` — the optional `/apollo` entry point: `reportDenialsPlugin`
 - `src/internal.ts` — symbols shared between modules that must not import each other
 - `src/ability.ts` — CASL `Action` / `Actions` / `AbilityLike`
 - `src/graphqlAbility.ts` — `GraphQLAbility` / `createGraphQLAbility` / `buildGraphQLAbility`
 - `src/subjects.ts` — `subjectsOf` / `createTyped` (and deprecated `createSubjects`)
 - `src/createCan.ts` — the factory tying a CASL ability to the rule layer
+- `src/grants.ts` — granted scopes: `grants` / `granted`, a parent field's decision reused by its children
 
 ## Directives (sibling package)
 

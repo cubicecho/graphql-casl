@@ -212,10 +212,22 @@ TIER 2 — error control
 TIER 3 — smaller
 ----------------
 
-[ ] S11. inputRule — argument validation as a rule.
+[x] S11. inputRule — argument validation as a rule.
+         SHIPPED 2026-09-04 as `validateArgs(schema, { replace? })` in
+         src/validateArgs.ts, on Standard Schema as recommended below: the
+         spec's `StandardSchemaV1` interface is vendored, so zod / valibot /
+         arktype / yup>=1.7 all work and the package stays zero-dep. The
+         resolver receives the parsed output as `args` (`replace: false`
+         validates only). A failure is a `GraphQLError` with
+         `extensions.code: 'BAD_USER_INPUT'` and `extensions.issues`, marked
+         as an EXPLICIT denial so `fallbackError` leaves it alone and
+         `onDeny: 'filter'` keeps its code; a validator that throws is a rule
+         failure. Plain `Rule` (rewrites args), so composed via `wrap`, not
+         the combinators. No `cache: 'strict'` — validation is per call by
+         nature, and the args are the input.
          Shield: constructors.ts inputRule + rules.ts InputRule, backed by yup,
          forced to cache: 'strict'.
-         Here: absent; `args` is an unchecked `args as TArgs` cast.
+         Here (before): absent; `args` was an unchecked `args as TArgs` cast.
          If built: prefer Standard Schema (standardschema.dev, the `~standard`
          property) over a yup dependency — zod / valibot / yup>=1.7 all
          implement it, so consumers bring their own validator and the package

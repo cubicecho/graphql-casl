@@ -18,6 +18,8 @@ import {
   deny,
   type FilterAdapter,
   type GraphQLAbility,
+  granted,
+  grants,
   PermissionsError,
   type PermissionsMap,
   rule,
@@ -390,6 +392,31 @@ describe('wrap, composing a scoping rule with rules that cannot be combined', ()
     );
     expect(() => schemaWith({ Query: { notes: nested } })).toThrow(PermissionsError);
     expect(() => schemaWith({ Query: { notes: nested } })).toThrow(/argument named `filter`/);
+  });
+
+  it('still validates the injected argument through a granting rule', () => {
+    const granting = grants(
+      scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }),
+      'note',
+    );
+    expect(() => schemaWith({ Query: { notes: granting } })).toThrow(/argument named `filter`/);
+  });
+
+  it('grants the rows a scoped list returned', async () => {
+    const schema = schemaWith({
+      Query: { notes: grants(scopedNotes, 'note') },
+      Note: granted('note'),
+    });
+    const result = await graphql({
+      schema,
+      source: '{ notes { id body } }',
+      contextValue: { userId: 'alice' },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.notes).toEqual([
+      { id: 'n1', body: 'a1' },
+      { id: 'n2', body: 'a2' },
+    ]);
   });
 
   it('still refuses a wrapped scoping rule under the `*.*` wildcard', () => {
