@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/cubicecho/graphql-casl/compare/v1.6.0...v1.7.0) (2026-09-04)
+
+
+### Features
+
+* add validateArgs, argument validation as a rule via Standard Schema ([a509dd8](https://github.com/cubicecho/graphql-casl/commit/a509dd839908ec993ee8e81f58e73ba7fd4eccbc))
+
 # [1.6.0](https://github.com/cubicecho/graphql-casl/compare/v1.5.0...v1.6.0) (2026-09-04)
 
 
