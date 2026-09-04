@@ -131,6 +131,8 @@ export const permissions: PermissionsMap<Resolvers> = {
 
 `'*'` works as a type key and as a field key. Precedence, highest first: a named field of a named type, any field of a named type, a named field of any type, any field of any type, then `fallbackRule`. Wildcards never compose — exactly one rule guards a field.
 
+An interface is a type key too: `Node: { id: rule }` guards `id` on every type implementing `Node` (transitively), and `Node: rule` / `Node: { '*': rule }` every field of every implementor; a union takes only `'*'`. Full precedence: `T.f` > `I.f` > `T['*']` > `I['*']` (a union's `'*'` sits here) > `'*'.f` > `'*'['*']` > `fallbackRule`. Two interfaces both covering a field of one implementor, with no entry on the implementor to choose, is a `PermissionsError`.
+
 ### 4. Apply to the schema
 
 ```ts

@@ -456,10 +456,13 @@ re-checks the map against the runtime schema and throws a `PermissionsError`
 listing **every** problem at once — which is what catches rules loaded from a database, written in
 plain JavaScript, or built against a schema that has since drifted.
 
-Entries that would be silently inert are rejected rather than ignored: a rule on
-an interface or union type never runs (fields resolve against the concrete object
-type), and introspection types cannot be guarded. In an authorization library, a
-rule that quietly never runs is the worst failure mode, so it is an error.
+Entries that would be silently inert are rejected rather than ignored: a named
+field on a union (which declares none) is an error, and introspection types
+cannot be guarded. Fields resolve against the concrete object type, so a rule
+keyed on an interface is inherited by every type implementing it rather than
+left to never run — see [Rules on interfaces](#rules-on-interfaces). In an
+authorization library, a rule that quietly never runs is the worst failure mode,
+so it is an error.
 
 Types not named in the map are left **unguarded** — the map is a whitelist of what
 to guard, not a schema-coverage guarantee. Pass `fallbackRule` to invert that, so a
@@ -518,6 +521,7 @@ Everything past the four steps, in rough order of how often it comes up.
 | [Combining rules](#combining-rules) | A field needs more than one check — `and` / `or` / `not` / `chain` / `race` / `wrap` |
 | [Error control](#error-control) | `Forbidden` isn't enough: you need codes, filtering, or a look at what actually broke |
 | [Wildcards](#wildcards) | One rule should cover a whole type, or one field across every type |
+| [Rules on interfaces](#rules-on-interfaces) | One rule should cover every type implementing an interface, new ones included |
 | [Row-level filtering](#row-level-filtering) | A list should return fewer rows rather than be denied outright |
 | [Scoping generated resolvers](#scoping-generated-resolvers-optional) | The resolver is generated and you can only reach its arguments |
 | [Validating arguments](#validating-arguments) | The arguments need checking the SDL cannot express — blank strings, ranges, one field against another |
@@ -953,18 +957,59 @@ const permissions: PermissionsMap<Resolvers> = {
 };
 ```
 
-From highest precedence to lowest:
+From highest precedence to lowest, for a `Note` that implements `Node`:
 
 | Entry | Matches |
 | --- | --- |
 | `{ Note: { body: rule } }` | a named field of a named type |
+| `{ Node: { body: rule } }` | a named field of an interface the type implements |
 | `{ Note: { '*': rule } }` or `{ Note: rule }` | any field of a named type |
+| `{ Node: { '*': rule } }` or `{ Node: rule }` | any field of any type implementing the interface (a union's `'*'` sits here too) |
 | `{ '*': { body: rule } }` | a named field of any type |
 | `{ '*': { '*': rule } }` or `{ '*': rule }` | any field of any type |
 | `fallbackRule` | everything else |
 
 Field names under `'*'` are still checked — against every field in the schema, so a
 typo that matches no type at all is an error.
+
+### Rules on interfaces
+
+An interface is a type key like any other. A rule under it guards that field on
+every type implementing the interface — including one added to the schema after
+the map was written, which is the point: a rule restated on each implementor
+silently misses the next one.
+
+```ts
+const permissions: PermissionsMap<Resolvers> = {
+  Node: { id: accept },                          // Note.id, User.id, and whatever implements Node next
+  Searchable: canUser(Actions.read, Subject.Note), // every field of every Searchable
+  Note: { body: canUser(Actions.read, Subject.Note) },
+};
+```
+
+The field keys are the fields the interface declares — `Node: { body: rule }` is
+an error, since `Node` has no `body` — but a type-wide `'*'` (or a bare rule)
+on an interface covers every field of the implementor, declared on the interface
+or not. Implementation is transitive: an interface that implements `Node` passes
+`Node`'s rules on to its own implementors. A union takes only `'*'`, which guards
+every field of every member; a named field on a union is an error, because a
+union declares none. Either kind of entry guards the type wherever it is
+reached: `Thing: rule` guards `Note`'s fields under `Query.note` as much as
+under `Query.thing`.
+
+An implementor's own entry beats the interface's, at the same tier — the table
+above states the order. What the map never does is pick one of two inherited
+rules for you: a `Note` implementing both `Node` and `Searchable`, where both
+give a rule for `id` (or both give `'*'`) and `Note` does not, is ambiguous, and
+`applyPermissions` rejects it with a `PermissionsError` naming both interfaces
+until `Note` chooses. The same rule reached through two interfaces is fine.
+
+With `typescript-resolvers`, the interface's resolver type lists its fields
+alongside `__resolveType`, so `PermissionsMap<Resolvers>` checks the field keys
+under `Node` at compile time exactly as it does under `Note` — and a union's
+resolver type, which has only `__resolveType`, accepts only `'*'`. Under
+`onlyResolveTypeForInterfaces: true` an interface accepts only `'*'` too; the
+runtime walk still checks every key either way.
 
 ### Row-level filtering
 

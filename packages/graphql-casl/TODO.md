@@ -89,6 +89,15 @@ A soundness pass, taken from the lists above:
   value it returned, so conditions are evaluated on the real record instead of on
   a client-asserted arg. That closes the IDOR gap the README documents. It
   refuses root mutation fields *before* resolving, so no side effect escapes.
+- **Rules on interfaces and unions** (`ecosystem-parity` E10, E8) — an
+  interface entry in the map is inherited by every type implementing it,
+  transitively, so a `Node` rule covers an implementor added later instead of
+  being restated on each one; a union takes `'*'` for every member's fields.
+  Precedence is stated in full — `T.f` > `I.f` > `T['*']` > `I['*']` > `'*'.f`
+  > `'*'['*']` > `fallbackRule` — and two interfaces that both cover a field of
+  one implementor are rejected as ambiguous until the implementor's own entry
+  chooses. `PermissionsMap<Resolvers>` types an interface's keys from the fields
+  `typescript-resolvers` emits on its resolver type.
 - **`applyPermissions` is a real schema walk**, not a cast: it validates the map
   against the runtime schema (`shield-parity` S13, aggregating every problem),
   supports `fallbackRule` (S2 / `ecosystem-parity` E9) and `'*'` wildcards in
