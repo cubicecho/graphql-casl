@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/scoping.ts", "src/envelop.ts"],
+  "entryPoints": ["src/index.ts", "src/scoping.ts", "src/envelop.ts", "src/apollo.ts"],
   "plugin": ["typedoc-plugin-markdown", "typedoc-github-wiki-theme"],
   "out": "docs/api",
   "readme": "none",

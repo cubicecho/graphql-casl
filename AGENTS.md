@@ -7,9 +7,12 @@ An npm-workspaces monorepo for the `@vantreeseba/graphql-casl` toolkit:
 - **`packages/graphql-casl`** — the runtime: a `graphql-middleware` plugin for
   defining [CASL](https://casl.js.org/) permission rules on resolvers. Rules are
   declared per type/field in a `PermissionsMap` and enforced before the resolver runs.
-  Two optional subpath exports ride along: `/scoping` (`scopeArgs`) and
+  Three optional subpath exports ride along: `/scoping` (`scopeArgs`),
   `/envelop` (`useGraphQLCasl`, for hosts where the schema cannot be wrapped up
-  front — Apollo Server 4+, federation, dynamically swapped schemas).
+  front — Apollo Server 4+, federation, dynamically swapped schemas) and
+  `/apollo` (`reportDenialsPlugin`, an Apollo Server plugin that reports
+  filtered denials from `willSendResponse` for schemas guarded with
+  `applyPermissions`).
 - **`packages/graphql-casl-codegen`** — a GraphQL Code Generator plugin that emits
   subject bindings (`SubjectMap`, `Subject`, `typed`, `ability`) from a schema.
 
@@ -34,7 +37,9 @@ Deferred work is tracked per package (`packages/graphql-casl/TODO.md`) and in
   consumers who import `/envelop`, which is how that entry point can have a real
   runtime requirement without the main entry point growing a dependency. Keep it
   that way: `src/index.ts` must never import `src/envelop.ts`, or `dist/index.d.ts`
-  would reference `@envelop/core` for everyone
+  would reference `@envelop/core` for everyone. `/apollo` has no peer at all: it
+  is typed against a minimal structural slice of Apollo's plugin contract, and
+  `@apollo/server` is a devDependency for its tests only
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
 - **Releases:** a single, repo-wide version via root `semantic-release` (one `v${version}`
@@ -60,6 +65,8 @@ packages/
                             filter argument instead of allowing or denying the field
       envelop.ts          — OPTIONAL subpath export `/envelop`: useGraphQLCasl enforces the
                             same map through envelop instead of graphql-middleware
+      apollo.ts           — OPTIONAL subpath export `/apollo`: reportDenialsPlugin calls
+                            reportDenials from Apollo Server's willSendResponse hook
       internal.ts         — symbols shared between modules that must not import each other
       graphqlAbility.ts   — GraphQLAbility, createGraphQLAbility, buildGraphQLAbility
       validateGraphQLRules.ts — checks stored ability rules (subjects, fields, conditions) against
@@ -77,6 +84,7 @@ packages/
       example.test.ts                    — runnable "todos" worked example / reference docs
       example.codegen.ts                 — trimmed `graphql-codegen` output the example consumes
       envelop.test.ts                    — the `/envelop` plugin, end-to-end through envelop's testkit
+      apollo.test.ts                     — the `/apollo` plugin, end-to-end through ApolloServer.executeOperation
       integration/permissions.integration.test.ts — end-to-end test against an executable schema
       integration/scoping.integration.test.ts     — scopeArgs (and wrap) against a
                                                     generated-CRUD-shaped schema

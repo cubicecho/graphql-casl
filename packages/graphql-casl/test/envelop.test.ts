@@ -211,6 +211,49 @@ describe('useGraphQLCasl', () => {
     expect(result.data?.notes).toHaveLength(2);
   });
 
+  it("defaults to 'filter' under strict, with the report hook installed", async () => {
+    // The mode is a default here, not a key, so the plugin has to resolve it
+    // to know it needs the hook — a non-null list is the case that shows it.
+    const execute = run({ Query: { notes: deny } }, { strict: true });
+    const result = await execute('{ notes { id } }');
+    expect(result.data?.notes).toEqual([]);
+    expect(result.errors?.[0]?.path).toEqual(['notes']);
+    expect(result.errors?.[0]?.extensions).toEqual({ code: UNAUTHORIZED_FIELD_OR_TYPE });
+  });
+
+  it('validates but wraps nothing under disabled', async () => {
+    const execute = run(
+      { Query: { notes: deny, note: deny } },
+      { disabled: true, fallbackRule: deny, onDeny: 'filter' },
+    );
+    const result = await execute('{ notes { id } note(id: "n1") { id } }');
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.notes).toHaveLength(2);
+    expect(result.data?.note).toEqual({ id: 'n1' });
+
+    expect(() =>
+      createTestkit(
+        [
+          useGraphQLCasl<Record<string, Record<string, unknown>>>({
+            permissions: { Nope: { id: deny } },
+            disabled: true,
+          }),
+        ],
+        schemaWith(),
+      ),
+    ).toThrow(PermissionsError);
+  });
+
+  it('rejects contradictory options when the plugin is built', () => {
+    expect(() =>
+      useGraphQLCasl<Record<string, Record<string, unknown>>>({
+        permissions: {},
+        onDeny: 'reject',
+        report: 'extensions',
+      }),
+    ).toThrow(PermissionsError);
+  });
+
   it('rejects a map that does not match the schema', () => {
     expect(() =>
       createTestkit(

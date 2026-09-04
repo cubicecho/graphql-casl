@@ -39,6 +39,7 @@ import { useOnResolve } from '@envelop/on-resolve';
 import type { GraphQLField, GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
+  denialModeOf,
   type PermissionResolver,
   reportDenials,
   resolvePermissions,
@@ -89,6 +90,13 @@ export function useGraphQLCasl<
   TContext extends Record<string, any> = Record<string, any>,
 >(options: GraphQLCaslPluginOptions<TResolvers>): Plugin<TContext> {
   const { permissions, ...permissionOptions } = options;
+  // Resolved here rather than read off the key, so `strict` alone (which
+  // defaults the mode to `'filter'`) still gets its report hook. Resolving also
+  // rejects a contradictory pair at wiring time, before any schema arrives.
+  const filtering = denialModeOf(permissionOptions) === 'filter';
+  // `disabled` still validates — `permissionsFor` runs on every schema — but
+  // installs no resolver hook, so nothing is wrapped.
+  const enforcing = !permissionOptions.disabled;
 
   /** Per schema, because envelop may hand over a new one at any point. */
   const resolvers = new WeakMap<GraphQLSchema, PermissionResolver>();
@@ -111,6 +119,7 @@ export function useGraphQLCasl<
 
   const plugin: Plugin<TContext> = {
     onPluginInit({ addPlugin }) {
+      if (!enforcing) return;
       addPlugin(
         useOnResolve<TContext>(({ info, resolver, replaceResolver }) => {
           // `replaceResolver` is permanent for the field, not per call, so this
@@ -159,7 +168,7 @@ export function useGraphQLCasl<
   // non-null list's `[]`, everything under `report: 'extensions'` — are merged
   // into the result once execution is done. This is the hook graphql-middleware
   // never offers `applyPermissions`, and the reason `reportDenials` is public.
-  if (permissionOptions.onDeny === 'filter') {
+  if (filtering && enforcing) {
     plugin.onExecute = () => ({
       onExecuteDone(payload) {
         return handleStreamOrSingleExecutionResult(payload, ({ args, result, setResult }) => {

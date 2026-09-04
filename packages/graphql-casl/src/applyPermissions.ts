@@ -713,13 +713,20 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
   validatePermissions(schema, permissions);
   const raw = permissions as RawPermissions;
 
+  // `strict` moves the defaults, never the keys actually passed.
+  const strict = options?.strict ?? false;
   const errorControl: ErrorControl = {
     fallbackError: options?.fallbackError,
-    allowExternalErrors: options?.allowExternalErrors ?? true,
+    allowExternalErrors: options?.allowExternalErrors ?? !strict,
     debug: options?.debug ?? false,
     onDeny: denialModeOf(options),
     report: options?.report ?? 'errors',
   };
+
+  // Validated and resolved exactly as usual, so a stale map or a contradictory
+  // option still fails; only the lookup guards nothing.
+  if (options?.disabled) return () => undefined;
+
   const fallbackRule = options?.fallbackRule;
   const resolved = new Map<string, Rule | undefined>();
 
@@ -879,9 +886,16 @@ interface ErrorControl {
   report: DenialReport;
 }
 
-/** Resolves `onDeny` and its `maskDenials` shorthand, rejecting a contradiction. */
-function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {
-  const onDeny = options?.onDeny ?? (options?.maskDenials ? 'mask' : 'reject');
+/**
+ * Resolves `onDeny` — from the key itself, the `maskDenials` shorthand, or the
+ * `strict` default — rejecting a contradiction. Shared with the entry points
+ * that need the resolved mode rather than the key as passed.
+ *
+ * @internal
+ */
+export function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {
+  const onDeny =
+    options?.onDeny ?? (options?.maskDenials ? 'mask' : options?.strict ? 'filter' : 'reject');
   const problems: string[] = [];
   if (options?.maskDenials && onDeny !== 'mask') {
     problems.push(
@@ -945,7 +959,9 @@ export interface ApplyPermissionsOptions {
    * **This default is the opposite of `graphql-shield`'s**, which masks by
    * default. Masking is the safer behaviour, but it is not what this library has
    * done since 1.0, and silently swallowing resolver errors on upgrade would be
-   * worse than leaving the choice explicit. Set it to `false` deliberately.
+   * worse than leaving the choice explicit. Set it to `false` deliberately, or
+   * set {@link strict}, which defaults it to `false` along with the other 2.0
+   * default.
    */
   allowExternalErrors?: boolean;
 
@@ -1002,7 +1018,8 @@ export interface ApplyPermissionsOptions {
    * denial rejects instead.
    *
    * The default stays `'reject'` for compatibility. `'filter'` is the better
-   * choice for new code and is planned to become the default in 2.0.
+   * choice for new code and becomes the default in 2.0 — or today, under
+   * {@link strict}.
    */
   onDeny?: DenialMode;
 
@@ -1056,6 +1073,39 @@ export interface ApplyPermissionsOptions {
    * Ignored by `resolvePermissions` and the envelop plugin, which apply nothing.
    */
   inPlace?: boolean;
+
+  /**
+   * The defaults planned for 2.0, today: `onDeny: 'filter'` and
+   * `allowExternalErrors: false`. Defaults to `false`.
+   *
+   * Both 1.x defaults are compatibility choices — `'reject'` is what 1.0 did,
+   * and letting resolver errors through is what this library has always done —
+   * and both are the weaker choice for new code. `strict: true` picks the
+   * stricter pair without you having to remember which two, and is what 2.0
+   * will do without it.
+   *
+   * It moves defaults, never mandates. A key you pass still wins:
+   * `{ strict: true, onDeny: 'reject' }` rejects, and `maskDenials: true` —
+   * itself a choice of mode — still masks.
+   */
+  strict?: boolean;
+
+  /**
+   * Switches enforcement off while keeping validation on. Defaults to `false`.
+   *
+   * A test that wants the schema without its rules — to seed a fixture, or to
+   * prove a failure is the resolver's and not authorization — should not have
+   * to hand-roll a bypass. With `disabled: true`, `applyPermissions` still
+   * checks the map against the schema, so a stale type or field still throws
+   * {@link PermissionsError} and drift is still caught, but returns the schema
+   * unguarded: the one you passed, untouched, with or without `inPlace`. The
+   * envelop plugin likewise validates and wraps nothing.
+   *
+   * A test-only switch. Do not wire it to an environment variable you do not
+   * control: a misconfigured deploy would ship with every rule off and nothing
+   * to say so.
+   */
+  disabled?: boolean;
 }
 
 /**
@@ -1107,6 +1157,8 @@ export function applyPermissions<TResolvers = AnyResolvers>(
   options?: ApplyPermissionsOptions,
 ): GraphQLSchema {
   const permissionFor = resolvePermissions(schema, permissions, options);
+  // Validated above; the schema goes back exactly as it came, on either path.
+  if (options?.disabled) return schema;
   if (options?.inPlace) return guardInPlace(schema, permissionFor);
   return applyMiddleware(schema, resolveFieldRules(schema, permissionFor));
 }

@@ -957,6 +957,138 @@ describe('applyPermissions — filtering denials', () => {
   });
 });
 
+describe('applyPermissions — strict', () => {
+  const CODE = { code: UNAUTHORIZED_FIELD_OR_TYPE };
+
+  /** A non-null list to filter, and a permitted field whose resolver fails. */
+  function strictly(permissions: LooseMap, options?: ApplyPermissionsOptions): GraphQLSchema {
+    const schema = makeExecutableSchema({
+      typeDefs: `type Query { list: [String!]! broken: String }`,
+      resolvers: {
+        Query: {
+          list: () => ['a'],
+          broken: () => {
+            throw new Error('db down');
+          },
+        },
+      },
+    });
+    return applyPermissions<Record<string, Record<string, unknown>>>(schema, permissions, {
+      strict: true,
+      ...options,
+    });
+  }
+
+  async function query(schema: GraphQLSchema, source: string) {
+    const contextValue = {};
+    return reportDenials(contextValue, await graphql({ schema, source, contextValue }));
+  }
+
+  it("defaults onDeny to 'filter'", async () => {
+    const result = await query(strictly({ Query: { list: deny } }), '{ list }');
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors?.[0]?.path).toEqual(['list']);
+    expect(result.errors?.[0]?.extensions).toEqual(CODE);
+  });
+
+  it('defaults allowExternalErrors to false', async () => {
+    const map: LooseMap = { Query: { broken: accept } };
+    const masked = await query(strictly(map, { fallbackError: 'Not Authorised!' }), '{ broken }');
+    expect(masked.errors?.[0]?.message).toBe('Not Authorised!');
+
+    // The same map without `strict` lets the resolver's own error through.
+    const loose = await query(
+      strictly(map, { strict: false, fallbackError: 'Not Authorised!' }),
+      '{ broken }',
+    );
+    expect(loose.errors?.[0]?.message).toBe('db down');
+  });
+
+  it('moves defaults only — a key passed explicitly still wins', async () => {
+    const rejected = await query(
+      strictly({ Query: { list: deny } }, { onDeny: 'reject' }),
+      '{ list }',
+    );
+    expect(rejected.data).toBeNull();
+    expect(rejected.errors?.[0]?.message).toBe('Forbidden');
+    expect(rejected.errors?.[0]?.extensions).toEqual({});
+
+    const surfaced = await query(
+      strictly({ Query: { broken: accept } }, { allowExternalErrors: true, fallbackError: 'Nope' }),
+      '{ broken }',
+    );
+    expect(surfaced.errors?.[0]?.message).toBe('db down');
+  });
+
+  it('lets maskDenials choose the mode, since it is a choice', async () => {
+    const result = await query(
+      strictly({ Query: { list: deny } }, { maskDenials: true }),
+      '{ list }',
+    );
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+  });
+
+  it("accepts report, because the mode is 'filter'", async () => {
+    const result = await query(
+      strictly({ Query: { list: deny } }, { report: 'extensions' }),
+      '{ list }',
+    );
+    expect(result.data).toEqual({ list: [] });
+    expect(result.errors).toBeUndefined();
+    expect(result.extensions?.authorizationErrors).toEqual([
+      expect.objectContaining({ path: ['list'], extensions: CODE }),
+    ]);
+  });
+});
+
+describe('applyPermissions — disabled', () => {
+  const denyNote: LooseMap = { Query: { note: deny } };
+
+  it('returns the schema it was given, unguarded', async () => {
+    const base = baseSchema();
+    const schema = applyPermissions(base, denyNote, { disabled: true, fallbackRule: deny });
+    expect(schema).toBe(base);
+    const result = await graphql({ schema, source: '{ note { id } notes { id } }' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ note: { id: '1' }, notes: [{ id: '1' }] });
+  });
+
+  it('returns the schema unguarded under inPlace too, and leaves it guardable', async () => {
+    const base = baseSchema();
+    expect(applyPermissions(base, denyNote, { disabled: true, inPlace: true })).toBe(base);
+    const open = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(open.errors).toBeUndefined();
+
+    // Nothing was marked as guarded, so a real apply still goes through.
+    applyPermissions(base, denyNote, { inPlace: true });
+    const guarded = await graphql({ schema: base, source: '{ note { id } }' });
+    expect(guarded.errors?.[0]?.message).toBe('Forbidden');
+  });
+
+  it('still validates the map and the options', () => {
+    expect(() =>
+      applyPermissions(baseSchema(), { Nope: { id: deny } } as LooseMap, { disabled: true }),
+    ).toThrow(PermissionsError);
+    expect(() =>
+      applyPermissions(baseSchema(), {} as LooseMap, {
+        disabled: true,
+        onDeny: 'reject',
+        report: 'extensions',
+      }),
+    ).toThrow(/only applies under/);
+  });
+
+  it('resolves every field to no rule, even under fallbackRule', () => {
+    const permissionFor = resolvePermissions(baseSchema(), denyNote, {
+      disabled: true,
+      fallbackRule: deny,
+    });
+    expect(permissionFor('Query', 'note')).toBeUndefined();
+    expect(permissionFor('Query', 'notes')).toBeUndefined();
+  });
+});
+
 describe('resolvePermissions', () => {
   const schema = makeExecutableSchema({
     typeDefs: /* GraphQL */ `
