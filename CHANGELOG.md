@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/cubicecho/graphql-casl/compare/v1.7.0...v1.8.0) (2026-09-04)
+
+
+### Features
+
+* inherit permissions map rules from interfaces and unions ([1ced308](https://github.com/cubicecho/graphql-casl/commit/1ced3080a3b8ea7077a8a67436739a7ad7679e4e))
+
 # [1.7.0](https://github.com/cubicecho/graphql-casl/compare/v1.6.0...v1.7.0) (2026-09-04)
 
 
