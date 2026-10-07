@@ -21,6 +21,7 @@ import {
  * What {@link createCan} does when a bare-subject check is made against a subject
  * whose only matching rules carry conditions.
  *
+ * @remarks
  * `ability.can('update', 'Note')` asks CASL *"is updating a Note possible at
  * all?"*, not *"may I update this Note?"* — a rule of
  * `can('update', 'Note', { userId })` makes the bare check return `true` for every
@@ -54,6 +55,7 @@ export interface CreateCanOptions {
  * `cannot(...).because('...')` explanation reaches the caller instead of being
  * replaced by a generic `Forbidden`.
  *
+ * @remarks
  * CASL surfaces this through `ForbiddenError.from(ability).throwUnlessCan(...)`,
  * but that also rewrites the default message to `Cannot execute "x" on "Y"`,
  * which both changes this library's denial message and tells an unauthorized
@@ -89,6 +91,7 @@ type RuleIntrospection = {
  * Whether every rule granting `action` on `subject` carries conditions, making a
  * bare-subject check a possibility test rather than a permission test.
  *
+ * @remarks
  * Conservative by design: returns `false` when the ability can't be introspected,
  * when no rule matches (the check denies anyway), or when any inverted (`cannot`)
  * rule is in play — a false positive here trains people to ignore the warning.
@@ -104,6 +107,7 @@ function isUnconditionedCheck(ability: AbilityLike, action: Action, subject: str
 /**
  * The object an ability-level memo is keyed on.
  *
+ * @remarks
  * CASL's `PureAbility` replaces its `rules` array on every `update()`, so the
  * array's identity changes exactly when a verdict derived from the rules could.
  * An ability that does not expose `rules` as an object cannot be memoized
@@ -155,9 +159,14 @@ export type BuildSubject<TSubjectMap extends Record<string, object>> = <
 ) => unknown;
 
 /**
- * The rule builder returned by {@link createCan} when a `buildSubject` tagger is
- * provided. Supports both bare-subject checks and condition checks where the
- * subject instance is built from resolver args via `getSubjectData`.
+ * The rule builder returned by {@link createCan} when a `buildSubject` tagger
+ * is provided.
+ *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
+ * Supports both bare-subject checks and condition checks where the subject
+ * instance is built from resolver args via `getSubjectData`.
  *
  * The subject name `K` narrows `getSubjectData`'s return to that subject's fields
  * (`Partial<TSubjectMap[K]>`); annotate `getSubjectData`'s `args` parameter with
@@ -168,8 +177,6 @@ export type BuildSubject<TSubjectMap extends Record<string, object>> = <
  * condition on the parent `User`, not on the field's args. Annotate it with
  * `ParentOf<UserResolvers['email']>` to type it. See the caveat on
  * {@link createCan} about resolvers that project by selection set.
- *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
 export interface RequireCan<TSubjectMap extends Record<string, object>> {
   <
@@ -203,6 +210,9 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * Builds a single rule that guards **every field of a type**, deciding each one
  * from CASL's field-level permissions rather than from a hand-written entry.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
  * `can('read', 'User', ['id', 'name'])` already says which fields may be read.
  * Restating that as a `PermissionsMap` entry per field duplicates it, and the two
  * drift. Attached to a type, this rule checks
@@ -228,8 +238,6 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * A field with no matching rule is denied, so this is deny-by-default across the
  * type's fields — unlike the `PermissionsMap`, where an unnamed field is
  * unguarded.
- *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
 export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
   K extends keyof TSubjectMap & string,
@@ -244,6 +252,9 @@ export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
 /**
  * Builds a rule that runs the resolver first and authorizes what it returned.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
  * The pre-execution form checks what the **client asserted** — a condition built
  * from `args.userId` says nothing about the record the resolver actually loads,
  * which is how a caller passes their own `userId` alongside someone else's `id`.
@@ -271,7 +282,6 @@ export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
  * rather than after. For those, check the args up front with the pre-execution
  * form, or write a {@link Rule} by hand.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @example
  * ```ts
  * Query: {
@@ -314,7 +324,10 @@ export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
 export interface CanRuleOptions {
   /**
    * Reuses the rule's verdict within a request — a {@link CacheMode}, or a
-   * {@link CacheKey} function. Default `'no_cache'`.
+   * {@link CacheKey} function.
+   *
+   * @remarks
+   * Default `'no_cache'`.
    *
    * A bare-subject check is already answered once per ability, so this is for
    * the conditioned form: `'strict'` evaluates the CASL conditions once per
@@ -330,6 +343,16 @@ export interface CanRuleOptions {
  * Factory that returns a `requireCan(action, subject, getSubjectData?)` rule
  * builder bound to a specific ability resolver and subject map.
  *
+ * @typeParam TContext - Your resolver context type.
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @param getAbility - Builds the ability for a request's context. Memoized per context.
+ * @param isAuthenticated - Returns whether the context represents a logged-in caller.
+ * @param buildSubject - Optional subject constructor, typically `createTyped`'s `typed`.
+ * @param options - Optional {@link CreateCanOptions}. May be passed in
+ * `buildSubject`'s position when no tagger is used.
+ * @returns A `requireCan(action, subject, getSubjectData?)` builder.
+ *
+ * @remarks
  * This decouples the auth/ability logic from the permissions map so projects can
  * swap in any ability-building strategy. The returned builder produces a
  * {@link Rule} that:
@@ -360,14 +383,6 @@ export interface CanRuleOptions {
  * factory shares the result, so a query touching many guarded fields builds the
  * ability once. A rejected build is not cached.
  *
- * @typeParam TContext - Your resolver context type.
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @param getAbility - Builds the ability for a request's context. Memoized per context.
- * @param isAuthenticated - Returns whether the context represents a logged-in caller.
- * @param buildSubject - Optional subject constructor, typically `createTyped`'s `typed`.
- * @param options - Optional {@link CreateCanOptions}. May be passed in
- * `buildSubject`'s position when no tagger is used.
- * @returns A `requireCan(action, subject, getSubjectData?)` builder.
  * @example
  * ```ts
  * const canUser = createCan<Context, AppSubjectMap>(

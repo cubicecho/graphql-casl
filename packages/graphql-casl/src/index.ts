@@ -1,6 +1,7 @@
 /**
  * graphql-casl — generic CASL permissions middleware for GraphQL resolvers.
  *
+ * @remarks
  * Everything here is schema-agnostic: pass your own generated `Resolvers` /
  * `ResolversTypes` to the type helpers and you get a fully-derived subject
  * union without any manual type listing. The runtime helpers (`createCan`,

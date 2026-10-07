@@ -1,6 +1,7 @@
 /**
  * Row-level filtering: turning a caller's ability into a *query filter*.
  *
+ * @remarks
  * The rest of this library is a gate — a rule allows or denies a whole field.
  * That is the wrong shape for a list: `notes` should not be denied outright
  * because one row is off-limits, it should return the rows the caller may read.
@@ -23,10 +24,11 @@ import type { GraphQLAbility } from './graphqlAbility.js';
  * The default filter shape: one subject's CASL conditions, combined with
  * mongo's boolean operators.
  *
+ * @typeParam T - The subject type being filtered.
+ *
+ * @remarks
  * The leaves are the conditions exactly as written on the rules, so they are
  * typed against the subject's fields. Only the combining operators are added.
- *
- * @typeParam T - The subject type being filtered.
  */
 export type AccessibleFilter<T> =
   | MongoQuery<T>
@@ -54,6 +56,7 @@ interface FoldableRule {
 /**
  * Flattens CASL's priority-ordered rules into boolean logic.
  *
+ * @remarks
  * CASL evaluates rules highest-priority first and stops at the first match, so a
  * `can` only applies to rows no higher-priority `cannot` already caught. A query
  * has no such ordering, so each `can` becomes an `or` branch *bounded by* the
@@ -108,23 +111,26 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * The filter matching every row of `subject` the ability permits `action` on, or
  * `null` when it permits none.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @param ability - The caller's ability.
+ * @param action - The action to filter for, e.g. `Actions.read`.
+ * @param subject - The subject name to filter, e.g. `'Note'`.
+ * @returns The filter, or `null` if no row is accessible.
+ *
+ * @remarks
  * `null` is a decision, not an absence: it means *deny all*, and the resolver
  * should return an empty list without querying. Any other value — including
  * `{}`, which means "no restriction" — is a filter to pass to the data layer.
  *
  * Field-level rules are ignored; this answers which *rows* are reachable.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @param ability - The caller's ability.
- * @param action - The action to filter for, e.g. `Actions.read`.
- * @param subject - The subject name to filter, e.g. `'Note'`.
- * @returns The filter, or `null` if no row is accessible.
  * @example
  * ```ts
  * const filter = accessibleBy(ability, Actions.read, 'Note');
  * if (filter === null) return [];
  * return db.notes.find(filter);
  * ```
+ *
  * @example A Prisma-shaped dialect:
  * ```ts
  * const prismaFilter: FilterAdapter<object> = {
@@ -137,6 +143,7 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * const where = accessibleBy(ability, Actions.read, 'Note', prismaFilter);
  * return where === null ? [] : prisma.note.findMany({ where });
  * ```
+ *
  * @example A leaf adapter, which translates the comparisons too:
  * ```ts
  * const prismaLeaves: FilterAdapter<object> = {

@@ -1,6 +1,7 @@
 /**
  * Validating stored ability rules against the schema.
  *
+ * @remarks
  * `createGraphQLAbility` types `can`/`cannot` against the subject map, but rules
  * that live in a database are edited outside the type system and rehydrated
  * with `buildGraphQLAbility`, which accepts anything. A stale rule fails
@@ -31,6 +32,7 @@ export interface ValidateGraphQLRulesOptions {
   /**
    * Whether a condition's field names are checked against the subject type.
    *
+   * @remarks
    * `'schema'` (the default) requires every path in `conditions` to name a
    * field of the subject — and, for a dotted path, a field of each type along
    * the way. `'none'` checks only the shape of the conditions (the operators,
@@ -86,6 +88,12 @@ const ACTION_NAMES = Object.values(Actions);
  * Checks stored {@link GraphQLRule}s against a schema and throws
  * {@link PermissionsError} if any of them could not do what it says.
  *
+ * @param schema - The schema the rules are checked against.
+ * @param rules - The stored rules, as loaded — typing is deliberately loose.
+ * @param options - See {@link ValidateGraphQLRulesOptions}.
+ * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
+ *
+ * @remarks
  * `buildGraphQLAbility` accepts whatever it is given, and CASL evaluates rules
  * lazily, so a stale rule is not an error — it is a rule that silently never
  * grants. That is the wrong failure mode for rows edited outside the type
@@ -110,10 +118,6 @@ const ACTION_NAMES = Object.values(Actions);
  * Condition *values* are not checked against field types; CASL compares them
  * structurally at check time.
  *
- * @param schema - The schema the rules are checked against.
- * @param rules - The stored rules, as loaded — typing is deliberately loose.
- * @param options - See {@link ValidateGraphQLRulesOptions}.
- * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
  * @example
  * ```ts
  * const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();
@@ -282,9 +286,11 @@ function walkConditions(
 
 /**
  * Follows a dotted path from each subject type, reporting the first segment
- * that is not a field. Returns the named types the path ends on, for
- * `$elemMatch` to descend into — or `undefined` when nothing further can be
- * checked.
+ * that is not a field.
+ *
+ * @remarks
+ * Returns the named types the path ends on, for `$elemMatch` to descend into —
+ * or `undefined` when nothing further can be checked.
  *
  * The walk stops, and accepts the rest of the path, at a type it cannot look
  * inside: a scalar (a `JSON` column has whatever keys it has), an enum, or a

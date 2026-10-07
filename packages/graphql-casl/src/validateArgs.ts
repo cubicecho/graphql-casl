@@ -4,6 +4,7 @@
  * the resolver does, and hands the resolver the *parsed* arguments — defaults
  * filled in, values coerced, transforms applied.
  *
+ * @remarks
  * The schema is whatever validator you already use: zod (3.24+), valibot,
  * arktype, yup (1.7+) and others all expose the `~standard` property the spec
  * defines, so this module needs none of them as a dependency. The interface it
@@ -134,8 +135,11 @@ export type ValidatedArgs<TSchema extends StandardSchemaV1> = StandardSchemaV1.I
 export interface ValidateArgsOptions {
   /**
    * Whether the resolver receives the schema's parsed output in place of the
-   * raw arguments. Defaults to `true`, which is the point of a Standard Schema
-   * — defaults, coercion and transforms reach the resolver.
+   * raw arguments.
+   *
+   * @remarks
+   * Defaults to `true`, which is the point of a Standard Schema — defaults,
+   * coercion and transforms reach the resolver.
    *
    * `false` validates only: the arguments the resolver sees are exactly the
    * ones GraphQL coerced, and the schema's output is discarded. Use it when a
@@ -149,6 +153,13 @@ export interface ValidateArgsOptions {
  * A rule that validates a field's arguments against a Standard Schema, and on
  * success calls the resolver with the parsed output as its `args`.
  *
+ * @typeParam TSchema - The Standard Schema. Its output type is what the
+ * resolver receives; {@link ValidatedArgs} names it.
+ * @param schema - Any object with a `~standard` property: a zod, valibot,
+ * arktype or yup schema, or a hand-written one.
+ * @param options - See {@link ValidateArgsOptions}.
+ *
+ * @remarks
  * GraphQL's own input coercion checks *shape* — the right scalars in the right
  * places. It has nothing to say about a title that is blank, an end date before
  * its start, or a page size of ten million. Those checks usually end up
@@ -186,11 +197,6 @@ export interface ValidateArgsOptions {
  * SDL never promised. That is often the point; just make sure the resolver
  * expects it.
  *
- * @typeParam TSchema - The Standard Schema. Its output type is what the
- * resolver receives; {@link ValidatedArgs} names it.
- * @param schema - Any object with a `~standard` property: a zod, valibot,
- * arktype or yup schema, or a hand-written one.
- * @param options - See {@link ValidateArgsOptions}.
  * @example
  * ```ts
  * import { z } from 'zod';

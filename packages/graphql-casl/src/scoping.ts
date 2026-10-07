@@ -2,6 +2,7 @@
  * Argument scoping — the optional entry point,
  * `@vantreeseba/graphql-casl/scoping`.
  *
+ * @remarks
  * The rest of this library is a gate: a rule decides whether a field may be
  * resolved. That is the wrong shape for a generated CRUD field. `notes(where:)`
  * should not be denied outright because one row is off-limits — it should
@@ -58,15 +59,21 @@ export interface ScopeOptions<TFilter> {
    */
   adapter: FilterAdapter<TFilter>;
   /**
-   * The argument to inject the filter into. Default `'where'`.
+   * The argument to inject the filter into.
+   *
+   * @remarks
+   * Default `'where'`.
    *
    * `applyPermissions` checks that the field really has an argument by this
    * name and refuses the map if it does not.
    */
   into?: string;
   /**
-   * How to combine the caller's own filter with the scope. The default is a
-   * top-level AND via the adapter — `adapter.and([clientFilter, scope])`.
+   * How to combine the caller's own filter with the scope.
+   *
+   * @remarks
+   * The default is a top-level AND via the adapter —
+   * `adapter.and([clientFilter, scope])`.
    *
    * Override it only if the dialect needs a different combining shape. Do not
    * "merge" by spreading keys: a client filter of `{ OR: [...] }` sits beside
@@ -76,6 +83,7 @@ export interface ScopeOptions<TFilter> {
   /**
    * What to do when the ability permits no row of this subject.
    *
+   * @remarks
    * - `'deny'` (default) — throw `Forbidden`. Honest, and the only safe choice
    *   for a mutation: a forbidden delete must fail, not silently match nothing.
    * - `'nothing'` — inject `adapter.nothing()` so the field resolves to an
@@ -93,13 +101,6 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * A rule that narrows a field's filter argument to the rows the caller may
  * `action`, instead of allowing or denying the field outright.
  *
- * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
- * arguments and calling the resolver, so it cannot be an operand of `and` /
- * `or` / `not` / `chain` / `race`. Use `wrap` to put a gate in front of it —
- * `wrap(isNotBanned, scopeArgs(...))` — or to stack it with `onResult`. Pair it
- * with `fallbackRule` too: a scoped field is not an authenticated-only field,
- * and scoping alone says nothing about the fields *around* it.
- *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @typeParam TFilter - The dialect's filter type.
  * @param requireCan - The `requireCan` returned by `createCan`. Its
@@ -108,6 +109,15 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * @param action - The action to scope for, e.g. `Actions.read`.
  * @param subject - The subject name whose rows are being filtered, e.g. `'Note'`.
  * @param options - The dialect and where to put the filter. See {@link ScopeOptions}.
+ *
+ * @remarks
+ * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
+ * arguments and calling the resolver, so it cannot be an operand of `and` /
+ * `or` / `not` / `chain` / `race`. Use `wrap` to put a gate in front of it —
+ * `wrap(isNotBanned, scopeArgs(...))` — or to stack it with `onResult`. Pair it
+ * with `fallbackRule` too: a scoped field is not an authenticated-only field,
+ * and scoping alone says nothing about the fields *around* it.
+ *
  * @example
  * ```ts
  * import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';

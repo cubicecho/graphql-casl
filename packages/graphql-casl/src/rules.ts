@@ -17,6 +17,7 @@ type ResolveFn = (
 /**
  * The callable middleware form used in {@link PermissionsMap} entries.
  *
+ * @remarks
  * A rule receives the wrapped `resolve` function plus the standard resolver
  * arguments. It either calls `resolve(...)` to allow the field, or throws to
  * deny it. `createCan` produces rules that enforce CASL abilities;
@@ -40,6 +41,7 @@ export type Rule = (
 /**
  * What a {@link Check} may return.
  *
+ * @remarks
  * `true` allows the field. `false` denies it with the default `Forbidden`
  * error, a `string` denies it with that message, and an `Error` is thrown as-is
  * — so a check can supply its own `GraphQLError` with extensions and a code.
@@ -56,6 +58,7 @@ export type RuleResult = boolean | string | Error;
  * The predicate behind a {@link CheckableRule}: the standard resolver arguments
  * *without* `resolve`, answering "may this field be resolved?".
  *
+ * @remarks
  * Because it cannot call the resolver, a check can be evaluated speculatively —
  * which is what lets {@link CheckableRule}s be combined.
  */
@@ -70,6 +73,7 @@ export type Check = (
 /**
  * A {@link Rule} that also exposes its decision as a standalone {@link Check}.
  *
+ * @remarks
  * A plain `Rule` denies by *throwing*, and the only way to ask it for a verdict
  * is to run it — which lets it call the resolver. A `CheckableRule` can be asked
  * without that side effect, so it can be an operand of `and` / `or` / `not` /
@@ -89,9 +93,12 @@ export interface CheckableRule extends Rule {
 
 /**
  * Marks an error as a rule's *denial* rather than a failure of the rule itself
- * or of the resolver beneath it. Those three are indistinguishable once they are
- * all just thrown errors, and `applyPermissions` has to treat them differently:
- * a denial is the system working, the other two are not.
+ * or of the resolver beneath it.
+ *
+ * @remarks
+ * Those three are indistinguishable once they are all just thrown errors, and
+ * `applyPermissions` has to treat them differently: a denial is the system
+ * working, the other two are not.
  *
  * The value records whether the check named the error (a string or an `Error`)
  * or merely returned `false` — only the latter is replaced by a `fallbackError`,
@@ -114,6 +121,7 @@ export function denialKindOf(error: unknown): DenialKind | undefined {
 /**
  * Attaches the denial marker without making it visible to serialization.
  *
+ * @remarks
  * An already-marked error keeps its original kind: a combinator re-normalizes
  * the error its operand produced, and an operand that named its denial should
  * not be demoted to a replaceable default on the way out.
@@ -153,6 +161,7 @@ export function denialFrom(result: RuleResult): Error | undefined {
 /**
  * How long one rule may reuse a check's answer.
  *
+ * @remarks
  * The default is `'no_cache'`: a rule attached to a *type* runs once per field
  * per object, so a 100-row list with 5 selected fields evaluates it 500 times.
  * That is free for a synchronous role check and expensive for the async rules
@@ -186,6 +195,7 @@ export type CacheMode = (typeof CacheMode)[keyof typeof CacheMode];
  * A custom cache key for {@link rule}'s `cache` option — the same escape hatch
  * `graphql-shield` offers when a function is passed as `cache`.
  *
+ * @remarks
  * The check is evaluated once per request per distinct key. Keys compare with
  * `Map` semantics: primitives by value, objects by identity — so return a
  * string, a number, or the object whose identity you mean. Return `undefined`
@@ -229,6 +239,7 @@ function isObject(value: unknown): value is object {
 /**
  * A stable key for a field's arguments, or `undefined` if none can be made.
  *
+ * @remarks
  * Arguments are GraphQL input values, so they are JSON-safe. Keys are sorted
  * because argument order is not guaranteed to be stable across executions, and
  * two orderings of the same arguments must share a cache entry. A field with no
@@ -264,6 +275,7 @@ function argsKey(args: unknown): string | undefined {
 /**
  * Wraps a check so that one request evaluates it at most once per cache key.
  *
+ * @remarks
  * The *pending promise* is stored rather than the resolved value, so concurrent
  * field resolutions on one list share a single in-flight call instead of
  * stampeding — which is the whole point on a rule that calls out to a policy
@@ -352,13 +364,15 @@ export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule') as
  * Wraps a {@link Check} into a {@link CheckableRule} — a rule usable directly in
  * a `PermissionsMap` *and* as an operand of the combinators.
  *
+ * @param check - The predicate. See {@link RuleResult} for what it may return.
+ * @param options - See {@link RuleOptions}.
+ *
+ * @remarks
  * The check runs before the resolver; a denial rejects and the resolver never
  * runs. An error raised *inside* the check propagates unchanged rather than
  * being converted into a denial, so a broken check is not silently mistaken for
  * a legitimate `Forbidden`.
  *
- * @param check - The predicate. See {@link RuleResult} for what it may return.
- * @param options - See {@link RuleOptions}.
  * @example
  * ```ts
  * const isSelf = rule(
@@ -425,6 +439,7 @@ export const deny: CheckableRule = rule(() => false, { name: 'deny' });
 /**
  * Resolver-map keys that are *not* schema fields.
  *
+ * @remarks
  * `typescript-resolvers` emits `__isTypeOf` on object types and `__resolveType`
  * on interfaces and unions. They are abstract-type discriminators, not fields, so
  * `graphql-middleware` has nothing to wrap for them — a rule attached to one is
@@ -460,6 +475,7 @@ type AnyFieldName<TResolvers> = {
 /**
  * The loose stand-in for a generated `Resolvers` type.
  *
+ * @remarks
  * `PermissionsMap<AnyResolvers>` accepts any type and field name, so the map
  * compiles without codegen. Nothing is lost at *runtime*: `applyPermissions`
  * walks the real schema and raises an aggregated `PermissionsError` for every
@@ -487,6 +503,11 @@ export type AnyResolvers = Record<string, Record<string, unknown>>;
 /**
  * The permissions map applied to a schema via `applyPermissions`.
  *
+ * @typeParam TResolvers - Your generated `Resolvers` type. Defaults to
+ * {@link AnyResolvers}, which accepts any type and field name and leaves the
+ * checking to `applyPermissions`'s runtime schema walk.
+ *
+ * @remarks
  * Every key is validated against your generated `Resolvers`: type names come
  * from `keyof TResolvers` and field names from each type's resolver keys, so a
  * mistyped or unknown type/field is a compile error. Each type key is optional
@@ -519,9 +540,6 @@ export type AnyResolvers = Record<string, Record<string, unknown>>;
  * implementor, at the same tier, are ambiguous: `applyPermissions` rejects the
  * map until the implementor's own entry chooses.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type. Defaults to
- * {@link AnyResolvers}, which accepts any type and field name and leaves the
- * checking to `applyPermissions`'s runtime schema walk.
  * @example
  * ```ts
  * const permissions: PermissionsMap<Resolvers> = {

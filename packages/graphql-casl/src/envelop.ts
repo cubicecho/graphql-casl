@@ -2,6 +2,7 @@
  * The envelop integration — the optional entry point,
  * `@vantreeseba/graphql-casl/envelop`.
  *
+ * @remarks
  * `applyPermissions` wraps a schema up front, which needs a schema you own
  * and can replace. That is awkward on Apollo Server 4+, on federated gateways,
  * and anywhere the schema is built or swapped for you. {@link useGraphQLCasl}
@@ -63,6 +64,13 @@ export interface GraphQLCaslPluginOptions<TResolvers>
 /**
  * An envelop plugin that enforces a {@link PermissionsMap}.
  *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @typeParam TContext - The plugin's context type.
+ * @param options - The map and the {@link ApplyPermissionsOptions}.
+ * @returns The envelop plugin.
+ * @throws `PermissionsError` if the map does not line up with the schema.
+ *
+ * @remarks
  * The map is validated against the schema as soon as envelop provides one, so a
  * map naming a type or field the schema does not have throws a `PermissionsError`
  * at that point rather than mid-query. A schema swapped at runtime is
@@ -72,11 +80,6 @@ export interface GraphQLCaslPluginOptions<TResolvers>
  * guarded too — the default resolver is wrapped like any other, which is what
  * makes a `canUser.fields(...)` rule on a plain object type work here.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @typeParam TContext - The plugin's context type.
- * @param options - The map and the {@link ApplyPermissionsOptions}.
- * @returns The envelop plugin.
- * @throws `PermissionsError` if the map does not line up with the schema.
  * @example
  * ```ts
  * const getEnveloped = envelop({

@@ -1,6 +1,9 @@
 /**
- * Logic combinators over {@link CheckableRule}s: `and`, `or`, `not`, `chain` and
- * `race`. Each returns a `CheckableRule`, so combinators nest freely.
+ * Logic combinators over {@link CheckableRule}s: `and`, `or`, `not`, `chain`
+ * and `race`.
+ *
+ * @remarks
+ * Each returns a `CheckableRule`, so combinators nest freely.
  *
  * {@link wrap} sits apart from those: it composes *any* rules, including ones
  * that decide by running the resolver, and returns a plain {@link Rule}.
@@ -22,6 +25,7 @@ import {
 /**
  * Extracts the operands' checks, rejecting anything that cannot be combined.
  *
+ * @remarks
  * A plain {@link Rule} decides by running, and running it may run the resolver —
  * so it cannot be evaluated speculatively as one branch of an `or`. Rather than
  * degrade silently, name the offending operand and fail while the permissions
@@ -55,6 +59,7 @@ function label(combinator: string, rules: readonly Rule[]): string {
 /**
  * One operand's outcome under a *tolerant* combinator.
  *
+ * @remarks
  * `or` and `race` need to tell three things apart, where the strict combinators
  * only need two: the operand passed, it denied, or it *broke*. A broken operand
  * must not be collapsed into a denial — that is the distinction the whole error
@@ -116,6 +121,7 @@ function passed(outcome: Outcome): boolean {
 /**
  * Decides a tolerant combinator once no operand has passed.
  *
+ * @remarks
  * A throw wins over a denial: a rule that broke is an outage to report, not an
  * access decision, and *returning* it here would let `rule()` mark it as a
  * denial. Throwing keeps it propagating unchanged, exactly as it would from a
@@ -129,8 +135,11 @@ function failureOf(outcomes: readonly Outcome[]): Error {
 }
 
 /**
- * Passes when **every** operand passes. Operands are evaluated **in parallel**;
- * on failure the **first** failing operand's error is thrown.
+ * Passes when **every** operand passes.
+ *
+ * @remarks
+ * Operands are evaluated **in parallel**; on failure the **first** failing
+ * operand's error is thrown.
  *
  * Use {@link chain} when the operands must run in order, or when a later one is
  * expensive and should be skipped once an earlier one has already failed.
@@ -161,10 +170,12 @@ export function and(...rules: Rule[]): CheckableRule {
 }
 
 /**
- * Passes when **any** operand passes. Operands are evaluated **in parallel**;
- * when all of them fail the **last** operand's error is thrown, on the reasoning
- * that the last branch is the most specific fallback and so the most useful
- * thing to tell the caller.
+ * Passes when **any** operand passes.
+ *
+ * @remarks
+ * Operands are evaluated **in parallel**; when all of them fail the **last**
+ * operand's error is thrown, on the reasoning that the last branch is the most
+ * specific fallback and so the most useful thing to tell the caller.
  *
  * An operand that **throws** counts as a failed operand rather than failing the
  * whole rule, so a passing branch still carries the field. This matters for the
@@ -199,7 +210,10 @@ export function or(...rules: Rule[]): CheckableRule {
 
 /**
  * Sequential {@link and}: evaluates operands in order and stops at the first
- * failure, throwing its error. Later operands are not evaluated at all.
+ * failure, throwing its error.
+ *
+ * @remarks
+ * Later operands are not evaluated at all.
  *
  * Prefer this over `and` when an operand is expensive — a database lookup, a
  * call to an external policy decision point — and should be reached only after
@@ -235,7 +249,10 @@ export function chain(...rules: Rule[]): CheckableRule {
 
 /**
  * Sequential {@link or}: evaluates operands in order and stops at the first one
- * that passes. When all of them fail, the last operand's error is thrown.
+ * that passes.
+ *
+ * @remarks
+ * When all of them fail, the last operand's error is thrown.
  *
  * Put the cheap or common case first — a passing first operand means the rest
  * never run.
@@ -278,12 +295,14 @@ export function race(...rules: Rule[]): CheckableRule {
 /**
  * Inverts a rule: passes when the operand denies, denies when it passes.
  *
+ * @param operand - The rule to invert.
+ * @param error - The denial message or error to use when `operand` passes.
+ *
+ * @remarks
  * The operand's error is discarded — it explains why the operand failed, which
  * is the *reason this rule passed*. Supply `error` to say why the inverted rule
  * denied; without one it denies with `Forbidden`.
  *
- * @param operand - The rule to invert.
- * @param error - The denial message or error to use when `operand` passes.
  * @example
  * ```ts
  * Mutation: { deleteAccount: not(isImpersonating, 'Not while impersonating') }
@@ -305,6 +324,9 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * Composes rules as nested middleware: each one receives the next as its
  * `resolve`, and the last receives the field's real resolver.
  *
+ * @param rules - The rules to nest, outermost first. At least one.
+ *
+ * @remarks
  * This is the escape hatch from the combinators' one restriction. `and`, `or`,
  * `not`, `chain` and `race` all need to ask an operand for a verdict *without*
  * side effects, so they accept only {@link CheckableRule}s. `wrap` never asks —
@@ -340,7 +362,6 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * its `resolve` stops the chain there, exactly as it would if it were the only
  * rule on the field.
  *
- * @param rules - The rules to nest, outermost first. At least one.
  * @example
  * ```ts
  * Mutation: { publish: wrap(chain(isAuthenticated, isNotBanned), auditTrail) }

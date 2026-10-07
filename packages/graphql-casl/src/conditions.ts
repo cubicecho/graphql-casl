@@ -1,6 +1,7 @@
 /**
  * Translating CASL's condition objects into another dialect's *leaves*.
  *
+ * @remarks
  * {@link FilterAdapter} has two shapes. A {@link SkeletonAdapter} controls only
  * the boolean skeleton and passes each rule's conditions through as written —
  * fine when the conditions are already in the target dialect's terms. A
@@ -18,6 +19,7 @@
 /**
  * A mongo-query comparison operator, as CASL conditions use them.
  *
+ * @remarks
  * A bare value (`{ status: 'live' }`) is normalized to `$eq`, so every leaf
  * reaching a {@link LeafAdapter} carries an explicit operator.
  */
@@ -88,6 +90,7 @@ export interface AdapterCore<TFilter> {
  * A dialect that controls the boolean skeleton and passes conditions through
  * verbatim.
  *
+ * @remarks
  * The leaves are the rule's conditions as written, so a rule using `$in` still
  * yields `$in` inside a Prisma-shaped tree. Use a {@link LeafAdapter} when the
  * target dialect spells its comparisons differently.
@@ -104,6 +107,7 @@ export interface SkeletonAdapter<TFilter> extends AdapterCore<TFilter> {
 /**
  * A dialect that controls the leaves as well as the skeleton.
  *
+ * @remarks
  * Each comparison in a rule's conditions is delivered as one
  * {@link LeafCondition}; the walker handles dotted paths, multi-operator
  * objects, and the `$and`/`$or`/`$nor` groups that rehydrated database rules
@@ -208,6 +212,7 @@ function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFi
  * The operator entries of a right-hand side, or `undefined` when it is a plain
  * value to compare with `$eq`.
  *
+ * @remarks
  * A *nested* object is a value, not a path: mongo reads `{ author: { id: 5 } }`
  * as "author equals this exact document". Only an object whose keys all start
  * with `$` is a set of operators. A mixture is neither, and mongo rejects it —

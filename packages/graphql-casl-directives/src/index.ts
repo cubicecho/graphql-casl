@@ -1,6 +1,7 @@
 /**
  * Declare `@vantreeseba/graphql-casl` permissions in SDL.
  *
+ * @remarks
  * This package is a translator, not an enforcer: {@link permissionsFromDirectives}
  * reads `@can` and `@rule` directives off a `GraphQLSchema` and produces the
  * `PermissionsMap` that the runtime's `applyPermissions` / `useGraphQLCasl`
@@ -49,8 +50,11 @@ import {
 } from 'graphql';
 
 /**
- * The SDL for the two directives. Add it to your `typeDefs` alongside your own
- * schema — the directives have to be defined before they can be used.
+ * The SDL for the two directives.
+ *
+ * @remarks
+ * Add it to your `typeDefs` alongside your own schema — the directives have to
+ * be defined before they can be used.
  *
  * The names deliberately avoid the federation auth vocabulary
  * (`@authenticated`, `@requiresScopes`, `@policy`), so a subgraph can carry
@@ -85,6 +89,7 @@ export const directiveTypeDefs = /* GraphQL */ `
 /**
  * The rules `@rule(names:)` may name, keyed by the name used in the SDL.
  *
+ * @remarks
  * Every entry must be a `CheckableRule` — one built by `rule()`, `createCan()`,
  * the combinators, or `accept` / `deny` — because `@rule` composes its operands
  * with `and` / `or`, which need to ask a rule for its verdict without running
@@ -97,6 +102,7 @@ export type DirectiveRules = Record<string, CheckableRule>;
  * A `createCan` builder, in the shape this package calls it: `can(action,
  * subject)` with a bare subject name and no extractor.
  *
+ * @remarks
  * The subject parameter is typed `never` so that any `RequireCan` /
  * `RequireCanBare` — whose subject type is the key union of *its* subject map —
  * is accepted without a cast. Nothing is lost: the subject names come from the
@@ -392,6 +398,18 @@ class Translator {
  * Translates the `@can` and `@rule` directives in a schema into a
  * `PermissionsMap`.
  *
+ * @param schema - The schema to read directives from. Types and fields need
+ * their `astNode`s — a schema built from SDL (`buildSchema`,
+ * `makeExecutableSchema`) has them; one assembled from `GraphQLObjectType`
+ * constructors does not, and translates to an empty map.
+ * @param options - The `can` builder and the `rules` registry.
+ * @returns The map. Empty when the schema uses neither directive.
+ * @throws {@link PermissionsError} Listing every problem at once: a `@can` whose
+ * subject cannot be inferred, a `@rule` naming a rule the registry lacks or one
+ * that is not checkable, a malformed `names`, or a directive with no `can` /
+ * `rules` to resolve against.
+ *
+ * @remarks
  * Nothing is enforced here. Hand the result to `applyPermissions` or
  * `useGraphQLCasl` from `@vantreeseba/graphql-casl`, exactly as you would a
  * hand-written map — or spread the two together.
@@ -411,16 +429,6 @@ class Translator {
  *
  * Introspection types are skipped. Extension nodes (`extend type`) are read.
  *
- * @param schema - The schema to read directives from. Types and fields need
- * their `astNode`s — a schema built from SDL (`buildSchema`,
- * `makeExecutableSchema`) has them; one assembled from `GraphQLObjectType`
- * constructors does not, and translates to an empty map.
- * @param options - The `can` builder and the `rules` registry.
- * @returns The map. Empty when the schema uses neither directive.
- * @throws {@link PermissionsError} Listing every problem at once: a `@can` whose
- * subject cannot be inferred, a `@rule` naming a rule the registry lacks or one
- * that is not checkable, a malformed `names`, or a directive with no `can` /
- * `rules` to resolve against.
  * @example
  * ```ts
  * const schema = makeExecutableSchema({ typeDefs: [directiveTypeDefs, typeDefs], resolvers });

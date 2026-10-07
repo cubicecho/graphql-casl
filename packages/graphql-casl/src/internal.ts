@@ -1,6 +1,7 @@
 /**
  * Symbols shared between modules that must agree without importing each other.
  *
+ * @remarks
  * `Symbol.for` rather than `Symbol()` so two copies of this package in one
  * `node_modules` tree still recognise each other's marks.
  */

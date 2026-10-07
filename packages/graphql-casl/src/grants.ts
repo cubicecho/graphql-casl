@@ -2,6 +2,7 @@
  * Granted scopes: a parent field's authorization, reused by the fields of what
  * it returned.
  *
+ * @remarks
  * {@link grants} wraps the rule on a field that returns objects — a list, a
  * lookup — and, once that rule has passed and the resolver has answered, tags
  * each returned object with a named scope for the rest of the request.
@@ -23,6 +24,7 @@ import { type CheckableRule, isThenable, type Rule, rule } from './rules.js';
  * Every grant made in every live request: the scopes each object was granted,
  * keyed on the context the request ran under.
  *
+ * @remarks
  * Both maps are weak. A context is created per request and dropped with it, so
  * a request's grants are unreachable once the request is, and an object tagged
  * in one request is untagged in every other — a second context finds nothing.
@@ -81,9 +83,15 @@ function scopesOf(scope: string | readonly string[]): readonly string[] {
 /**
  * Wraps a rule so that, when it passes and the resolver returns, what it
  * returned is **granted** `scope` for the rest of the request — the object
- * itself, or each object of a list. A child field guarded by
- * {@link granted}`(scope)` then passes on those objects without a check of its
- * own.
+ * itself, or each object of a list.
+ *
+ * @param inner - The rule that authorizes the field. Its verdict is unchanged.
+ * @param scope - The scope name, or a list of names, to grant.
+ * @returns A rule with `inner`'s verdict that also tags what the field returned.
+ *
+ * @remarks
+ * A child field guarded by {@link granted}`(scope)` then passes on those
+ * objects without a check of its own.
  *
  * ```ts
  * Query: { posts: grants(canUser(Actions.read, Subject.Post), 'post') },
@@ -110,10 +118,6 @@ function scopesOf(scope: string | readonly string[]): readonly string[] {
  * plain {@link Rule}, never a {@link CheckableRule}: it decides by running the
  * resolver, so it cannot be an operand of `and` / `or` / `not` / `chain` /
  * `race`. Compose it with `wrap` instead, or combine the rule *inside* it.
- *
- * @param inner - The rule that authorizes the field. Its verdict is unchanged.
- * @param scope - The scope name, or a list of names, to grant.
- * @returns A rule with `inner`'s verdict that also tags what the field returned.
  */
 export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   if (typeof inner !== 'function') {
@@ -150,6 +154,9 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
  * {@link grants | granted} `scope` earlier in this request, and denies with
  * `Forbidden` otherwise.
  *
+ * @param scope - The scope name to look for.
+ *
+ * @remarks
  * The check is synchronous — a `WeakMap` lookup — so a field it guards resolves
  * without a promise, and it needs no `cache`: it is already cheaper than a
  * cache hit. Put it first in a `race` so the fallback check only runs for rows
@@ -164,8 +171,6 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
  * which is no object at all — is denied. That is what makes it a *scope*
  * rather than a bypass. Use `race` / `or` when the type is also reachable by
  * paths that should authorize it themselves.
- *
- * @param scope - The scope name to look for.
  */
 export function granted(scope: string): CheckableRule {
   if (typeof scope !== 'string' || scope === '') {

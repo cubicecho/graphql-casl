@@ -2,6 +2,7 @@
  * The Apollo Server integration — the optional entry point,
  * `@vantreeseba/graphql-casl/apollo`.
  *
+ * @remarks
  * On Apollo Server the schema is wrapped up front with `applyPermissions`, so
  * enforcement needs nothing from here. What `applyPermissions` cannot do is see
  * the finished response — and under `onDeny: 'filter'` some denials can only be
@@ -70,11 +71,15 @@ function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is Gr
 
 /**
  * An Apollo Server plugin that reports the denials `onDeny: 'filter'` held for
- * each request — the ones the response could not carry through the denied
- * field itself — into the response before it is sent. It is
- * {@link reportDenials}, called from `willSendResponse` with the request's
- * `contextValue`; see `ApplyPermissionsOptions.onDeny` for which denials
- * those are.
+ * each request — the ones the response could not carry through the denied field
+ * itself — into the response before it is sent.
+ *
+ * @returns The plugin, for Apollo Server's `plugins` array.
+ *
+ * @remarks
+ * It is {@link reportDenials}, called from `willSendResponse` with the
+ * request's `contextValue`; see `ApplyPermissionsOptions.onDeny` for which
+ * denials those are.
  *
  * Under `report: 'errors'` they are appended to the response's `errors`,
  * formatted the way Apollo formats its own; under `report: 'extensions'` they
@@ -87,7 +92,6 @@ function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is Gr
  * follow, so a denial held for a deferred payload is silently masked — the same
  * degradation as no hook at all.
  *
- * @returns The plugin, for Apollo Server's `plugins` array.
  * @example
  * ```ts
  * const server = new ApolloServer<Context>({

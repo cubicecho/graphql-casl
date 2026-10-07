@@ -1,9 +1,12 @@
 /**
- * The schema-typed ability. {@link GraphQLAbility} is a CASL `MongoAbility` whose
- * subjects are detected by `__typename` and whose `can`/`cannot` conditions are
- * statically typed against each subject's fields. {@link createGraphQLAbility}
- * returns a builder bound to your subject map; {@link buildGraphQLAbility}
- * reconstructs an ability from stored {@link GraphQLRule}s.
+ * The schema-typed ability.
+ *
+ * @remarks
+ * {@link GraphQLAbility} is a CASL `MongoAbility` whose subjects are detected
+ * by `__typename` and whose `can`/`cannot` conditions are statically typed
+ * against each subject's fields. {@link createGraphQLAbility} returns a builder
+ * bound to your subject map; {@link buildGraphQLAbility} reconstructs an
+ * ability from stored {@link GraphQLRule}s.
  *
  * Subjects are discriminated by `__typename` — CASL's `TaggedInterface` natively
  * accepts a required `__typename` tag, so no `__caslSubjectType__` is needed.
@@ -108,6 +111,7 @@ function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @param rules - The stored rules.
  * @param options - Extra CASL ability options to override or extend the defaults.
+ *
  * @example
  * ```ts
  * const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();
@@ -126,12 +130,14 @@ export function buildGraphQLAbility<TSubjectMap extends Record<string, object>>(
  * `__typename` detection applied by `build()` (the mongo conditions matcher is
  * built in).
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns A typed `AbilityBuilder` whose `build()` wires the GraphQL defaults.
+ *
+ * @remarks
  * The returned builder's `can` / `cannot` type their conditions per subject (see
  * {@link GraphQLAbility}). Read `builder.rules` (or `ability.rules`) to persist
  * the rules and later rehydrate them with {@link buildGraphQLAbility}.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @returns A typed `AbilityBuilder` whose `build()` wires the GraphQL defaults.
  * @example
  * ```ts
  * type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;

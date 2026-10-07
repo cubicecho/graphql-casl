@@ -1,6 +1,7 @@
 /**
  * The schema walk behind {@link applyPermissions}.
  *
+ * @remarks
  * `PermissionsMap` validates type and field names at compile time, but only for
  * consumers who generate a `Resolvers` type. This module re-checks the map
  * against the runtime `GraphQLSchema` and resolves it into the concrete
@@ -165,6 +166,7 @@ function sourcesOf(
  * Where two abstract entries would both guard a field of one implementor and
  * the implementor does not choose between them.
  *
+ * @remarks
  * Inherited rules never compose, and picking one silently — by map order, say
  * — would make the outcome depend on which interface was listed first. So a
  * field two interfaces both cover is a problem until the object type's own
@@ -213,6 +215,7 @@ function ambiguityProblems(
 /**
  * Every way a permissions map can fail to line up with the schema.
  *
+ * @remarks
  * `graphql-middleware` does check that types and fields exist, but it fails on
  * the first one and crashes outright on a union (`type.getFields is not a
  * function`). More importantly it accepts entries that are silently inert: a rule
@@ -345,6 +348,7 @@ function scopeTargetsOf(rule: unknown): readonly string[] {
  * Checks that every field a scoping rule guards actually has the argument the
  * rule injects into.
  *
+ * @remarks
  * This matters more than a normal typo check: a rule runs *downstream* of
  * GraphQL's input coercion, so an injected argument is never validated. Writing
  * a filter into an argument the field does not declare fails silently — the
@@ -402,6 +406,7 @@ function inheritedRuleOf(
 /**
  * The single rule guarding one field, or `undefined` to leave it unguarded.
  *
+ * @remarks
  * Wildcards never compose — exactly one rule applies, and the most specific
  * entry wins. See {@link PermissionsMap} for the precedence table; the order of
  * the lookups below *is* that table.
@@ -446,6 +451,7 @@ async function resolveFallbackError(
 /**
  * The value a denied field is masked with, or `undefined` if it cannot be masked.
  *
+ * @remarks
  * A factory, not a value: `[]` handed to two requests would be the same array.
  *
  * Masking is bounded by the schema. A nullable field becomes `null`, and a
@@ -470,6 +476,7 @@ const MASK_LIST: Mask = () => [];
 /**
  * The `extensions.code` a denial carries under `onDeny: 'filter'`.
  *
+ * @remarks
  * It is Apollo Router's code for a field its authorization directives removed
  * from a query, so clients and tooling that already handle the router's partial
  * responses handle these without learning a second vocabulary.
@@ -534,6 +541,7 @@ function standardized(denial: Error): Error {
  * Delivers a denial under `onDeny: 'filter'`: the field resolves to its mask and
  * the denial is reported.
  *
+ * @remarks
  * Where the field can carry the report itself it does — a nullable field that
  * rejects *is* `null` plus an error at that path, and needs no response hook.
  * Everything else goes through the per-request record {@link reportDenials}
@@ -568,6 +576,11 @@ function deliver(
  * execution result — the ones the response could not carry through the denied
  * field itself (see {@link ApplyPermissionsOptions.onDeny}).
  *
+ * @param context - The request's context value: the one the resolvers saw.
+ * @param result - The execution result to report into.
+ * @returns The result with the denials merged in, or `result` itself if there were none.
+ *
+ * @remarks
  * The `/envelop` entry point calls this for you. Under `applyPermissions` no
  * hook sees the finished response, so call it from your server's own — Apollo
  * Server's `willSendResponse`, or straight after `execute`:
@@ -581,10 +594,6 @@ function deliver(
  * `result.extensions.authorizationErrors`. The record is drained, so a context
  * is reported once, and a context with nothing recorded returns the result
  * untouched. Nothing is recorded under `'reject'` or `'mask'`.
- *
- * @param context - The request's context value: the one the resolvers saw.
- * @param result - The execution result to report into.
- * @returns The result with the denials merged in, or `result` itself if there were none.
  */
 export function reportDenials<TResult extends ExecutionResult>(
   context: unknown,
@@ -619,6 +628,7 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
 /**
  * Wraps one field's rule with the error-control options.
  *
+ * @remarks
  * Three kinds of failure have to be told apart: a **denial** (the rule did its
  * job), a **rule failure** (the rule itself broke — a `getAbility` that threw),
  * and a **resolver error** (the field was allowed and the resolver failed).
@@ -804,7 +814,10 @@ function withCheckedErrorControl(
 
 /**
  * Looks up the rule guarding one field, already wrapped with the error-control
- * and masking options. Returns `undefined` for a field left unguarded.
+ * and masking options.
+ *
+ * @remarks
+ * Returns `undefined` for a field left unguarded.
  *
  * This is the whole permission layer minus the binding to `graphql-middleware`
  * — see {@link resolvePermissions}.
@@ -816,6 +829,11 @@ export type PermissionResolver = (typeName: string, fieldName: string) => Rule |
  * {@link PermissionsError} if anything in it is stale — without building any
  * middleware.
  *
+ * @param schema - The schema to check against.
+ * @param permissions - The map to check.
+ * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
+ *
+ * @remarks
  * This is the cheap half of {@link applyPermissions}. That function validates
  * *and* wraps a resolver for every guarded field, which is O(fields) and, with a
  * `fallbackRule` set, means every field in the schema. The wrapping dominates by
@@ -826,9 +844,6 @@ export type PermissionResolver = (typeName: string, fieldName: string) => Rule |
  * The check is the same one `applyPermissions` runs, so a map that passes here
  * passes there.
  *
- * @param schema - The schema to check against.
- * @param permissions - The map to check.
- * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
  * @example
  * ```ts
  * it('has no stale keys', () => {
@@ -855,6 +870,14 @@ function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertyp
  * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
  * without applying it to anything.
  *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @param schema - The schema the map is checked against.
+ * @param permissions - The permissions map to resolve.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
+ * @returns A lookup from type and field name to the rule guarding that field.
+ * @throws {@link PermissionsError} if the map does not line up with the schema.
+ *
+ * @remarks
  * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
  * enforce the same map through another integration — an Apollo plugin,
  * hand-wrapped resolvers — and get identical wildcard precedence,
@@ -866,12 +889,6 @@ function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertyp
  * a mismatched map fails at wiring time rather than mid-query. Lookups are
  * memoized, so calling this per resolver call is cheap.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @param schema - The schema the map is checked against.
- * @param permissions - The permissions map to resolve.
- * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns A lookup from type and field name to the rule guarding that field.
- * @throws {@link PermissionsError} if the map does not line up with the schema.
  * @example
  * ```ts
  * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
@@ -952,6 +969,7 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
 /**
  * Resolves the map into the per-field middleware `graphql-middleware` consumes.
  *
+ * @remarks
  * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
  * can guard a field no map entry names. Introspection types are skipped by the
  * resolver itself, so even `fallbackRule: deny` leaves introspection working.
@@ -1042,6 +1060,7 @@ function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver):
  * A replacement error for denials that did not name one: an `Error`, a message,
  * or a mapper that receives the original error and the resolver arguments.
  *
+ * @remarks
  * The mapper is the form that lets a denial become a `GraphQLError` with a code
  * and extensions, or vary by field.
  */
@@ -1094,6 +1113,7 @@ export interface ApplyPermissionsOptions {
   /**
    * Rule for every field no map entry covers — the deny-by-default switch.
    *
+   * @remarks
    * Without it the map is a whitelist of what to guard, so a type or field it
    * does not name is left completely unguarded, and a field added to the schema
    * later ships unprotected. `fallbackRule: deny` inverts that: every field is
@@ -1108,6 +1128,7 @@ export interface ApplyPermissionsOptions {
   /**
    * Replaces the error thrown by a denial that did not name its own.
    *
+   * @remarks
    * `Error('Forbidden')` says nothing a client can act on and carries no code.
    * Supply a `GraphQLError` with `extensions.code`, a message, or a mapper that
    * builds one from the field being guarded.
@@ -1128,7 +1149,10 @@ export interface ApplyPermissionsOptions {
 
   /**
    * Whether an error thrown by the *resolver* of a permitted field reaches the
-   * client unchanged. Defaults to `true`.
+   * client unchanged.
+   *
+   * @remarks
+   * Defaults to `true`.
    *
    * Setting it to `false` replaces those errors with `fallbackError`, so an
    * internal failure — a database message, a stack-revealing library error —
@@ -1145,8 +1169,10 @@ export interface ApplyPermissionsOptions {
   allowExternalErrors?: boolean;
 
   /**
-   * Whether an error raised *inside a rule* is rethrown untouched. Defaults to
-   * `false`.
+   * Whether an error raised *inside a rule* is rethrown untouched.
+   *
+   * @remarks
+   * Defaults to `false`.
    *
    * A rule that breaks — a `getAbility` that throws, a check with a bug — is not
    * a denial, but it arrives as a thrown error just like one, so in production it
@@ -1159,7 +1185,10 @@ export interface ApplyPermissionsOptions {
   debug?: boolean;
 
   /**
-   * What a denied field does. Defaults to `'reject'`.
+   * What a denied field does.
+   *
+   * @remarks
+   * Defaults to `'reject'`.
    *
    * - `'reject'` throws the denial. GraphQL null propagation then applies: deny
    *   one field of `todos: [Todo!]!` and the *entire* `data` payload becomes
@@ -1203,8 +1232,11 @@ export interface ApplyPermissionsOptions {
   onDeny?: DenialMode;
 
   /**
-   * Where a filtered denial is reported. Defaults to `'errors'`. Only applies
-   * under `onDeny: 'filter'`, and is rejected alongside any other mode.
+   * Where a filtered denial is reported.
+   *
+   * @remarks
+   * Defaults to `'errors'`. Only applies under `onDeny: 'filter'`, and is
+   * rejected alongside any other mode.
    *
    * - `'errors'` puts it in the response's `errors` array, as Apollo Router
    *   does by default. A nullable field carries it by rejecting — `null` plus
@@ -1226,6 +1258,8 @@ export interface ApplyPermissionsOptions {
 
   /**
    * Whether to guard the schema you passed in, instead of a guarded copy.
+   *
+   * @remarks
    * Defaults to `false`.
    *
    * By default `applyPermissions` hands the map to `graphql-middleware`, which
@@ -1255,7 +1289,10 @@ export interface ApplyPermissionsOptions {
 
   /**
    * The defaults planned for 2.0, today: `onDeny: 'filter'` and
-   * `allowExternalErrors: false`. Defaults to `false`.
+   * `allowExternalErrors: false`.
+   *
+   * @remarks
+   * Defaults to `false`.
    *
    * Both 1.x defaults are compatibility choices — `'reject'` is what 1.0 did,
    * and letting resolver errors through is what this library has always done —
@@ -1270,7 +1307,10 @@ export interface ApplyPermissionsOptions {
   strict?: boolean;
 
   /**
-   * Switches enforcement off while keeping validation on. Defaults to `false`.
+   * Switches enforcement off while keeping validation on.
+   *
+   * @remarks
+   * Defaults to `false`.
    *
    * A test that wants the schema without its rules — to seed a fixture, or to
    * prove a failure is the resolver's and not authorization — should not have
@@ -1290,6 +1330,15 @@ export interface ApplyPermissionsOptions {
 /**
  * Applies a {@link PermissionsMap} to an executable schema via `graphql-middleware`.
  *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @param schema - The executable schema to guard.
+ * @param permissions - The permissions map to enforce.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
+ * @returns The schema wrapped with the permission middleware — or, with
+ * `inPlace`, the same schema, now guarded.
+ * @throws {@link PermissionsError} if the map does not line up with the schema.
+ *
+ * @remarks
  * The map is validated against the schema first: unknown types and fields,
  * non-function rules, and entries that would be silently inert (introspection
  * types, a named field on a union) all raise a {@link PermissionsError} listing
@@ -1320,13 +1369,6 @@ export interface ApplyPermissionsOptions {
  * {@link ApplyPermissionsOptions.inPlace} guards the schema you passed instead
  * and skips it.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @param schema - The executable schema to guard.
- * @param permissions - The permissions map to enforce.
- * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns The schema wrapped with the permission middleware — or, with
- * `inPlace`, the same schema, now guarded.
- * @throws {@link PermissionsError} if the map does not line up with the schema.
  * @example
  * ```ts
  * const schema = applyPermissions<Resolvers>(makeExecutableSchema({ typeDefs, resolvers }), permissions);
