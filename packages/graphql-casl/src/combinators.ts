@@ -20,6 +20,7 @@ import {
   type Rule,
   type RuleResult,
   rule,
+  whenSettled,
 } from './rules.js';
 
 /**
@@ -248,8 +249,7 @@ export function or(...rules: Rule[]): CheckableRule {
   }
   return rule(
     (parent, args, context, info) => {
-      const outcomes = outcomesOf(checks, parent, args, context, info);
-      return isThenable(outcomes) ? outcomes.then(decide) : decide(outcomes);
+      return whenSettled(outcomesOf(checks, parent, args, context, info), decide);
     },
     { name: label('or', rules) },
   );
@@ -373,8 +373,7 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
   const invert = (result: RuleResult): RuleResult => (denialFrom(result) ? true : (error ?? false));
   return rule(
     (parent, args, context, info) => {
-      const answer = (check as Check)(parent, args, context, info);
-      return isThenable(answer) ? Promise.resolve(answer).then(invert) : invert(answer);
+      return whenSettled((check as Check)(parent, args, context, info), invert);
     },
     { name: label('not', [operand]) },
   );

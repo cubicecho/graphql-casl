@@ -272,6 +272,23 @@ export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T
 }
 
 /**
+ * Continues with a value now when it is ready, or after it settles when it is pending. Internal.
+ *
+ * @typeParam T - The settled value type.
+ * @typeParam R - What the continuation returns.
+ * @param value - The value, or a promise of it.
+ * @param onValue - The continuation.
+ * @returns The continuation's result, or a promise of it when `value` was pending.
+ *
+ * @remarks
+ * Pass an existing function, not a fresh closure: this runs per field, and the
+ * synchronous path should allocate nothing.
+ */
+export function whenSettled<T, R>(value: T | PromiseLike<T>, onValue: (value: T) => R): R | Promise<R> {
+  return isThenable(value) ? Promise.resolve(value).then(onValue) : onValue(value);
+}
+
+/**
  * A stable key for a field's arguments, or `undefined` if none can be made.
  *
  * @param args - The field's arguments.

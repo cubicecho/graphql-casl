@@ -11,11 +11,11 @@ import {
   type CacheMode,
   type CheckableRule,
   denialOf,
-  isThenable,
   NOT_AUTHENTICATED,
   type Rule,
   type RuleResult,
   rule,
+  whenSettled,
 } from './rules.js';
 
 /**
@@ -503,7 +503,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
       return new Error(NOT_AUTHENTICATED);
     }
     const ability = resolveAbility(context);
-    return isThenable(ability) ? ability.then(decide) : decide(ability);
+    return whenSettled(ability, decide);
   }
 
   function requireCan<
