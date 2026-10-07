@@ -417,7 +417,7 @@ class Translator {
  * constructors does not, and translates to an empty map.
  * @param options - The `can` builder and the `rules` registry.
  * @returns The map. Empty when the schema uses neither directive.
- * @throws {PermissionsError} Listing every problem at once: a `@can` whose
+ * @throws {@link PermissionsError} Listing every problem at once: a `@can` whose
  * subject cannot be inferred, a `@rule` naming a rule the registry lacks or one
  * that is not checkable, a malformed `names`, or a directive with no `can` /
  * `rules` to resolve against.

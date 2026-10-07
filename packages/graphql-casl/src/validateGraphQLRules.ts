@@ -113,7 +113,7 @@ const ACTION_NAMES = Object.values(Actions);
  * @param schema - The schema the rules are checked against.
  * @param rules - The stored rules, as loaded — typing is deliberately loose.
  * @param options - See {@link ValidateGraphQLRulesOptions}.
- * @throws {PermissionsError} Aggregating *every* problem, not just the first.
+ * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
  * @example
  * ```ts
  * const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();

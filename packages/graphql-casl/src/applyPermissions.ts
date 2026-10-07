@@ -828,7 +828,7 @@ export type PermissionResolver = (typeName: string, fieldName: string) => Rule |
  *
  * @param schema - The schema to check against.
  * @param permissions - The map to check.
- * @throws {PermissionsError} Aggregating *every* problem, not just the first.
+ * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
  * @example
  * ```ts
  * it('has no stale keys', () => {

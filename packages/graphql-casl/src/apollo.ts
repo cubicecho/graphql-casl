@@ -73,7 +73,7 @@ function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is Gr
  * each request — the ones the response could not carry through the denied
  * field itself — into the response before it is sent. It is
  * {@link reportDenials}, called from `willSendResponse` with the request's
- * `contextValue`; see {@link ApplyPermissionsOptions.onDeny} for which denials
+ * `contextValue`; see `ApplyPermissionsOptions.onDeny` for which denials
  * those are.
  *
  * Under `report: 'errors'` they are appended to the response's `errors`,

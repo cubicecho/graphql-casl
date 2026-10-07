@@ -70,7 +70,7 @@ export type GraphQLAbilityOptions<TSubjectMap extends Record<string, object>> = 
 /**
  * Reads a subject's `__typename`. CASL only calls this for object subjects (bare
  * string subject names and `undefined` are handled before this runs), so a
- * missing/`non-string `__typename` means an untagged object reached the check —
+ * missing or non-string `__typename` means an untagged object reached the check —
  * fail loud rather than silently denying, since CASL can't classify it.
  */
 function detectSubjectType(subject: { __typename?: unknown }): string {

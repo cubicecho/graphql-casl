@@ -309,7 +309,7 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * `not`, `chain` and `race` all need to ask an operand for a verdict *without*
  * side effects, so they accept only {@link CheckableRule}s. `wrap` never asks —
  * it just nests — so it accepts anything, including the rules that decide by
- * running the resolver: `createCan(...).onResult`, `scopeArgs(...)` and
+ * running the resolver: `createCan(...).onResult`, `scopeArgs(...)`,
  * `validateArgs(...)` and `grants(...)`.
  *
  * ```ts
