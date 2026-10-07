@@ -39,13 +39,13 @@ Not ledger items in themselves; the `R` items below say which of these they impl
 
 | ID | Kind | What it does | Buys | Needs | Status |
 |---|---|---|---|---|---|
-| R1 | Refactor [pattern] | Splits the 1,341-line permission module into one file each for the map check, rule precedence, denials, error control and applying, with the public exports unchanged. | M1; the file changed 17 times last year | — | open |
-| R2 | Refactor [readability] | Breaks the 105-line, deeply nested map-problem collector into one named check per kind of problem. | M1; the worst complexity hit in the repo | R1 | open |
-| R3 | Refactor [reuse] | Replaces four hand-written copies of "can this value key a WeakMap" with one shared helper. | M2 | — | open |
-| R4 | Refactor [reuse] | Replaces nine written-out "get the map entry or create it" blocks with one helper, outside the per-field hot path. | M2 | — | open |
-| R5 | Refactor [reuse] | Replaces about eight written-out "run now if ready, else when the promise settles" branches with one helper. | M2 | T2 | open |
-| R6 | Refactor [reuse] | Gives the argument-scoping mark one read function and one write function, removing four casts. | M3 | — | open |
-| R7 | Refactor [simplify] | Adds a denial constructor that always returns an error, removing three unreachable fallbacks and two casts, and names the two denial messages. | M4 | — | open |
+| R1 | Refactor [pattern] | Splits the 1,341-line permission module into one file each for the map check, rule precedence, denials, error control and applying, with the public exports unchanged. | M1; the file changed 17 times last year | — | done |
+| R2 | Refactor [readability] | Breaks the 105-line, deeply nested map-problem collector into one named check per kind of problem. | M1; the worst complexity hit in the repo | R1 | done |
+| R3 | Refactor [reuse] | Replaces four hand-written copies of "can this value key a WeakMap" with one shared helper. | M2 | — | done |
+| R4 | Refactor [reuse] | Replaces nine written-out "get the map entry or create it" blocks with one helper, outside the per-field hot path. Done for the wiring-time lookups; the per-field copies (`memoize`, `tag`, `deliver`) and the directives translator keep theirs. | M2 | — | done |
+| R5 | Refactor [reuse] | Replaces about eight written-out "run now if ready, else when the promise settles" branches with one helper. Done at the three sites that need no per-call closure (`or`, `not`, `createCan`); the other five stay inline. | M2 | T2 | done |
+| R6 | Refactor [reuse] | Gives the argument-scoping mark one read function and one write function, removing four casts. | M3 | — | done |
+| R7 | Refactor [simplify] | Adds a denial constructor that always returns an error, removing three unreachable fallbacks and two casts, and names the two denial messages. | M4 | — | done |
 | R8 | Refactor [reuse] | Makes the per-field ability check reuse the same verdict function as the main check instead of a second inline copy. | Two copies that must stay in step | — | open |
 | R9 | Refactor [consistency] | Derives the leaf-operator type from one list instead of a hand-synced type and set, and shares the group-operator list between the two condition walkers. | A new operator added in one place only | — | open |
 | R10 | Refactor [simplify] | Replaces the one constructor parameter property with an ordinary field, so the code is erasable-syntax clean. | Lets the compiler flag be turned on (R16) | — | done |
@@ -56,11 +56,11 @@ Not ledger items in themselves; the `R` items below say which of these they impl
 | R15 | Refactor [sweep] | Removes type assertions where a type guard or better typing can do the job, starting with the eight `as never` / `as unknown as` cases. | Sweep (P17) | R6, R7 | done |
 | R16 | Refactor [consistency] | Adopts the house Biome and compiler settings (120 columns, strict rules, erasable syntax only), which reformats most files. | House tooling parity | R10, R12 | done |
 | T1 | Test [reuse] | Moves test helpers copied across files (ability builder, sync resolver, fake resolve info, problem collector) into one shared helper module. | One fixture to change instead of three | — | open |
-| T2 | Test [pin] | Records the hot-path benchmark before and after the helper refactors, since they touch per-field code. | Protects R4, R5 | — | open |
+| T2 | Test [pin] | Records the hot-path benchmark before and after the helper refactors, since they touch per-field code. Paired in-process run, 120 alternating rounds: every case within ±3% of baseline, control ±5%. | Protects R4, R5 | — | done |
 | D1 | Docs | Reattaches two doc comments that sit above the wrong declaration, one of which leaves `resolvePermissions` with no API documentation. | Published API docs | — | done |
 | D2 | Docs | Fixes three small comment errors: a stray backtick, a doubled "and", and two spellings of the `@throws` tag. | Accuracy | — | done |
 | D3 | Docs [sweep] | Adds `@param` and `@returns` tags to the module-level functions that lack them. | Sweep (P4) | — | done |
-| B1 | Bug? | Stored-rule validation accepts `$not`, `$mod` and `$options`, which a leaf adapter then rejects at request time; decide whether validation should warn. | A rule that passes the check and fails mid-query | — | open |
+| B1 | Bug? | Stored-rule validation accepts `$not`, `$mod` and `$options`, which a leaf adapter then rejects at request time; decide whether validation should warn. Fixed as an additive option, `operators: 'leaf'`. | A rule that passes the check and fails mid-query | — | done |
 | A1 | API change | Exports named constants for the mode strings (as `Actions` already does for actions); additive, a minor release. | Consumers stop typing raw strings | R14 | done |
 | A2 | API change | Exports the wildcard key and an action guard from the runtime so the directives package stops keeping its own copies; additive, a minor release. | One definition across packages | — | done |
 | R17 | Refactor [consistency] · low value | Renames source and test files from camelCase to kebab-case. | House naming only | — | open |
