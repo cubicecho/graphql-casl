@@ -64,7 +64,12 @@ export interface ReportDenialsApolloPlugin {
   }>;
 }
 
-/** Whether an error is still a `GraphQLError` instance rather than its JSON. */
+/**
+ * Whether an error is still a `GraphQLError` instance rather than its JSON.
+ *
+ * @param error - An entry of a response's `errors`.
+ * @returns `true` for a `GraphQLError` instance.
+ */
 function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is GraphQLError {
   return typeof (error as Partial<GraphQLError>).toJSON === 'function';
 }

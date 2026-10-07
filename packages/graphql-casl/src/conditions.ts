@@ -129,7 +129,12 @@ export interface LeafAdapter<TFilter> extends AdapterCore<TFilter> {
  */
 export type FilterAdapter<TFilter> = SkeletonAdapter<TFilter> | LeafAdapter<TFilter>;
 
-/** Narrows the union. `leaf` is the discriminant. */
+/**
+ * Narrows the union. `leaf` is the discriminant.
+ *
+ * @param adapter - Either adapter kind.
+ * @returns `true` for a leaf adapter.
+ */
 export function isLeafAdapter<TFilter>(
   adapter: FilterAdapter<TFilter>,
 ): adapter is LeafAdapter<TFilter> {
@@ -139,6 +144,9 @@ export function isLeafAdapter<TFilter>(
 /**
  * Normalizes either adapter kind into the single `(conditions, inverted)`
  * function the fold uses, walking the conditions when the adapter wants leaves.
+ *
+ * @param adapter - Either adapter kind.
+ * @returns A function from one rule's conditions to a filter.
  */
 export function ruleTranslator<TFilter>(
   adapter: FilterAdapter<TFilter>,
@@ -151,12 +159,25 @@ export function ruleTranslator<TFilter>(
   };
 }
 
+/**
+ * ANDs the filters of one condition object.
+ *
+ * @param parts - One filter per key.
+ * @param adapter - Builds the filter.
+ * @returns The only part, their `and`, or `everything()` for none.
+ */
 function combine<TFilter>(parts: TFilter[], adapter: LeafAdapter<TFilter>): TFilter {
   if (parts.length === 0) return adapter.everything();
   return parts.length === 1 ? (parts[0] as TFilter) : adapter.and(parts);
 }
 
-/** One condition object — an implicit AND over its keys. */
+/**
+ * One condition object — an implicit AND over its keys.
+ *
+ * @param conditions - The condition object.
+ * @param adapter - Builds the filter.
+ * @returns The filter.
+ */
 function walk<TFilter>(conditions: object, adapter: LeafAdapter<TFilter>): TFilter {
   const parts: TFilter[] = [];
 
@@ -183,6 +204,13 @@ function walk<TFilter>(conditions: object, adapter: LeafAdapter<TFilter>): TFilt
   return combine(parts, adapter);
 }
 
+/**
+ * Reads the operand list of `$and`, `$or` or `$nor`.
+ *
+ * @param key - The group operator, for the message.
+ * @param value - Its right-hand side.
+ * @returns The conditions. Throws when `value` is not an array.
+ */
 function asGroup(key: string, value: unknown): object[] {
   if (!Array.isArray(value)) {
     throw new Error(`graphql-casl: \`${key}\` in a condition must be an array of conditions.`);
@@ -190,7 +218,14 @@ function asGroup(key: string, value: unknown): object[] {
   return value as object[];
 }
 
-/** One `field: <rhs>` entry — either a set of operators, or a bare equality. */
+/**
+ * One `field: <rhs>` entry — either a set of operators, or a bare equality.
+ *
+ * @param path - The field path, split on dots.
+ * @param value - The right-hand side.
+ * @param adapter - Builds the filter.
+ * @returns The filter.
+ */
 function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFilter>): TFilter {
   const operators = operatorEntries(value);
   if (!operators) return adapter.leaf({ path, operator: '$eq', value });
@@ -211,6 +246,9 @@ function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFi
 /**
  * The operator entries of a right-hand side, or `undefined` when it is a plain
  * value to compare with `$eq`.
+ *
+ * @param value - The right-hand side.
+ * @returns The entries. Throws when operators and plain keys are mixed.
  *
  * @remarks
  * A *nested* object is a value, not a path: mongo reads `{ author: { id: 5 } }`

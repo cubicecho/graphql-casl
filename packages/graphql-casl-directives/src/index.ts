@@ -143,11 +143,22 @@ interface Site {
   readonly root: boolean;
 }
 
+/**
+ * Names a site for an error message: `Type` or `Type.field`.
+ *
+ * @param site - Where the directive was found.
+ * @returns The label.
+ */
 function labelOf(site: Site): string {
   return site.field ? `${site.typeName}.${site.field.name}` : site.typeName;
 }
 
-/** A directive's arguments as plain values. SDL cannot carry variables, so this is total. */
+/**
+ * A directive's arguments as plain values. SDL cannot carry variables, so this is total.
+ *
+ * @param node - The directive node.
+ * @returns Argument name to plain value.
+ */
 function argumentsOf(node: ConstDirectiveNode): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   for (const arg of node.arguments ?? []) {
@@ -156,17 +167,33 @@ function argumentsOf(node: ConstDirectiveNode): Record<string, unknown> {
   return args;
 }
 
-/** Every directive on a type: its definition plus each `extend type` node. */
+/**
+ * Every directive on a type: its definition plus each `extend type` node.
+ *
+ * @param type - The object or interface type.
+ * @returns Its directives, definition first.
+ */
 function typeDirectives(type: GraphQLObjectType | GraphQLInterfaceType): ConstDirectiveNode[] {
   const nodes = [type.astNode, ...(type.extensionASTNodes ?? [])];
   return nodes.flatMap((node) => node?.directives ?? []);
 }
 
-/** Every directive on a field. A field added by `extend type` has its own node. */
+/**
+ * Every directive on a field. A field added by `extend type` has its own node.
+ *
+ * @param field - The field definition.
+ * @returns Its directives; empty when the field has no AST node.
+ */
 function fieldDirectives(field: GraphQLField<unknown, unknown>): readonly ConstDirectiveNode[] {
   return field.astNode?.directives ?? [];
 }
 
+/**
+ * Whether a value is a string with at least one character.
+ *
+ * @param value - The value to test.
+ * @returns `true` for a non-empty string.
+ */
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
@@ -175,7 +202,12 @@ const ACTION_NAMES = Object.values(Actions)
   .map((action) => `"${action}"`)
   .join(', ');
 
-/** The `names` shape `@rule` accepts: a non-empty list of non-empty lists of names. */
+/**
+ * The `names` shape `@rule` accepts: a non-empty list of non-empty lists of names.
+ *
+ * @param value - The `names` argument as written.
+ * @returns `true` when it has that shape.
+ */
 function isNamesShape(value: unknown): value is string[][] {
   return (
     Array.isArray(value) &&
@@ -186,7 +218,12 @@ function isNamesShape(value: unknown): value is string[][] {
   );
 }
 
-/** One rule for a field: the rule itself, or every rule ANDed. */
+/**
+ * One rule for a field: the rule itself, or every rule ANDed.
+ *
+ * @param rules - The rules at one site; never empty.
+ * @returns The single rule, or their `and`.
+ */
 function combine(rules: readonly CheckableRule[]): CheckableRule {
   return rules.length === 1 ? (rules[0] as CheckableRule) : and(...rules);
 }
@@ -203,6 +240,12 @@ class Translator {
   /** Interface-level rules, built once per interface rather than once per implementor. */
   private readonly interfaceRules = new Map<string, CheckableRule[]>();
 
+  /**
+   * Reads the options and the schema's root type names.
+   *
+   * @param schema - The schema whose directives are translated.
+   * @param options - The `can` builder and the rule registry.
+   */
   constructor(
     private readonly schema: GraphQLSchema,
     options: DirectivePermissionsOptions,
@@ -216,6 +259,11 @@ class Translator {
     );
   }
 
+  /**
+   * Walks every object type and builds its entry of the permissions map.
+   *
+   * @returns The map; a type with no directives has no entry.
+   */
   translate(): DirectivePermissions {
     const map: Record<string, Record<string, CheckableRule>> = {};
 
@@ -258,12 +306,25 @@ class Translator {
     return map;
   }
 
+  /**
+   * The rules an interface's own directives translate to, built once.
+   *
+   * @param iface - The interface.
+   * @returns Its type-level rules.
+   */
   private interfaceTypeRules(iface: GraphQLInterfaceType): CheckableRule[] {
     return this.memo(iface.name, () =>
       this.rulesAt(typeDirectives(iface), { typeName: iface.name, root: false }),
     );
   }
 
+  /**
+   * The rules the directives on one interface field translate to, built once.
+   *
+   * @param iface - The interface.
+   * @param fieldName - The field to look up on it.
+   * @returns Its rules; empty when the interface has no such field.
+   */
   private interfaceFieldRules(iface: GraphQLInterfaceType, fieldName: string): CheckableRule[] {
     const field = iface.getFields()[fieldName];
     if (!field) return [];
@@ -272,6 +333,13 @@ class Translator {
     );
   }
 
+  /**
+   * Builds an interface's rules on first use and reuses them after.
+   *
+   * @param key - The interface name, or `Interface.field`.
+   * @param build - Builds the rules when the key is new.
+   * @returns The cached rules.
+   */
   private memo(key: string, build: () => CheckableRule[]): CheckableRule[] {
     let rules = this.interfaceRules.get(key);
     if (!rules) {
@@ -281,7 +349,13 @@ class Translator {
     return rules;
   }
 
-  /** The rules the auth directives at one site translate to, in SDL order. */
+  /**
+   * The rules the auth directives at one site translate to, in SDL order.
+   *
+   * @param directives - Every directive at the site.
+   * @param site - Where they were found.
+   * @returns One rule per `@can` or `@rule` that translated.
+   */
   private rulesAt(directives: readonly ConstDirectiveNode[], site: Site): CheckableRule[] {
     const rules: CheckableRule[] = [];
     for (const node of directives) {
@@ -297,6 +371,13 @@ class Translator {
     return rules;
   }
 
+  /**
+   * Translates one `@can`, recording a problem when it cannot.
+   *
+   * @param args - The directive's arguments.
+   * @param site - Where the directive was found.
+   * @returns The rule, or `undefined` after recording a problem.
+   */
   private canRule(args: Record<string, unknown>, site: Site): CheckableRule | undefined {
     const label = labelOf(site);
     if (!this.can) {
@@ -329,6 +410,9 @@ class Translator {
    * has no such parent, so its return type stands in: `Query.notes: [Note!]!`
    * reads Notes. A leaf return type is not a subject, and the type-level form on
    * a root type has no single answer, so both must be named explicitly.
+   *
+   * @param site - Where the `@can` was found.
+   * @returns The subject name, or `undefined` after recording a problem.
    */
   private inferSubject(site: Site): string | undefined {
     if (!site.root) return site.typeName;
@@ -350,6 +434,13 @@ class Translator {
     return named.name;
   }
 
+  /**
+   * Translates one `@rule`, recording a problem when it cannot.
+   *
+   * @param args - The directive's arguments.
+   * @param site - Where the directive was found.
+   * @returns The rule, or `undefined` after recording a problem.
+   */
   private ruleRule(args: Record<string, unknown>, site: Site): CheckableRule | undefined {
     const label = labelOf(site);
     if (!this.rules) {

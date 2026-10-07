@@ -55,6 +55,11 @@ export interface CreateCanOptions {
  * `cannot(...).because('...')` explanation reaches the caller instead of being
  * replaced by a generic `Forbidden`.
  *
+ * @param ability - The ability that decided.
+ * @param action - The action checked.
+ * @param subject - The subject checked.
+ * @returns The reason, or `undefined` when the rule gave none.
+ *
  * @remarks
  * CASL surfaces this through `ForbiddenError.from(ability).throwUnlessCan(...)`,
  * but that also rewrites the default message to `Cannot execute "x" on "Y"`,
@@ -91,6 +96,11 @@ type RuleIntrospection = {
  * Whether every rule granting `action` on `subject` carries conditions, making a
  * bare-subject check a possibility test rather than a permission test.
  *
+ * @param ability - The ability to inspect.
+ * @param action - The action checked.
+ * @param subject - The subject name checked.
+ * @returns `true` when the bare check ignores conditions.
+ *
  * @remarks
  * Conservative by design: returns `false` when the ability can't be introspected,
  * when no rule matches (the check denies anyway), or when any inverted (`cannot`)
@@ -107,6 +117,9 @@ function isUnconditionedCheck(ability: AbilityLike, action: Action, subject: str
 /**
  * The object an ability-level memo is keyed on.
  *
+ * @param ability - The ability.
+ * @returns Its `rules` array, or `undefined` when it exposes none.
+ *
  * @remarks
  * CASL's `PureAbility` replaces its `rules` array on every `update()`, so the
  * array's identity changes exactly when a verdict derived from the rules could.
@@ -118,6 +131,13 @@ function rulesKeyOf(ability: AbilityLike): object | undefined {
   return typeof rules === 'object' && rules !== null ? rules : undefined;
 }
 
+/**
+ * Explains a bare-subject check against a subject whose rules all have conditions.
+ *
+ * @param action - The action checked.
+ * @param subject - The subject name checked.
+ * @returns The message.
+ */
 function unconditionedMessage(action: Action, subject: string): string {
   return (
     `graphql-casl: \`can('${action}', '${subject}')\` was checked without \`getSubjectData\`, ` +
@@ -133,13 +153,21 @@ function unconditionedMessage(action: Action, subject: string): string {
  * The subject candidates in a resolved value: the value itself, or each non-null
  * element when the field resolved to a list. `null` yields none — a field that
  * resolved to nothing has no subject to authorize.
+ *
+ * @param result - What the field resolved to.
+ * @returns The values to authorize.
  */
 function subjectCandidates(result: unknown): unknown[] {
   if (result == null) return [];
   return Array.isArray(result) ? result.filter((item) => item != null) : [result];
 }
 
-/** Whether the guarded field is a root mutation field. */
+/**
+ * Whether the guarded field is a root mutation field.
+ *
+ * @param info - The field's resolve info.
+ * @returns `true` for a field of the mutation root.
+ */
 function isMutationField(info: GraphQLResolveInfo): boolean {
   const mutationType = info.schema.getMutationType();
   return mutationType != null && info.parentType.name === mutationType.name;

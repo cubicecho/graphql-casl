@@ -75,6 +75,9 @@ export type GraphQLAbilityOptions<TSubjectMap extends Record<string, object>> = 
  * string subject names and `undefined` are handled before this runs), so a
  * missing or non-string `__typename` means an untagged object reached the check —
  * fail loud rather than silently denying, since CASL can't classify it.
+ *
+ * @param subject - The object subject.
+ * @returns Its `__typename`. Throws when that is missing or not a string.
  */
 function detectSubjectType(subject: { __typename?: unknown }): string {
   const typename = subject.__typename;
@@ -87,6 +90,12 @@ function detectSubjectType(subject: { __typename?: unknown }): string {
   return typename;
 }
 
+/**
+ * Builds CASL's ability options with `__typename` detection as the default.
+ *
+ * @param [overrides] - Options that replace the defaults; `undefined` values are ignored.
+ * @returns The options.
+ */
 function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
   overrides?: GraphQLAbilityOptions<TSubjectMap>,
 ): AbilityOptionsOf<GraphQLAbility<TSubjectMap>> {
@@ -111,6 +120,7 @@ function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @param rules - The stored rules.
  * @param options - Extra CASL ability options to override or extend the defaults.
+ * @returns The ability.
  *
  * @example
  * ```ts

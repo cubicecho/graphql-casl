@@ -45,6 +45,14 @@ const DEFAULTS = {
   resolversTypesName: 'ResolversTypes',
 } satisfies Required<GraphqlCaslPluginConfig>;
 
+/**
+ * The codegen plugin: emits the subject map type and the helpers typed to it.
+ *
+ * @param _schema - Unused; the output depends only on the config.
+ * @param _documents - Unused.
+ * @param config - The names to emit and the types to reference.
+ * @returns The generated source and the import it needs.
+ */
 export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _documents, config) => {
   const opts = { ...DEFAULTS, ...config };
 

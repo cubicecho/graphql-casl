@@ -109,6 +109,7 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * @param action - The action to scope for, e.g. `Actions.read`.
  * @param subject - The subject name whose rows are being filtered, e.g. `'Note'`.
  * @param options - The dialect and where to put the filter. See {@link ScopeOptions}.
+ * @returns A rule; not checkable.
  *
  * @remarks
  * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
@@ -203,7 +204,14 @@ export function scopeArgs<
   return scoped;
 }
 
-/** The field's args with one argument replaced. Never mutates the original. */
+/**
+ * The field's args with one argument replaced. Never mutates the original.
+ *
+ * @param args - The field's arguments.
+ * @param name - The argument to replace.
+ * @param value - Its new value.
+ * @returns A copy with the argument set.
+ */
 function withArg(args: unknown, name: string, value: unknown): Record<string, unknown> {
   const base = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {};
   return { ...base, [name]: value };

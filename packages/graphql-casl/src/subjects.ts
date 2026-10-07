@@ -57,12 +57,13 @@ export function subjectsOf<TMap extends Record<string, object>>(): Subjects<TMap
  * Returns a helper that validates a subject-name const object against the keys
  * of `TMap`.
  *
+ * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns A function that returns the object it is given.
  * @deprecated Use {@link subjectsOf}, which needs no object and stays in step
  * with the schema on its own. This restates names `TMap` already carries, so
  * every type added to the schema has to be listed here too — interfaces and
  * unions included — before anything compiles again. It keeps working and is not
  * scheduled for removal.
- * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  *
  * @remarks
  * The object's keys must exactly cover the derived domain type names — TypeScript
@@ -88,6 +89,7 @@ export function createSubjects<TMap extends Record<string, object>>() {
  * Returns a `typed(type, attrs)` helper bound to a specific subject map.
  *
  * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns The `typed` helper.
  *
  * @remarks
  * Call once at the app level to tag plain objects with a required `__typename`

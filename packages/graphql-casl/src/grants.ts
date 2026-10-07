@@ -33,7 +33,12 @@ import { type CheckableRule, isThenable, type Rule, rule } from './rules.js';
  */
 const grantsByContext = new WeakMap<object, WeakMap<object, Set<string>>>();
 
-/** Whether a value can key a `WeakMap` — and so can carry, or hang, a grant. */
+/**
+ * Whether a value can key a `WeakMap` — and so can carry, or hang, a grant.
+ *
+ * @param value - The value to test.
+ * @returns `true` for a non-null object or a function.
+ */
 function isObject(value: unknown): value is object {
   return value !== null && (typeof value === 'object' || typeof value === 'function');
 }
@@ -43,6 +48,10 @@ function isObject(value: unknown): value is object {
  * the object itself, or every object in a list (nested lists included, since
  * `[[Post]]` is a legal field type). `null`, scalars and anything else that
  * cannot be a `parent` carry nothing.
+ *
+ * @param context - The request context.
+ * @param value - What the field resolved to.
+ * @param scopes - The scopes to grant.
  */
 function tag(context: object, value: unknown, scopes: readonly string[]): void {
   if (!isObject(value)) return;
@@ -63,13 +72,25 @@ function tag(context: object, value: unknown, scopes: readonly string[]): void {
   for (const scope of scopes) held.add(scope);
 }
 
-/** Whether `parent` was granted `scope` in the request `context` identifies. */
+/**
+ * Whether `parent` was granted `scope` in the request `context` identifies.
+ *
+ * @param context - The request context.
+ * @param parent - The field's parent value.
+ * @param scope - The scope to look for.
+ * @returns `true` when the grant exists.
+ */
 function hasGrant(context: unknown, parent: unknown, scope: string): boolean {
   if (!isObject(context) || !isObject(parent)) return false;
   return grantsByContext.get(context)?.get(parent)?.has(scope) === true;
 }
 
-/** The scopes a {@link grants} call names, validated. */
+/**
+ * The scopes a {@link grants} call names, validated.
+ *
+ * @param scope - One name or a list of them.
+ * @returns The names. Throws when there is none or one is empty.
+ */
 function scopesOf(scope: string | readonly string[]): readonly string[] {
   const scopes = typeof scope === 'string' ? [scope] : [...scope];
   if (scopes.length === 0 || scopes.some((name) => typeof name !== 'string' || name === '')) {
@@ -155,6 +176,7 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
  * `Forbidden` otherwise.
  *
  * @param scope - The scope name to look for.
+ * @returns A checkable, synchronous rule.
  *
  * @remarks
  * The check is synchronous — a `WeakMap` lookup — so a field it guards resolves

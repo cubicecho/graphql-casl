@@ -158,6 +158,7 @@ export interface ValidateArgsOptions {
  * @param schema - Any object with a `~standard` property: a zod, valibot,
  * arktype or yup schema, or a hand-written one.
  * @param options - See {@link ValidateArgsOptions}.
+ * @returns A rule; not checkable.
  *
  * @remarks
  * GraphQL's own input coercion checks *shape* — the right scalars in the right
@@ -267,6 +268,9 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
 /**
  * Builds the error a failed validation rejects with, marked as an explicit
  * denial so `applyPermissions`' error control passes it through untouched.
+ *
+ * @param issues - The validator's issues.
+ * @returns A `GraphQLError` with the `BAD_USER_INPUT` code.
  */
 function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error {
   const flattened: ArgumentIssue[] = issues.map((issue) => ({
@@ -288,6 +292,9 @@ function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error 
  * Flattens an issue's path to its keys. The spec allows each segment to be a
  * bare key or a `{ key }` object; a symbol key has no JSON form and is spelled
  * out instead, so the extension stays serializable.
+ *
+ * @param issue - One validator issue.
+ * @returns The keys, outermost first; empty when the issue has no path.
  */
 function pathOf(issue: StandardSchemaV1.Issue): ReadonlyArray<string | number> {
   if (!issue.path) return [];

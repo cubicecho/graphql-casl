@@ -140,6 +140,15 @@ export function validateGraphQLRules(
   }
 }
 
+/**
+ * Checks one stored rule and appends what is wrong with it.
+ *
+ * @param schema - The schema.
+ * @param raw - The rule as stored.
+ * @param index - Its position, for the label.
+ * @param checkPaths - Whether condition paths are checked against the schema.
+ * @param problems - Appended to.
+ */
 function collectRuleProblems(
   schema: GraphQLSchema,
   raw: unknown,
@@ -208,6 +217,12 @@ function collectRuleProblems(
 /**
  * Resolves a subject name to the object type it names, reporting why it cannot
  * be a subject otherwise. Mirrors what `SubjectName` excludes at the type level.
+ *
+ * @param schema - The schema.
+ * @param name - The subject name.
+ * @param label - The rule's label.
+ * @param problems - Appended to.
+ * @returns The type, or `undefined` after reporting.
  */
 function subjectType(
   schema: GraphQLSchema,
@@ -248,6 +263,11 @@ function subjectType(
 /**
  * One condition object — an implicit AND over its keys. `types` is what a
  * path is checked against, or `undefined` to check only shape and operators.
+ *
+ * @param conditions - The condition object.
+ * @param types - The subject types, or `undefined` to skip path checks.
+ * @param label - The rule's label.
+ * @param problems - Appended to.
  */
 function walkConditions(
   conditions: object,
@@ -287,6 +307,12 @@ function walkConditions(
 /**
  * Follows a dotted path from each subject type, reporting the first segment
  * that is not a field.
+ *
+ * @param path - The dotted field path.
+ * @param types - The types the path starts from.
+ * @param label - The rule's label.
+ * @param problems - Appended to.
+ * @returns The types at the end of the path, or `undefined` after reporting.
  *
  * @remarks
  * Returns the named types the path ends on, for `$elemMatch` to descend into —
@@ -332,6 +358,12 @@ function resolvePath(
  * One `field: <rhs>` entry. A bare value, an array, or a nested object without
  * `$` keys is an equality comparison and needs no checking; an object of `$`
  * keys is a set of operators, each of which must be one CASL knows.
+ *
+ * @param path - The field path, for the message.
+ * @param value - The right-hand side.
+ * @param leaves - The types at the end of the path.
+ * @param label - The rule's label.
+ * @param problems - Appended to.
  */
 function checkOperators(
   path: string,
@@ -373,6 +405,12 @@ function checkOperators(
  * A string or array-of-strings rule property as a list, or `undefined` after
  * reporting that it is neither. `action`, `subject` and `fields` all take this
  * shape in CASL.
+ *
+ * @param value - The property's value.
+ * @param property - Its name, for the message.
+ * @param label - The rule's label.
+ * @param problems - Appended to.
+ * @returns The list, or `undefined` after reporting.
  */
 function stringList(
   value: unknown,
@@ -395,7 +433,13 @@ function stringList(
   return undefined;
 }
 
-/** `Rule 2 (\`update\` on \`Note\`)`, or just `Rule 2` when the rule cannot say. */
+/**
+ * `Rule 2 (\`update\` on \`Note\`)`, or just `Rule 2` when the rule cannot say.
+ *
+ * @param rule - The stored rule.
+ * @param index - Its position.
+ * @returns The label.
+ */
 function labelOf(rule: RawRule, index: number): string {
   const actions = quietStringList(rule.action);
   const subjects = quietStringList(rule.subject);
@@ -404,6 +448,12 @@ function labelOf(rule: RawRule, index: number): string {
   return `Rule ${index} (${quote(actions)} on ${quote(subjects)})`;
 }
 
+/**
+ * Reads a string or a non-empty array of strings as a list, without reporting.
+ *
+ * @param value - The property's value.
+ * @returns The list, or `undefined` when it is neither.
+ */
 function quietStringList(value: unknown): readonly string[] | undefined {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string')) {
@@ -412,11 +462,22 @@ function quietStringList(value: unknown): readonly string[] | undefined {
   return undefined;
 }
 
+/**
+ * Whether a value is an object that is not an array.
+ *
+ * @param value - The value to test.
+ * @returns `true` for a non-null, non-array object.
+ */
 function isPlainObject(value: unknown): value is object {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Names a value for an error message: `null`, `an array`, `the string "x"`, `a number`. */
+/**
+ * Names a value for an error message: `null`, `an array`, `the string "x"`, `a number`.
+ *
+ * @param value - The value to name.
+ * @returns The phrase.
+ */
 function describeValue(value: unknown): string {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'an array';

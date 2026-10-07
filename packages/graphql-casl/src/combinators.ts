@@ -25,6 +25,10 @@ import {
 /**
  * Extracts the operands' checks, rejecting anything that cannot be combined.
  *
+ * @param combinator - The combinator's name, for the message.
+ * @param rules - Its operands.
+ * @returns One check per operand.
+ *
  * @remarks
  * A plain {@link Rule} decides by running, and running it may run the resolver —
  * so it cannot be evaluated speculatively as one branch of an `or`. Rather than
@@ -51,7 +55,13 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
   });
 }
 
-/** Labels a combinator for error messages, e.g. `and(isSelf, isAdmin)`. */
+/**
+ * Labels a combinator for error messages, e.g. `and(isSelf, isAdmin)`.
+ *
+ * @param combinator - The combinator's name.
+ * @param rules - Its operands.
+ * @returns The label.
+ */
 function label(combinator: string, rules: readonly Rule[]): string {
   return `${combinator}(${rules.map((r) => (isCheckableRule(r) ? r.ruleName : '') || '?').join(', ')})`;
 }
@@ -73,6 +83,13 @@ type Outcome = { readonly denial: Error | undefined } | { readonly thrown: unkno
  * Synchronous when the operand is, like everything else in this module: a
  * combinator of synchronous checks is itself a synchronous check, so the field
  * it guards resolves without a promise.
+ *
+ * @param check - The operand's check.
+ * @param parent - The field's parent value.
+ * @param args - The field's arguments.
+ * @param context - The request context.
+ * @param info - The field's resolve info.
+ * @returns The outcome, or a promise of it when the check is asynchronous.
  */
 function outcomeOf(
   check: Check,
@@ -96,12 +113,26 @@ function outcomeOf(
   return { denial: denialFrom(answer) };
 }
 
-/** Whether any of the operands' answers is still pending. */
+/**
+ * Whether any of the operands' answers is still pending.
+ *
+ * @param values - The operands' answers.
+ * @returns `true` when at least one is a promise.
+ */
 function anyPending<T>(values: readonly (T | Promise<T>)[]): values is Promise<T>[] {
   return values.some(isThenable);
 }
 
-/** Runs every operand in parallel, settling synchronously when all of them do. */
+/**
+ * Runs every operand in parallel, settling synchronously when all of them do.
+ *
+ * @param checks - The operands' checks.
+ * @param parent - The field's parent value.
+ * @param args - The field's arguments.
+ * @param context - The request context.
+ * @param info - The field's resolve info.
+ * @returns One outcome per check, in order.
+ */
 function outcomesOf(
   checks: readonly Check[],
   parent: unknown,
@@ -113,13 +144,21 @@ function outcomesOf(
   return anyPending(outcomes) ? Promise.all(outcomes) : (outcomes as Outcome[]);
 }
 
-/** Whether an outcome is a pass. */
+/**
+ * Whether an outcome is a pass.
+ *
+ * @param outcome - The outcome to read.
+ * @returns `true` when the operand allowed the field.
+ */
 function passed(outcome: Outcome): boolean {
   return 'denial' in outcome && outcome.denial === undefined;
 }
 
 /**
  * Decides a tolerant combinator once no operand has passed.
+ *
+ * @param outcomes - Every operand's outcome.
+ * @returns The error to deny with.
  *
  * @remarks
  * A throw wins over a denial: a rule that broke is an outage to report, not an
@@ -136,6 +175,9 @@ function failureOf(outcomes: readonly Outcome[]): Error {
 
 /**
  * Passes when **every** operand passes.
+ *
+ * @param rules - The operands; each must be checkable.
+ * @returns A checkable rule.
  *
  * @remarks
  * Operands are evaluated **in parallel**; on failure the **first** failing
@@ -171,6 +213,9 @@ export function and(...rules: Rule[]): CheckableRule {
 
 /**
  * Passes when **any** operand passes.
+ *
+ * @param rules - The operands; each must be checkable.
+ * @returns A checkable rule.
  *
  * @remarks
  * Operands are evaluated **in parallel**; when all of them fail the **last**
@@ -212,6 +257,9 @@ export function or(...rules: Rule[]): CheckableRule {
  * Sequential {@link and}: evaluates operands in order and stops at the first
  * failure, throwing its error.
  *
+ * @param rules - The operands, in evaluation order.
+ * @returns A checkable rule.
+ *
  * @remarks
  * Later operands are not evaluated at all.
  *
@@ -250,6 +298,9 @@ export function chain(...rules: Rule[]): CheckableRule {
 /**
  * Sequential {@link or}: evaluates operands in order and stops at the first one
  * that passes.
+ *
+ * @param rules - The operands, in evaluation order.
+ * @returns A checkable rule.
  *
  * @remarks
  * When all of them fail, the last operand's error is thrown.
@@ -297,6 +348,7 @@ export function race(...rules: Rule[]): CheckableRule {
  *
  * @param operand - The rule to invert.
  * @param error - The denial message or error to use when `operand` passes.
+ * @returns A checkable rule.
  *
  * @remarks
  * The operand's error is discarded — it explains why the operand failed, which
@@ -325,6 +377,7 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * `resolve`, and the last receives the field's real resolver.
  *
  * @param rules - The rules to nest, outermost first. At least one.
+ * @returns A rule; not checkable.
  *
  * @remarks
  * This is the escape hatch from the combinators' one restriction. `and`, `or`,

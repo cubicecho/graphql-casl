@@ -66,6 +66,12 @@ export class PermissionsError extends Error {
   /** Every problem found, one message per offending type, field or rule. */
   readonly problems: readonly string[];
 
+  /**
+   * Builds the message from the heading and one line per problem.
+   *
+   * @param problems - Every problem found.
+   * @param [heading] - What failed to line up, as the message's first line.
+   */
   constructor(
     problems: readonly string[],
     heading = 'the permissions map does not match the schema',
@@ -79,11 +85,22 @@ export class PermissionsError extends Error {
 /** The permissions map with its compile-time typing erased, for the walk. */
 type RawPermissions = Record<string, Rule | Record<string, Rule | undefined> | undefined>;
 
+/**
+ * Whether a map value is a rule rather than a per-field entry.
+ *
+ * @param value - The map value.
+ * @returns `true` for a function.
+ */
 function isRule(value: unknown): value is Rule {
   return typeof value === 'function';
 }
 
-/** Names a type's kind for an error message. Shared with `validateGraphQLRules`. */
+/**
+ * Names a type's kind for an error message. Shared with `validateGraphQLRules`.
+ *
+ * @param type - The type to name.
+ * @returns A phrase such as `an enum`.
+ */
 export function describeKind(type: GraphQLNamedType): string {
   if (isInterfaceType(type)) return 'an interface type';
   if (isUnionType(type)) return 'a union type';
@@ -98,6 +115,10 @@ export function describeKind(type: GraphQLNamedType): string {
  * (through interfaces that implement it, too) or a union's members. These are
  * the types an entry keyed on the abstract type actually guards, since
  * execution resolves every field against the concrete object type.
+ *
+ * @param schema - The schema.
+ * @param abstract - The interface or union.
+ * @returns Its concrete object types.
  */
 function possibleTypesOf(
   schema: GraphQLSchema,
@@ -123,6 +144,13 @@ function possibleTypesOf(
  */
 type Supertypes = ReadonlyMap<string, readonly string[]>;
 
+/**
+ * Finds, for each object type, the abstract entries of the map that cover it.
+ *
+ * @param schema - The schema.
+ * @param permissions - The permissions map.
+ * @returns Object type name to covering entry names, in map order.
+ */
 function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
   const supertypes = new Map<string, string[]>();
   for (const [typeName, entry] of Object.entries(permissions)) {
@@ -138,7 +166,12 @@ function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Super
   return supertypes;
 }
 
-/** `\`A\``, `\`A\` and \`B\``, `\`A\`, \`B\` and \`C\`` — for a problem message. */
+/**
+ * `\`A\``, `\`A\` and \`B\``, `\`A\`, \`B\` and \`C\`` — for a problem message.
+ *
+ * @param names - The names to list.
+ * @returns The names in backticks, joined as a phrase.
+ */
 function listed(names: readonly string[]): string {
   const quoted = names.map((name) => `\`${name}\``);
   if (quoted.length === 1) return quoted[0] as string;
@@ -148,6 +181,11 @@ function listed(names: readonly string[]): string {
 /**
  * The abstract entries giving `typeName` a rule for `key`, by name — one per
  * distinct rule, so the same rule reached through two interfaces counts once.
+ *
+ * @param permissions - The permissions map.
+ * @param abstracts - The abstract entries covering the type.
+ * @param key - The field name, or the wildcard.
+ * @returns The names of the entries that supply a rule.
  */
 function sourcesOf(
   permissions: RawPermissions,
@@ -165,6 +203,11 @@ function sourcesOf(
 /**
  * Where two abstract entries would both guard a field of one implementor and
  * the implementor does not choose between them.
+ *
+ * @param schema - The schema.
+ * @param permissions - The permissions map.
+ * @param supertypes - Each object type's covering abstract entries.
+ * @returns One message per ambiguous field.
  *
  * @remarks
  * Inherited rules never compose, and picking one silently — by map order, say
@@ -214,6 +257,11 @@ function ambiguityProblems(
 
 /**
  * Every way a permissions map can fail to line up with the schema.
+ *
+ * @param schema - The schema.
+ * @param permissions - The permissions map.
+ * @param supertypes - Each object type's covering abstract entries.
+ * @returns One message per problem; empty when the map is sound.
  *
  * @remarks
  * `graphql-middleware` does check that types and fields exist, but it fails on
@@ -338,7 +386,12 @@ function collectProblems(
 // biome-ignore lint/suspicious/noExplicitAny: any field of any type is a target
 type AnyField = GraphQLField<any, any>;
 
-/** The arguments an argument-scoping rule injects into. Empty if it is not one. */
+/**
+ * The arguments an argument-scoping rule injects into. Empty if it is not one.
+ *
+ * @param rule - The map value to inspect.
+ * @returns The argument names.
+ */
 function scopeTargetsOf(rule: unknown): readonly string[] {
   const info = (rule as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
   return info?.into ?? [];
@@ -347,6 +400,11 @@ function scopeTargetsOf(rule: unknown): readonly string[] {
 /**
  * Checks that every field a scoping rule guards actually has the argument the
  * rule injects into.
+ *
+ * @param rule - The rule to check.
+ * @param label - The map key, for the message.
+ * @param targets - The fields the rule guards.
+ * @returns The problem, or `undefined` when every field has the argument.
  *
  * @remarks
  * This matters more than a normal typo check: a rule runs *downstream* of
@@ -373,7 +431,13 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
   return undefined;
 }
 
-/** Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand. */
+/**
+ * Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand.
+ *
+ * @param entry - A type's map entry.
+ * @param fieldName - The field name, or the wildcard.
+ * @returns The rule, or `undefined` when the entry has none for that key.
+ */
 function fieldRuleOf(
   entry: Rule | Record<string, Rule | undefined> | undefined,
   fieldName: string,
@@ -389,6 +453,11 @@ function fieldRuleOf(
  * The rule the interfaces (and unions) an object type belongs to give one of its
  * field keys. Validation has already rejected the case where two of them
  * disagree, so the first one found is the only one.
+ *
+ * @param permissions - The permissions map.
+ * @param abstracts - The abstract entries covering the type.
+ * @param fieldName - The field name, or the wildcard.
+ * @returns The inherited rule, or `undefined`.
  */
 function inheritedRuleOf(
   permissions: RawPermissions,
@@ -405,6 +474,13 @@ function inheritedRuleOf(
 
 /**
  * The single rule guarding one field, or `undefined` to leave it unguarded.
+ *
+ * @param permissions - The permissions map.
+ * @param typeName - The object type.
+ * @param fieldName - The field.
+ * @param supertypes - Each object type's covering abstract entries.
+ * @param fallbackRule - The rule for fields nothing else covers.
+ * @returns The rule, by precedence.
  *
  * @remarks
  * Wildcards never compose — exactly one rule applies, and the most specific
@@ -432,7 +508,17 @@ function ruleForField(
   );
 }
 
-/** Resolves a {@link FallbackError} to the error to throw. */
+/**
+ * Resolves a {@link FallbackError} to the error to throw.
+ *
+ * @param fallbackError - The option as passed.
+ * @param original - The error being replaced.
+ * @param parent - The field's parent value.
+ * @param args - The field's arguments.
+ * @param context - The request context.
+ * @param info - The field's resolve info.
+ * @returns The error to throw.
+ */
 async function resolveFallbackError(
   fallbackError: FallbackError,
   original: unknown,
@@ -450,6 +536,9 @@ async function resolveFallbackError(
 
 /**
  * The value a denied field is masked with, or `undefined` if it cannot be masked.
+ *
+ * @param fieldType - The field's declared type.
+ * @returns A function producing `null` or `[]`.
  *
  * @remarks
  * A factory, not a value: `[]` handed to two requests would be the same array.
@@ -513,7 +602,12 @@ interface DenialRecord {
 
 const recorded = new WeakMap<object, DenialRecord>();
 
-/** Whether a context value can key the record — a `WeakMap` needs an object. */
+/**
+ * Whether a context value can key the record — a `WeakMap` needs an object.
+ *
+ * @param context - The request context.
+ * @returns `true` for an object or a function.
+ */
 function isRecordable(context: unknown): context is object {
   return (typeof context === 'object' && context !== null) || typeof context === 'function';
 }
@@ -523,6 +617,9 @@ function isRecordable(context: unknown): context is object {
  * standard code. A denial that already names a code — a check that returned a
  * `GraphQLError` with one, or a `fallbackError` that built one — is the rule
  * author's deliberate choice and is kept as is.
+ *
+ * @param denial - The denial as the rule made it.
+ * @returns The error to report.
  */
 function standardized(denial: Error): Error {
   const extensions = (denial as { extensions?: unknown }).extensions;
@@ -540,6 +637,13 @@ function standardized(denial: Error): Error {
 /**
  * Delivers a denial under `onDeny: 'filter'`: the field resolves to its mask and
  * the denial is reported.
+ *
+ * @param denial - The denial to report.
+ * @param mask - Produces the field's masked value.
+ * @param report - Where the denial is reported.
+ * @param context - The request context, which keys the record.
+ * @param info - The field's resolve info, for the path.
+ * @returns The masked value, or a rejection when the field cannot be masked.
  *
  * @remarks
  * Where the field can carry the report itself it does — a nullable field that
@@ -620,13 +724,23 @@ export function reportDenials<TResult extends ExecutionResult>(
   };
 }
 
-/** A rule whose middleware is exactly "run `.check`, then `resolve`". */
+/**
+ * A rule whose middleware is exactly "run `.check`, then `resolve`".
+ *
+ * @param rule - The rule to test.
+ * @returns `true` when its check can be called directly.
+ */
 function isPlainRule(rule: Rule): rule is CheckableRule {
   return (rule as Partial<Record<typeof PLAIN_RULE, boolean>>)[PLAIN_RULE] === true;
 }
 
 /**
  * Wraps one field's rule with the error-control options.
+ *
+ * @param rule - The field's rule.
+ * @param options - The resolved error-control options.
+ * @param mask - Produces the field's masked value.
+ * @returns The wrapped rule, or `rule` itself when no option applies.
  *
  * @remarks
  * Three kinds of failure have to be told apart: a **denial** (the rule did its
@@ -708,7 +822,14 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
   };
 }
 
-/** The check-based wrapper — see {@link withErrorControl}. */
+/**
+ * The check-based wrapper — see {@link withErrorControl}.
+ *
+ * @param check - The rule's check.
+ * @param options - The resolved error-control options.
+ * @param mask - Produces the field's masked value.
+ * @returns The wrapped rule.
+ */
 function withCheckedErrorControl(
   check: Check,
   options: ErrorControl,
@@ -858,7 +979,13 @@ export function validatePermissions<TResolvers = AnyResolvers>(
   validated(schema, permissions as RawPermissions);
 }
 
-/** The check behind {@link validatePermissions}, handing back what the resolver reuses. */
+/**
+ * The check behind {@link validatePermissions}, handing back what the resolver reuses.
+ *
+ * @param schema - The schema.
+ * @param permissions - The permissions map.
+ * @returns Each object type's covering abstract entries.
+ */
 function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
   const supertypes = supertypesOf(schema, permissions);
   const problems = collectProblems(schema, permissions, supertypes);
@@ -969,6 +1096,10 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
 /**
  * Resolves the map into the per-field middleware `graphql-middleware` consumes.
  *
+ * @param schema - The schema.
+ * @param permissionFor - Looks up the rule for a field.
+ * @returns Type name to field name to middleware.
+ *
  * @remarks
  * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
  * can guard a field no map entry names. Introspection types are skipped by the
@@ -1007,6 +1138,10 @@ const guardedInPlace = new WeakSet<AnyField>();
  * Wraps one field's resolver in a rule, the same way `graphql-middleware` does:
  * the `resolve` handed to the rule defaults every argument to the current call,
  * so a rule may call it bare or with rewritten arguments.
+ *
+ * @param resolver - The field's resolver.
+ * @param rule - The rule guarding it.
+ * @returns The guarded resolver.
  */
 function wrapResolver(
   resolver: GraphQLFieldResolver<unknown, unknown>,
@@ -1027,6 +1162,10 @@ function wrapResolver(
  * Guards the schema's fields by replacing their resolvers in place, with the
  * same field selection `graphql-middleware` makes: a field's own resolver if it
  * has one, else a subscription field's `subscribe`, else the default resolver.
+ *
+ * @param schema - The schema; its field definitions are mutated.
+ * @param permissionFor - Looks up the rule for a field.
+ * @returns The same schema.
  */
 function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
   for (const type of Object.values(schema.getTypeMap())) {
@@ -1089,6 +1228,8 @@ interface ErrorControl {
  * `strict` default — rejecting a contradiction. Shared with the entry points
  * that need the resolved mode rather than the key as passed.
  *
+ * @param options - The options as passed.
+ * @returns The mode in force.
  * @internal
  */
 export function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {

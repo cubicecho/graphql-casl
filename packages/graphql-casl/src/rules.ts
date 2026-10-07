@@ -112,6 +112,9 @@ export type DenialKind = 'default' | 'explicit';
 /**
  * Reads the denial marker off an error. `undefined` means the error is not a
  * denial — it came from a broken rule or from the resolver. Internal.
+ *
+ * @param error - The thrown value.
+ * @returns The kind, or `undefined` when it is not a denial.
  */
 export function denialKindOf(error: unknown): DenialKind | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
@@ -120,6 +123,10 @@ export function denialKindOf(error: unknown): DenialKind | undefined {
 
 /**
  * Attaches the denial marker without making it visible to serialization.
+ *
+ * @param error - The error to mark; mutated.
+ * @param kind - How the error was chosen.
+ * @returns The same error.
  *
  * @remarks
  * An already-marked error keeps its original kind: a combinator re-normalizes
@@ -136,6 +143,9 @@ function markDenial(error: Error, kind: DenialKind): Error {
  * Whether a {@link RuleResult} allows the field. The same reading as
  * {@link denialFrom}, without building the error — for a caller that is going
  * to mask the denial and never needs one. Internal.
+ *
+ * @param result - What the check returned.
+ * @returns `true` only for `true`.
  */
 export function passes(result: RuleResult): boolean {
   if (result === true) return true;
@@ -147,6 +157,9 @@ export function passes(result: RuleResult): boolean {
  * Normalizes a {@link RuleResult} into the error to throw, or `undefined` when
  * the check passed. Internal — shared with the combinators, not re-exported from
  * the package entry point.
+ *
+ * @param result - What the check returned.
+ * @returns The denial, or `undefined` for a pass.
  */
 export function denialFrom(result: RuleResult): Error | undefined {
   if (result === true) return undefined;
@@ -222,7 +235,12 @@ export type CacheKey = (
   info: GraphQLResolveInfo,
 ) => unknown;
 
-/** Whether a check's answer is still pending. Internal. */
+/**
+ * Whether a check's answer is still pending. Internal.
+ *
+ * @param value - The answer.
+ * @returns `true` when it has a `then` method.
+ */
 export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
   return (
     value !== null &&
@@ -231,13 +249,21 @@ export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T
   );
 }
 
-/** Whether a value can key a `WeakMap`. */
+/**
+ * Whether a value can key a `WeakMap`.
+ *
+ * @param value - The value to test.
+ * @returns `true` for a non-null object or a function.
+ */
 function isObject(value: unknown): value is object {
   return value !== null && (typeof value === 'object' || typeof value === 'function');
 }
 
 /**
  * A stable key for a field's arguments, or `undefined` if none can be made.
+ *
+ * @param args - The field's arguments.
+ * @returns The key.
  *
  * @remarks
  * Arguments are GraphQL input values, so they are JSON-safe. Keys are sorted
@@ -274,6 +300,10 @@ function argsKey(args: unknown): string | undefined {
 
 /**
  * Wraps a check so that one request evaluates it at most once per cache key.
+ *
+ * @param check - The check to cache.
+ * @param mode - The cache mode, or a key function.
+ * @returns The caching check.
  *
  * @remarks
  * The *pending promise* is stored rather than the resolved value, so concurrent
@@ -366,6 +396,7 @@ export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule') as
  *
  * @param check - The predicate. See {@link RuleResult} for what it may return.
  * @param options - See {@link RuleOptions}.
+ * @returns A checkable rule.
  *
  * @remarks
  * The check runs before the resolver; a denial rejects and the resolver never
@@ -419,6 +450,9 @@ export function rule(check: Check, options?: RuleOptions): CheckableRule {
  * Narrows a {@link Rule} to a {@link CheckableRule}. The combinators use this to
  * reject an un-combinable operand at construction time rather than at request
  * time.
+ *
+ * @param value - The value to test.
+ * @returns `true` when it was built by `rule()` or a combinator.
  */
 export function isCheckableRule(value: unknown): value is CheckableRule {
   return typeof value === 'function' && typeof (value as CheckableRule).check === 'function';

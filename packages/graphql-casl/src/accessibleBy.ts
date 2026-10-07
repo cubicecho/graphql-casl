@@ -56,6 +56,10 @@ interface FoldableRule {
 /**
  * Flattens CASL's priority-ordered rules into boolean logic.
  *
+ * @param rules - The ability's rules for one action and subject, highest priority first.
+ * @param adapter - Builds the filter.
+ * @returns The filter, or `null` when no row is permitted.
+ *
  * @remarks
  * CASL evaluates rules highest-priority first and stops at the first match, so a
  * `can` only applies to rows no higher-priority `cannot` already caught. A query
