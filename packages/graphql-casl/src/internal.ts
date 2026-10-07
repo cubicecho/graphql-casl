@@ -18,6 +18,34 @@ export function isWeakKey(value: unknown): value is object {
   return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
 
+/**
+ * Reads a map entry, creating and storing it first when the key is new.
+ *
+ * @typeParam K - The key type.
+ * @typeParam V - The value type; never `undefined`.
+ * @param map - A `Map` or `WeakMap`.
+ * @param key - The key to look up.
+ * @param create - Builds the value for a new key.
+ * @returns The stored value.
+ *
+ * @remarks
+ * For wiring-time code. `create` is usually a closure, so the per-field paths
+ * keep their own inline lookups.
+ */
+export function getOrCreate<K, V extends object>(
+  map: { get(key: K): V | undefined; set(key: K, value: V): unknown },
+  key: K,
+  create: () => V,
+): V {
+  const existing = map.get(key);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = create();
+  map.set(key, created);
+  return created;
+}
+
 /** Keys the private handle {@link createCan} attaches to its `requireCan`. */
 export const CAN_INTERNALS: unique symbol = Symbol.for('graphql-casl.canInternals');
 

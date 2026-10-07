@@ -35,7 +35,7 @@ import {
   responsePathAsArray,
 } from 'graphql';
 import { applyMiddleware, type IMiddlewareFieldMap, type IMiddlewareTypeMap } from 'graphql-middleware';
-import { isWeakKey, scopeInfoOf } from './internal.js';
+import { getOrCreate, isWeakKey, scopeInfoOf } from './internal.js';
 import {
   type AnyResolvers,
   type Check,
@@ -171,12 +171,7 @@ function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Super
       continue;
     }
     for (const object of possibleTypesOf(schema, type)) {
-      const seen = supertypes.get(object.name);
-      if (seen) {
-        seen.push(typeName);
-      } else {
-        supertypes.set(object.name, [typeName]);
-      }
+      getOrCreate(supertypes, object.name, () => []).push(typeName);
     }
   }
   return supertypes;
@@ -305,12 +300,7 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions, sup
   for (const type of Object.values(typeMap)) {
     if (isObjectType(type) && isIntrospectionType(type) === false) {
       for (const field of Object.values(type.getFields())) {
-        const seen = guardableFields.get(field.name);
-        if (seen) {
-          seen.push(field);
-        } else {
-          guardableFields.set(field.name, [field]);
-        }
+        getOrCreate(guardableFields, field.name, () => []).push(field);
       }
     }
   }
@@ -1112,17 +1102,8 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
   // 35,000 closures for what is really three.
   const wrappers = new Map<Rule, Map<Mask | undefined, Rule>>();
   function wrapped(rule: Rule, mask: Mask | undefined): Rule {
-    let byMask = wrappers.get(rule);
-    if (!byMask) {
-      byMask = new Map();
-      wrappers.set(rule, byMask);
-    }
-    let wrapper = byMask.get(mask);
-    if (!wrapper) {
-      wrapper = withErrorControl(rule, errorControl, mask);
-      byMask.set(mask, wrapper);
-    }
-    return wrapper;
+    const byMask = getOrCreate(wrappers, rule, () => new Map());
+    return getOrCreate(byMask, mask, () => withErrorControl(rule, errorControl, mask));
   }
 
   return (typeName, fieldName) => {

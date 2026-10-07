@@ -46,6 +46,7 @@ import {
   reportDenials,
   resolvePermissions,
 } from './applyPermissions.js';
+import { getOrCreate } from './internal.js';
 import type { PermissionsMap } from './rules.js';
 
 /**
@@ -113,12 +114,7 @@ export function useGraphQLCasl<
 
   /** Resolves the map against a schema once, then reuses that lookup. */
   function permissionsFor(schema: GraphQLSchema): PermissionResolver {
-    let resolve = resolvers.get(schema);
-    if (!resolve) {
-      resolve = resolvePermissions<TResolvers>(schema, permissions, permissionOptions);
-      resolvers.set(schema, resolve);
-    }
-    return resolve;
+    return getOrCreate(resolvers, schema, () => resolvePermissions<TResolvers>(schema, permissions, permissionOptions));
   }
 
   const plugin: Plugin<TContext> = {
