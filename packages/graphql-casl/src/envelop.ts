@@ -40,12 +40,11 @@ import { useOnResolve } from '@envelop/on-resolve';
 import type { GraphQLField, GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
-  DenialMode,
   denialModeOf,
   type PermissionResolver,
-  reportDenials,
   resolvePermissions,
 } from './applyPermissions.js';
+import { DenialMode, reportDenials } from './denials.js';
 import { getOrCreate } from './internal.js';
 import type { PermissionsMap } from './rules.js';
 

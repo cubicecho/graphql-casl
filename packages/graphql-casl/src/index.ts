@@ -32,22 +32,8 @@ export type { AbilityLike, Action } from './ability.js';
 export { Actions, isAction } from './ability.js';
 export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
-export type {
-  ApplyPermissionsOptions,
-  FallbackError,
-  PermissionResolver,
-} from './applyPermissions.js';
-export {
-  AUTHORIZATION_ERRORS_EXTENSION,
-  applyPermissions,
-  DenialMode,
-  DenialReport,
-  PermissionsError,
-  reportDenials,
-  resolvePermissions,
-  UNAUTHORIZED_FIELD_OR_TYPE,
-  validatePermissions,
-} from './applyPermissions.js';
+export type { ApplyPermissionsOptions, PermissionResolver } from './applyPermissions.js';
+export { applyPermissions, resolvePermissions } from './applyPermissions.js';
 export { and, chain, not, or, race, wrap } from './combinators.js';
 export type {
   AdapterCore,
@@ -67,6 +53,14 @@ export type {
   RequireCanOnResult,
 } from './createCan.js';
 export { createCan, UnconditionedSubjectMode } from './createCan.js';
+export {
+  AUTHORIZATION_ERRORS_EXTENSION,
+  DenialMode,
+  DenialReport,
+  reportDenials,
+  UNAUTHORIZED_FIELD_OR_TYPE,
+} from './denials.js';
+export type { FallbackError } from './errorControl.js';
 export { granted, grants } from './grants.js';
 export type {
   GraphQLAbilities,
@@ -75,6 +69,8 @@ export type {
   GraphQLRule,
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
+export { validatePermissions } from './mapValidation.js';
+export { PermissionsError } from './permissionsError.js';
 export type {
   AnyResolvers,
   CacheKey,

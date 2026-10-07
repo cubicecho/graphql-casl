@@ -2,1268 +2,35 @@
  * The schema walk behind {@link applyPermissions}.
  *
  * @remarks
- * `PermissionsMap` validates type and field names at compile time, but only for
- * consumers who generate a `Resolvers` type. This module re-checks the map
- * against the runtime `GraphQLSchema` and resolves it into the concrete
- * per-field middleware map handed to `graphql-middleware`.
+ * Resolves a validated permissions map into a per-field rule lookup, wrapped
+ * with the error-control options, and binds it to the schema — through
+ * `graphql-middleware`, or in place.
  */
 
 import {
   defaultFieldResolver,
-  type ExecutionResult,
-  type GraphQLAbstractType,
-  GraphQLError,
-  type GraphQLField,
   type GraphQLFieldResolver,
-  type GraphQLInterfaceType,
-  type GraphQLNamedType,
-  type GraphQLObjectType,
-  type GraphQLOutputType,
   type GraphQLResolveInfo,
   type GraphQLSchema,
-  isAbstractType,
-  isEnumType,
-  isInputObjectType,
-  isInterfaceType,
   isIntrospectionType,
-  isListType,
-  isNonNullType,
   isObjectType,
-  isScalarType,
-  isUnionType,
-  locatedError,
-  responsePathAsArray,
 } from 'graphql';
 import { applyMiddleware, type IMiddlewareFieldMap, type IMiddlewareTypeMap } from 'graphql-middleware';
-import { getOrCreate, isWeakKey, scopeInfoOf } from './internal.js';
 import {
-  type AnyResolvers,
-  type Check,
-  type CheckableRule,
-  DenialKind,
-  denialKindOf,
-  denialOf,
-  isThenable,
-  type PermissionsMap,
-  PLAIN_RULE,
-  passes,
-  type Rule,
-  type RuleResult,
-  WILDCARD,
-} from './rules.js';
-
-/**
- * Thrown by {@link applyPermissions} / {@link validatePermissions} when a
- * permissions map does not line up with the schema, and by
- * {@link validateGraphQLRules} when stored ability rules do not. Reports
- * *every* problem at once, in {@link problems}, so a mismatch is fixed in one
- * pass rather than one error per run.
- */
-export class PermissionsError extends Error {
-  /** Every problem found, one message per offending type, field or rule. */
-  readonly problems: readonly string[];
-
-  /**
-   * Builds the message from the heading and one line per problem.
-   *
-   * @param problems - Every problem found.
-   * @param [heading] - What failed to line up, as the message's first line.
-   */
-  constructor(problems: readonly string[], heading = 'the permissions map does not match the schema') {
-    super(`graphql-casl: ${heading}.\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);
-    this.name = 'PermissionsError';
-    this.problems = problems;
-  }
-}
-
-/** The permissions map with its compile-time typing erased, for the walk. */
-type RawPermissions = Record<string, Rule | Record<string, Rule | undefined> | undefined>;
-
-/**
- * Whether a map value is a rule rather than a per-field entry.
- *
- * @param value - The map value.
- * @returns `true` for a function.
- */
-function isRule(value: unknown): value is Rule {
-  return typeof value === 'function';
-}
-
-/**
- * Names a type's kind for an error message. Shared with `validateGraphQLRules`.
- *
- * @param type - The type to name.
- * @returns A phrase such as `an enum`.
- */
-export function describeKind(type: GraphQLNamedType): string {
-  if (isInterfaceType(type)) {
-    return 'an interface type';
-  }
-  if (isUnionType(type)) {
-    return 'a union type';
-  }
-  if (isScalarType(type)) {
-    return 'a scalar type';
-  }
-  if (isEnumType(type)) {
-    return 'an enum type';
-  }
-  if (isInputObjectType(type)) {
-    return 'an input object type';
-  }
-  return 'not an object type';
-}
-
-/**
- * The object types an abstract type stands for: an interface's implementors
- * (through interfaces that implement it, too) or a union's members. These are
- * the types an entry keyed on the abstract type actually guards, since
- * execution resolves every field against the concrete object type.
- *
- * @param schema - The schema.
- * @param abstract - The interface or union.
- * @returns Its concrete object types.
- */
-function possibleTypesOf(schema: GraphQLSchema, abstract: GraphQLAbstractType): GraphQLObjectType[] {
-  if (isUnionType(abstract)) {
-    return [...abstract.getTypes()];
-  }
-  const objects = new Set<GraphQLObjectType>();
-  const seen = new Set<GraphQLInterfaceType>();
-  const visit = (iface: GraphQLInterfaceType): void => {
-    if (seen.has(iface)) {
-      return;
-    }
-    seen.add(iface);
-    const implementations = schema.getImplementations(iface);
-    for (const object of implementations.objects) {
-      objects.add(object);
-    }
-    for (const sub of implementations.interfaces) {
-      visit(sub);
-    }
-  };
-  visit(abstract);
-  return [...objects];
-}
-
-/**
- * Object type name -> the interface and union entries in the map that cover it,
- * in map order. Only types under at least one such entry are listed.
- */
-type Supertypes = ReadonlyMap<string, readonly string[]>;
-
-/**
- * Finds, for each object type, the abstract entries of the map that cover it.
- *
- * @param schema - The schema.
- * @param permissions - The permissions map.
- * @returns Object type name to covering entry names, in map order.
- */
-function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
-  const supertypes = new Map<string, string[]>();
-  for (const [typeName, entry] of Object.entries(permissions)) {
-    if (entry == null) {
-      continue;
-    }
-    const type = schema.getType(typeName);
-    if (!type || isAbstractType(type) === false) {
-      continue;
-    }
-    for (const object of possibleTypesOf(schema, type)) {
-      getOrCreate(supertypes, object.name, () => []).push(typeName);
-    }
-  }
-  return supertypes;
-}
-
-/**
- * `\`A\``, `\`A\` and \`B\``, `\`A\`, \`B\` and \`C\`` — for a problem message.
- *
- * @param names - The names to list.
- * @returns The names in backticks, joined as a phrase.
- */
-function listed(names: readonly string[]): string {
-  const quoted = names.map((name) => `\`${name}\``);
-  if (quoted.length === 1) {
-    return quoted[0];
-  }
-  return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
-}
-
-/**
- * The abstract entries giving `typeName` a rule for `key`, by name — one per
- * distinct rule, so the same rule reached through two interfaces counts once.
- *
- * @param permissions - The permissions map.
- * @param abstracts - The abstract entries covering the type.
- * @param key - The field name, or the wildcard.
- * @returns The names of the entries that supply a rule.
- */
-function sourcesOf(permissions: RawPermissions, abstracts: readonly string[], key: string): string[] {
-  const byRule = new Map<Rule, string>();
-  for (const name of abstracts) {
-    const rule = fieldRuleOf(permissions[name], key);
-    if (rule && byRule.has(rule) === false) {
-      byRule.set(rule, name);
-    }
-  }
-  return [...byRule.values()];
-}
-
-/**
- * Where two abstract entries would both guard a field of one implementor and
- * the implementor does not choose between them.
- *
- * @param schema - The schema.
- * @param permissions - The permissions map.
- * @param supertypes - Each object type's covering abstract entries.
- * @returns One message per ambiguous field.
- *
- * @remarks
- * Inherited rules never compose, and picking one silently — by map order, say
- * — would make the outcome depend on which interface was listed first. So a
- * field two interfaces both cover is a problem until the object type's own
- * entry settles it: `T.f` settles `f` outright, and `T['*']` settles the
- * type-wide tier (an `I.f` still beats it, as the precedence table says).
- */
-function ambiguityProblems(schema: GraphQLSchema, permissions: RawPermissions, supertypes: Supertypes): string[] {
-  const problems: string[] = [];
-  for (const [typeName, abstracts] of supertypes) {
-    if (abstracts.length < 2) {
-      continue;
-    }
-    const type = schema.getType(typeName) as GraphQLObjectType;
-    const own = permissions[typeName];
-    const ownWild = fieldRuleOf(own, WILDCARD) !== undefined;
-    let wildSources: string[] | undefined;
-    const unsettled: string[] = [];
-
-    for (const fieldName of Object.keys(type.getFields())) {
-      if (fieldRuleOf(own, fieldName)) {
-        continue;
-      }
-      const fieldSources = sourcesOf(permissions, abstracts, fieldName);
-      if (fieldSources.length > 1) {
-        problems.push(
-          `Field \`${typeName}.${fieldName}\` gets a rule from ${listed(fieldSources)}, and ` +
-            `\`${typeName}\` does not say which applies — add \`${typeName}: { ${fieldName}: … }\` to choose.`,
-        );
-        continue;
-      }
-      if (fieldSources.length === 1 || ownWild) {
-        continue;
-      }
-      wildSources ??= sourcesOf(permissions, abstracts, WILDCARD);
-      if (wildSources.length > 1) {
-        unsettled.push(fieldName);
-      }
-    }
-
-    if (wildSources && unsettled.length > 0) {
-      problems.push(
-        `\`${typeName}\` gets a type-wide rule from ${listed(wildSources)}, and nothing says ` +
-          `which applies to ${listed(unsettled)} — add \`${typeName}: { '*': … }\`, or a rule per field, to choose.`,
-      );
-    }
-  }
-  return problems;
-}
-
-/**
- * Every way a permissions map can fail to line up with the schema.
- *
- * @param schema - The schema.
- * @param permissions - The permissions map.
- * @param supertypes - Each object type's covering abstract entries.
- * @returns One message per problem; empty when the map is sound.
- *
- * @remarks
- * `graphql-middleware` does check that types and fields exist, but it fails on
- * the first one and crashes outright on a union (`type.getFields is not a
- * function`). More importantly it accepts entries that are silently inert: a rule
- * on an interface type type-checks, applies cleanly, and then never runs, because
- * execution resolves fields against the concrete object type. In an authorization
- * library a rule that quietly never runs is the worst possible failure, so
- * nothing here is allowed to be inert: an interface or union entry is resolved
- * onto the object types it stands for (see {@link supertypesOf}), and anything
- * that cannot be — an introspection type, a union's named field, a field the
- * interface does not declare — is rejected outright.
- */
-function collectProblems(schema: GraphQLSchema, permissions: RawPermissions, supertypes: Supertypes): string[] {
-  const problems: string[] = [];
-  const typeMap = schema.getTypeMap();
-
-  // Field name -> every object-type field with that name, so a `*`-keyed rule
-  // can be checked against all the fields it would actually guard.
-  const guardableFields = new Map<string, AnyField[]>();
-  for (const type of Object.values(typeMap)) {
-    if (isObjectType(type) && isIntrospectionType(type) === false) {
-      for (const field of Object.values(type.getFields())) {
-        getOrCreate(guardableFields, field.name, () => []).push(field);
-      }
-    }
-  }
-
-  for (const [typeName, rawEntry] of Object.entries(permissions)) {
-    if (rawEntry == null) {
-      continue;
-    }
-    // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`, and is
-    // checked as such — a bare scoping rule still has arguments to verify.
-    const entry = isRule(rawEntry) ? { [WILDCARD]: rawEntry } : rawEntry;
-
-    // A wildcard type is not looked up in the schema; its field keys are checked
-    // against every guardable field instead, so a typo there is still caught.
-    if (typeName === WILDCARD) {
-      for (const [fieldName, rule] of Object.entries(entry)) {
-        if (rule === undefined || fieldName === WILDCARD) {
-          continue;
-        }
-        const targets = guardableFields.get(fieldName);
-        if (!targets) {
-          problems.push(
-            `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
-          );
-        } else if (isRule(rule) === false) {
-          problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
-        } else {
-          const problem = scopeProblem(rule, `*.${fieldName}`, targets);
-          if (problem) {
-            problems.push(problem);
-          }
-        }
-      }
-      const wildRule = entry[WILDCARD];
-      if (wildRule !== undefined && isRule(wildRule) === false) {
-        problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
-      } else if (wildRule !== undefined && scopeTargetsOf(wildRule).length > 0) {
-        problems.push(
-          'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
-            'every type. Attach the scoping rule to the fields it filters.',
-        );
-      }
-      continue;
-    }
-
-    const type = typeMap[typeName];
-    if (!type) {
-      problems.push(`Type \`${typeName}\` is in the permissions map but not in the schema.`);
-      continue;
-    }
-    if (isIntrospectionType(type)) {
-      problems.push(`\`${typeName}\` is an introspection type and cannot be guarded.`);
-      continue;
-    }
-    if (isObjectType(type) === false && isAbstractType(type) === false) {
-      problems.push(`\`${typeName}\` is ${describeKind(type)}, not an object type.`);
-      continue;
-    }
-
-    // An abstract entry guards the fields of the object types it stands for. A
-    // union declares no fields of its own, so only `'*'` can be attached to it.
-    const declared = isUnionType(type) ? undefined : type.getFields();
-    const guarded = isAbstractType(type) ? possibleTypesOf(schema, type) : [type];
-    for (const [fieldName, rule] of Object.entries(entry)) {
-      if (rule === undefined) {
-        continue;
-      }
-      if (fieldName !== WILDCARD && !declared) {
-        problems.push(
-          `Field \`${typeName}.${fieldName}\` is in the permissions map but \`${typeName}\` is a union type, ` +
-            "which declares no fields — only `'*'` can be attached to a union.",
-        );
-        continue;
-      }
-      const isDeclared = fieldName === WILDCARD || fieldName in (declared as Record<string, AnyField>);
-      if (isDeclared === false) {
-        problems.push(
-          isInterfaceType(type)
-            ? `Field \`${typeName}.${fieldName}\` is in the permissions map but interface \`${typeName}\` does not declare it.`
-            : `Field \`${typeName}.${fieldName}\` is in the permissions map but not in the schema.`,
-        );
-        continue;
-      }
-      if (isRule(rule) === false) {
-        problems.push(`Rule for \`${typeName}.${fieldName}\` is ${typeof rule}, not a function.`);
-        continue;
-      }
-      const targets =
-        fieldName === WILDCARD
-          ? guarded.flatMap((object) => Object.values(object.getFields()))
-          : guarded.map((object) => object.getFields()[fieldName]);
-      const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
-      if (problem) {
-        problems.push(problem);
-      }
-    }
-  }
-
-  problems.push(...ambiguityProblems(schema, permissions, supertypes));
-  return problems;
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: any field of any type is a target
-type AnyField = GraphQLField<any, any>;
-
-/**
- * The arguments an argument-scoping rule injects into. Empty if it is not one.
- *
- * @param rule - The map value to inspect.
- * @returns The argument names.
- */
-function scopeTargetsOf(rule: object): readonly string[] {
-  return scopeInfoOf(rule)?.into ?? [];
-}
-
-/** How many field names a scope problem lists before it says `and N more`. */
-const MAX_LISTED_NAMES = 4;
-
-/**
- * Checks that every field a scoping rule guards actually has the argument the
- * rule injects into.
- *
- * @param rule - The rule to check.
- * @param label - The map key, for the message.
- * @param targets - The fields the rule guards.
- * @returns The problem, or `undefined` when every field has the argument.
- *
- * @remarks
- * This matters more than a normal typo check: a rule runs *downstream* of
- * GraphQL's input coercion, so an injected argument is never validated. Writing
- * a filter into an argument the field does not declare fails silently — the
- * resolver ignores it and the field returns unscoped rows.
- */
-function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | undefined {
-  for (const into of scopeTargetsOf(rule)) {
-    const missing = targets.filter((field) => field.args.some((arg) => arg.name === into) === false);
-    if (missing.length === 0) {
-      continue;
-    }
-    // By name, once: an interface field's targets are that field on every implementor.
-    const names = [...new Set(missing.map((field) => `\`${field.name}\``))];
-    const shown =
-      names.length > MAX_LISTED_NAMES
-        ? `${names.slice(0, MAX_LISTED_NAMES).join(', ')} and ${names.length - MAX_LISTED_NAMES} more`
-        : names.join(', ');
-    return (
-      `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
-      `${shown} ${names.length === 1 ? 'has' : 'have'} no such argument. ` +
-      'An injected argument bypasses GraphQL validation, so this would silently leave the field unscoped.'
-    );
-  }
-  return undefined;
-}
-
-/**
- * Reads a rule out of a map entry, tolerating the type-level-`Rule` shorthand.
- *
- * @param entry - A type's map entry.
- * @param fieldName - The field name, or the wildcard.
- * @returns The rule, or `undefined` when the entry has none for that key.
- */
-function fieldRuleOf(entry: Rule | Record<string, Rule | undefined> | undefined, fieldName: string): Rule | undefined {
-  if (entry === undefined) {
-    return undefined;
-  }
-  // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`.
-  if (isRule(entry)) {
-    return fieldName === WILDCARD ? entry : undefined;
-  }
-  const rule = entry[fieldName];
-  return isRule(rule) ? rule : undefined;
-}
-
-/**
- * The rule the interfaces (and unions) an object type belongs to give one of its
- * field keys. Validation has already rejected the case where two of them
- * disagree, so the first one found is the only one.
- *
- * @param permissions - The permissions map.
- * @param abstracts - The abstract entries covering the type.
- * @param fieldName - The field name, or the wildcard.
- * @returns The inherited rule, or `undefined`.
- */
-function inheritedRuleOf(
-  permissions: RawPermissions,
-  abstracts: readonly string[] | undefined,
-  fieldName: string,
-): Rule | undefined {
-  if (!abstracts) {
-    return undefined;
-  }
-  for (const name of abstracts) {
-    const rule = fieldRuleOf(permissions[name], fieldName);
-    if (rule) {
-      return rule;
-    }
-  }
-  return undefined;
-}
-
-/**
- * The single rule guarding one field, or `undefined` to leave it unguarded.
- *
- * @param permissions - The permissions map.
- * @param typeName - The object type.
- * @param fieldName - The field.
- * @param supertypes - Each object type's covering abstract entries.
- * @param fallbackRule - The rule for fields nothing else covers.
- * @returns The rule, by precedence.
- *
- * @remarks
- * Wildcards never compose — exactly one rule applies, and the most specific
- * entry wins. See {@link PermissionsMap} for the precedence table; the order of
- * the lookups below *is* that table.
- */
-function ruleForField(
-  permissions: RawPermissions,
-  typeName: string,
-  fieldName: string,
-  supertypes: Supertypes,
-  fallbackRule: Rule | undefined,
-): Rule | undefined {
-  const named = permissions[typeName];
-  const abstracts = supertypes.get(typeName);
-  const wild = permissions[WILDCARD];
-  return (
-    fieldRuleOf(named, fieldName) ??
-    inheritedRuleOf(permissions, abstracts, fieldName) ??
-    fieldRuleOf(named, WILDCARD) ??
-    inheritedRuleOf(permissions, abstracts, WILDCARD) ??
-    fieldRuleOf(wild, fieldName) ??
-    fieldRuleOf(wild, WILDCARD) ??
-    fallbackRule
-  );
-}
-
-/**
- * Resolves a {@link FallbackError} to the error to throw.
- *
- * @param fallbackError - The option as passed.
- * @param original - The error being replaced.
- * @param parent - The field's parent value.
- * @param args - The field's arguments.
- * @param context - The request context.
- * @param info - The field's resolve info.
- * @returns The error to throw.
- */
-async function resolveFallbackError(
-  fallbackError: FallbackError,
-  original: unknown,
-  parent: unknown,
-  args: unknown,
-  context: unknown,
-  info: GraphQLResolveInfo,
-): Promise<Error> {
-  if (typeof fallbackError === 'string') {
-    return new Error(fallbackError);
-  }
-  if (typeof fallbackError === 'function') {
-    return fallbackError(original, parent, args, context, info);
-  }
-  return fallbackError;
-}
-
-/**
- * The value a denied field is masked with, or `undefined` if it cannot be masked.
- *
- * @param fieldType - The field's declared type.
- * @returns A function producing `null` or `[]`.
- *
- * @remarks
- * A factory, not a value: `[]` handed to two requests would be the same array.
- *
- * Masking is bounded by the schema. A nullable field becomes `null`, and a
- * non-null *list* becomes `[]` — an empty list satisfies non-null, which is what
- * makes masking useful for the `[Todo!]!` shape where a thrown denial otherwise
- * nulls the whole branch. A non-null field of any other kind has no value that
- * satisfies it, so it keeps throwing.
- */
-function maskFor(fieldType: GraphQLOutputType): Mask | undefined {
-  if (isNonNullType(fieldType) === false) {
-    return MASK_NULL;
-  }
-  if (isListType(fieldType.ofType)) {
-    return MASK_LIST;
-  }
-  return undefined;
-}
-
-type Mask = () => unknown;
-
-// Shared instances, so a wrapper built for one mask can serve every field with
-// the same one — see `withErrorControl`.
-const MASK_NULL: Mask = () => null;
-const MASK_LIST: Mask = () => [];
-
-/**
- * The `extensions.code` a denial carries under `onDeny: 'filter'`.
- *
- * @remarks
- * It is Apollo Router's code for a field its authorization directives removed
- * from a query, so clients and tooling that already handle the router's partial
- * responses handle these without learning a second vocabulary.
- */
-export const UNAUTHORIZED_FIELD_OR_TYPE = 'UNAUTHORIZED_FIELD_OR_TYPE';
-
-/**
- * The response extension {@link reportDenials} fills under
- * `report: 'extensions'` — again Apollo Router's key, holding the same error
- * objects it would otherwise put in `errors`.
- */
-export const AUTHORIZATION_ERRORS_EXTENSION = 'authorizationErrors';
-
-/**
- * What a denied field does — see {@link ApplyPermissionsOptions.onDeny}. The
- * object names each mode, so `onDeny: DenialMode.Filter` reads the same as
- * `onDeny: 'filter'`.
- */
-export const DenialMode = { Reject: 'reject', Filter: 'filter', Mask: 'mask' } as const;
-export type DenialMode = (typeof DenialMode)[keyof typeof DenialMode];
-
-/**
- * Where a filtered denial is reported — see {@link ApplyPermissionsOptions.report}.
- * The object names each place: `report: DenialReport.Extensions`.
- */
-export const DenialReport = { Errors: 'errors', Extensions: 'extensions' } as const;
-export type DenialReport = (typeof DenialReport)[keyof typeof DenialReport];
-
-/** Filtered denials the response itself could not carry, per request context. */
-interface DenialRecord {
-  report: DenialReport;
-  errors: GraphQLError[];
-}
-
-const recorded = new WeakMap<object, DenialRecord>();
-
-/**
- * The error a filtered denial is reported as: the denial's own words under the
- * standard code. A denial that already names a code — a check that returned a
- * `GraphQLError` with one, or a `fallbackError` that built one — is the rule
- * author's deliberate choice and is kept as is.
- *
- * @param denial - The denial as the rule made it.
- * @returns The error to report.
- */
-function standardized(denial: Error): Error {
-  const extensions = (denial as { extensions?: unknown }).extensions;
-  const own =
-    typeof extensions === 'object' && extensions !== null ? (extensions as Record<string, unknown>) : undefined;
-  if (typeof own?.code === 'string') {
-    return denial;
-  }
-  return new GraphQLError(denial.message, {
-    originalError: denial,
-    extensions: { ...own, code: UNAUTHORIZED_FIELD_OR_TYPE },
-  });
-}
-
-/**
- * Delivers a denial under `onDeny: 'filter'`: the field resolves to its mask and
- * the denial is reported.
- *
- * @param denial - The denial to report.
- * @param mask - Produces the field's masked value.
- * @param report - Where the denial is reported.
- * @param context - The request context, which keys the record.
- * @param info - The field's resolve info, for the path.
- * @returns The masked value, or a rejection when the field cannot be masked.
- *
- * @remarks
- * Where the field can carry the report itself it does — a nullable field that
- * rejects *is* `null` plus an error at that path, and needs no response hook.
- * Everything else goes through the per-request record {@link reportDenials}
- * drains: a non-null list, whose `[]` cannot also be an error, and every denial
- * under `report: 'extensions'`. A field with no mask at all — non-null, not a
- * list — cannot be filtered, and rejects with the standard code so the denial
- * propagates exactly as Apollo Router's does. So does a denial with nowhere to
- * be recorded, when the context is not an object.
- */
-function deliver(
-  denial: Error,
-  mask: Mask | undefined,
-  report: DenialReport,
-  context: unknown,
-  info: GraphQLResolveInfo,
-): unknown {
-  const error = standardized(denial);
-  if (!mask || (mask === MASK_NULL && report === DenialReport.Errors) || isWeakKey(context) === false) {
-    return Promise.reject(error);
-  }
-  let record = recorded.get(context);
-  if (!record) {
-    record = { report, errors: [] };
-    recorded.set(context, record);
-  }
-  record.errors.push(locatedError(error, info.fieldNodes, responsePathAsArray(info.path)));
-  return mask();
-}
-
-/**
- * Merges the denials `onDeny: 'filter'` recorded for a request into its
- * execution result — the ones the response could not carry through the denied
- * field itself (see {@link ApplyPermissionsOptions.onDeny}).
- *
- * @param context - The request's context value: the one the resolvers saw.
- * @param result - The execution result to report into.
- * @returns The result with the denials merged in, or `result` itself if there were none.
- *
- * @remarks
- * The `/envelop` entry point calls this for you. Under `applyPermissions` no
- * hook sees the finished response, so call it from your server's own — Apollo
- * Server's `willSendResponse`, or straight after `execute`:
- *
- * ```ts
- * const result = reportDenials(contextValue, await execute({ schema, document, contextValue }));
- * ```
- *
- * Under `report: 'errors'` the denials are appended to `result.errors`; under
- * `report: 'extensions'` they are formatted into
- * `result.extensions.authorizationErrors`. The record is drained, so a context
- * is reported once, and a context with nothing recorded returns the result
- * untouched. Nothing is recorded under `'reject'` or `'mask'`.
- */
-export function reportDenials<TResult extends ExecutionResult>(context: unknown, result: TResult): TResult {
-  if (isWeakKey(context) === false) {
-    return result;
-  }
-  const record = recorded.get(context);
-  if (!record) {
-    return result;
-  }
-  recorded.delete(context);
-  if (record.report === DenialReport.Errors) {
-    return { ...result, errors: [...(result.errors ?? []), ...record.errors] };
-  }
-  const existing = result.extensions?.[AUTHORIZATION_ERRORS_EXTENSION];
-  const previous = Array.isArray(existing) ? existing : [];
-  return {
-    ...result,
-    extensions: {
-      ...result.extensions,
-      [AUTHORIZATION_ERRORS_EXTENSION]: [...previous, ...record.errors.map((error) => error.toJSON())],
-    },
-  };
-}
-
-/**
- * A rule whose middleware is exactly "run `.check`, then `resolve`".
- *
- * @param rule - The rule to test.
- * @returns `true` when its check can be called directly.
- */
-function isPlainRule(rule: Rule): rule is CheckableRule {
-  return (rule as Partial<Record<typeof PLAIN_RULE, boolean>>)[PLAIN_RULE] === true;
-}
-
-/**
- * Wraps one field's rule with the error-control options.
- *
- * @param rule - The field's rule.
- * @param options - The resolved error-control options.
- * @param mask - Produces the field's masked value.
- * @returns The wrapped rule, or `rule` itself when no option applies.
- *
- * @remarks
- * Three kinds of failure have to be told apart: a **denial** (the rule did its
- * job), a **rule failure** (the rule itself broke — a `getAbility` that threw),
- * and a **resolver error** (the field was allowed and the resolver failed).
- *
- * A rule built by `rule()` — which is every rule this library produces except
- * `onResult`, `scopeArgs`, `validateArgs` and `wrap` — exposes its decision as a check, and the
- * wrapper asks that directly. A denial is then a *returned* value, not a thrown
- * one, so masking it costs no `Error` construction and no stack capture: on a
- * 100-row list with 5 masked fields that is 500 errors never built. It also
- * keeps a synchronous check synchronous end to end. Anything the check throws
- * is a rule failure; anything the resolver throws is a resolver error.
- *
- * Any other rule is run as middleware, and the three kinds arrive as thrown
- * errors: denials carry a marker from `rule()`, resolver errors are identified
- * by capturing what the wrapped `resolve` threw, and the rest are rule failures.
- */
-function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
-  const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
-  if (!fallbackError && allowExternalErrors && debug === false && !mask && onDeny !== DenialMode.Filter) {
-    return rule;
-  }
-
-  if (isPlainRule(rule)) {
-    return withCheckedErrorControl(rule.check, options, mask);
-  }
-
-  return async (resolve, parent, args, context, info) => {
-    // Identity, not a flag: the rule may catch and rethrow, and a denial thrown
-    // after a successful resolve must not be mistaken for a resolver error.
-    let resolverError: unknown;
-    let threw = false;
-    const tracked = async (
-      p?: unknown,
-      a?: unknown,
-      c?: unknown,
-      i?: GraphQLResolveInfo,
-      // biome-ignore lint/suspicious/noExplicitAny: mirrors the resolver's return
-    ): Promise<any> => {
-      try {
-        return await resolve(p, a, c, i);
-      } catch (error) {
-        resolverError = error;
-        threw = true;
-        throw error;
-      }
-    };
-
-    try {
-      return await rule(tracked, parent, args, context, info);
-    } catch (error) {
-      const isResolverError = threw && error === resolverError;
-      const denialKind = isResolverError ? undefined : denialKindOf(error);
-
-      // A rule that broke is not a denial. Surfacing it as one would report a
-      // bug as an authorization decision, so `debug` rethrows it untouched.
-      if (denialKind === undefined && isResolverError === false && debug) {
-        throw error;
-      }
-
-      // Filtering changes how a decision is delivered, not what it says: the
-      // denial keeps its words, `fallbackError` still rewords a generic one,
-      // and only then is it masked and reported.
-      if (denialKind !== undefined && onDeny === DenialMode.Filter) {
-        const denial =
-          fallbackError && denialKind === DenialKind.Default
-            ? await resolveFallbackError(fallbackError, error, parent, args, context, info)
-            : (error as Error);
-        return deliver(denial, mask, report, context, info);
-      }
-
-      // Masking replaces a decision the rule made, never a failure it suffered:
-      // a broken rule or a broken resolver still surfaces.
-      if (mask && denialKind !== undefined) {
-        return mask();
-      }
-
-      // An explicit denial is the rule author's own words; only the generic
-      // default is replaced.
-      if (denialKind === DenialKind.Explicit) {
-        throw error;
-      }
-      if (isResolverError && allowExternalErrors) {
-        throw error;
-      }
-      if (!fallbackError) {
-        throw error;
-      }
-
-      throw await resolveFallbackError(fallbackError, error, parent, args, context, info);
-    }
-  };
-}
-
-/**
- * The check-based wrapper — see {@link withErrorControl}.
- *
- * @param check - The rule's check.
- * @param options - The resolved error-control options.
- * @param mask - Produces the field's masked value.
- * @returns The wrapped rule.
- */
-function withCheckedErrorControl(check: Check, options: ErrorControl, mask: Mask | undefined): Rule {
-  const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
-  const replaceResolverErrors = allowExternalErrors === false && fallbackError !== undefined;
-
-  /** Rejects with the `fallbackError` built for `original`. */
-  function replaced(
-    fallback: FallbackError,
-    original: unknown,
-    parent: unknown,
-    args: unknown,
-    context: unknown,
-    info: GraphQLResolveInfo,
-  ): Promise<never> {
-    return resolveFallbackError(fallback, original, parent, args, context, info).then((error) => {
-      throw error;
-    });
-  }
-
-  /** A rule failure: rethrown untouched under `debug`, else `fallbackError`. */
-  function failed(
-    error: unknown,
-    parent: unknown,
-    args: unknown,
-    context: unknown,
-    info: GraphQLResolveInfo,
-  ): Promise<never> {
-    if (debug || !fallbackError) {
-      return Promise.reject(error);
-    }
-    return replaced(fallbackError, error, parent, args, context, info);
-  }
-
-  /** The field was allowed: run the resolver, replacing its errors if asked. */
-  function allowed(
-    resolve: Parameters<Rule>[0],
-    parent: unknown,
-    args: unknown,
-    context: unknown,
-    info: GraphQLResolveInfo,
-  ): unknown {
-    if (replaceResolverErrors === false) {
-      return resolve(parent, args, context, info);
-    }
-    let result: unknown;
-    try {
-      result = resolve(parent, args, context, info);
-    } catch (error) {
-      return replaced(fallbackError, error, parent, args, context, info);
-    }
-    return isThenable(result)
-      ? Promise.resolve(result).catch((error) => replaced(fallbackError, error, parent, args, context, info))
-      : result;
-  }
-
-  /** The check answered: mask or reject a denial, or run the resolver. */
-  function settle(
-    result: RuleResult,
-    resolve: Parameters<Rule>[0],
-    parent: unknown,
-    args: unknown,
-    context: unknown,
-    info: GraphQLResolveInfo,
-  ): unknown {
-    if (passes(result)) {
-      return allowed(resolve, parent, args, context, info);
-    }
-    // Masking replaces a decision the rule made, whatever words it chose.
-    if (mask && onDeny === DenialMode.Mask) {
-      return mask();
-    }
-    const denial = denialOf(result);
-    // An explicit denial is the rule author's own words; only the generic
-    // default is replaced.
-    const explicit = denialKindOf(denial) === DenialKind.Explicit;
-    if (onDeny === DenialMode.Filter) {
-      if (fallbackError && explicit === false) {
-        return resolveFallbackError(fallbackError, denial, parent, args, context, info).then((error) =>
-          deliver(error, mask, report, context, info),
-        );
-      }
-      return deliver(denial, mask, report, context, info);
-    }
-    if (!fallbackError || explicit) {
-      return Promise.reject(denial);
-    }
-    return replaced(fallbackError, denial, parent, args, context, info);
-  }
-
-  return (resolve, parent, args, context, info) => {
-    let answer: RuleResult | Promise<RuleResult>;
-    try {
-      answer = check(parent, args, context, info);
-    } catch (error) {
-      return failed(error, parent, args, context, info);
-    }
-    if (isThenable(answer)) {
-      return Promise.resolve(answer).then(
-        (result) => settle(result, resolve, parent, args, context, info),
-        (error) => failed(error, parent, args, context, info),
-      );
-    }
-    // Synchronous end to end when the check and the resolver both are; see
-    // `Rule` on why that is within contract.
-    return settle(answer, resolve, parent, args, context, info) as Promise<unknown>;
-  };
-}
-
-/**
- * Looks up the rule guarding one field, already wrapped with the error-control
- * and masking options.
- *
- * @remarks
- * Returns `undefined` for a field left unguarded.
- *
- * This is the whole permission layer minus the binding to `graphql-middleware`
- * — see {@link resolvePermissions}.
- */
-export type PermissionResolver = (typeName: string, fieldName: string) => Rule | undefined;
-
-/**
- * Checks a {@link PermissionsMap} against a schema and throws
- * {@link PermissionsError} if anything in it is stale — without building any
- * middleware.
- *
- * @param schema - The schema to check against.
- * @param permissions - The map to check.
- * @throws {@link PermissionsError} Aggregating *every* problem, not just the first.
- *
- * @remarks
- * This is the cheap half of {@link applyPermissions}. That function validates
- * *and* wraps a resolver for every guarded field, which is O(fields) and, with a
- * `fallbackRule` set, means every field in the schema. The wrapping dominates by
- * orders of magnitude: on a 4,400-type / 35,200-field generated CRUD schema,
- * `applyPermissions` takes ~1.6s and this takes ~8ms. Validation is the half a
- * test actually wants.
- *
- * The check is the same one `applyPermissions` runs, so a map that passes here
- * passes there.
- *
- * @example
- * ```ts
- * it('has no stale keys', () => {
- *   expect(() => validatePermissions(schema, permissions)).not.toThrow();
- * });
- * ```
- */
-export function validatePermissions<TResolvers = AnyResolvers>(
-  schema: GraphQLSchema,
-  permissions: PermissionsMap<NoInfer<TResolvers>>,
-): void {
-  validated(schema, permissions as RawPermissions);
-}
-
-/**
- * The check behind {@link validatePermissions}, handing back what the resolver reuses.
- *
- * @param schema - The schema.
- * @param permissions - The permissions map.
- * @returns Each object type's covering abstract entries.
- */
-function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
-  const supertypes = supertypesOf(schema, permissions);
-  const problems = collectProblems(schema, permissions, supertypes);
-  if (problems.length > 0) {
-    throw new PermissionsError(problems);
-  }
-  return supertypes;
-}
-
-/**
- * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
- * without applying it to anything.
- *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @param schema - The schema the map is checked against.
- * @param permissions - The permissions map to resolve.
- * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns A lookup from type and field name to the rule guarding that field.
- * @throws {@link PermissionsError} if the map does not line up with the schema.
- *
- * @remarks
- * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
- * enforce the same map through another integration — an Apollo plugin,
- * hand-wrapped resolvers — and get identical wildcard precedence,
- * `fallbackRule` coverage, error control and masking, rather than a second
- * implementation that drifts. The `@vantreeseba/graphql-casl/envelop` entry
- * point is exactly that, already written.
- *
- * The map is validated up front, exactly as `applyPermissions` validates it, so
- * a mismatched map fails at wiring time rather than mid-query. Lookups are
- * memoized, so calling this per resolver call is cheap.
- *
- * @example
- * ```ts
- * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
- * const rule = permissionFor(info.parentType.name, info.fieldName);
- * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
- * ```
- */
-export function resolvePermissions<TResolvers = AnyResolvers>(
-  schema: GraphQLSchema,
-  // `NoInfer` keeps TS from inferring TResolvers *from the map being checked* —
-  // which would resolve every type key to `unknown` and report every real field
-  // name as unknown. Omitting the generic now falls back to the default instead.
-  permissions: PermissionsMap<NoInfer<TResolvers>>,
-  options?: ApplyPermissionsOptions,
-): PermissionResolver {
-  const raw = permissions as RawPermissions;
-  const supertypes = validated(schema, raw);
-
-  // `strict` moves the defaults, never the keys actually passed.
-  const strict = options?.strict ?? false;
-  const errorControl: ErrorControl = {
-    fallbackError: options?.fallbackError,
-    allowExternalErrors: options?.allowExternalErrors ?? strict === false,
-    debug: options?.debug ?? false,
-    onDeny: denialModeOf(options),
-    report: options?.report ?? DenialReport.Errors,
-  };
-
-  // Validated and resolved exactly as usual, so a stale map or a contradictory
-  // option still fails; only the lookup guards nothing.
-  if (options?.disabled) {
-    return () => undefined;
-  }
-
-  const fallbackRule = options?.fallbackRule;
-  const resolved = new Map<string, Rule | undefined>();
-
-  // One wrapper per distinct (rule, mask) pair rather than one per field. The
-  // wrapper depends on nothing else, and with a `fallbackRule` set every field
-  // in the schema gets one — on a 35,000-field generated CRUD schema that is
-  // 35,000 closures for what is really three.
-  const wrappers = new Map<Rule, Map<Mask | undefined, Rule>>();
-  function wrapped(rule: Rule, mask: Mask | undefined): Rule {
-    const byMask = getOrCreate(wrappers, rule, () => new Map());
-    return getOrCreate(byMask, mask, () => withErrorControl(rule, errorControl, mask));
-  }
-
-  return (typeName, fieldName) => {
-    const key = `${typeName}.${fieldName}`;
-    const cached = resolved.get(key);
-    if (cached !== undefined || resolved.has(key)) {
-      return cached;
-    }
-
-    const type = schema.getTypeMap()[typeName];
-    // Introspection is never guarded, so even `fallbackRule: deny` leaves it
-    // working; a non-object type has no field to guard in the first place.
-    const field = isObjectType(type) && isIntrospectionType(type) === false ? type.getFields()[fieldName] : undefined;
-    const rule = field ? ruleForField(raw, typeName, fieldName, supertypes, fallbackRule) : undefined;
-    const guard =
-      rule && field
-        ? wrapped(rule, errorControl.onDeny === DenialMode.Reject ? undefined : maskFor(field.type))
-        : undefined;
-
-    resolved.set(key, guard);
-    return guard;
-  };
-}
-
-/**
- * Resolves the map into the per-field middleware `graphql-middleware` consumes.
- *
- * @param schema - The schema.
- * @param permissionFor - Looks up the rule for a field.
- * @returns Type name to field name to middleware.
- *
- * @remarks
- * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
- * can guard a field no map entry names. Introspection types are skipped by the
- * resolver itself, so even `fallbackRule: deny` leaves introspection working.
- */
-function resolveFieldRules(schema: GraphQLSchema, permissionFor: PermissionResolver): IMiddlewareTypeMap {
-  const middleware: IMiddlewareTypeMap = {};
-
-  for (const type of Object.values(schema.getTypeMap())) {
-    if (isObjectType(type) === false || isIntrospectionType(type)) {
-      continue;
-    }
-
-    const fieldRules: IMiddlewareFieldMap = {};
-    for (const fieldName of Object.keys(type.getFields())) {
-      const rule = permissionFor(type.name, fieldName);
-      if (rule) {
-        fieldRules[fieldName] = rule;
-      }
-    }
-
-    if (Object.keys(fieldRules).length > 0) {
-      middleware[type.name] = fieldRules;
-    }
-  }
-
-  return middleware;
-}
-
-/**
- * Fields already guarded in place, across every schema this module has touched.
- * Guarding a field twice would stack two rules on it, and a second `inPlace`
- * apply to a schema that was already guarded is far more likely to be a test
- * reusing one base schema than a deliberate layering, so it is refused.
- */
-const guardedInPlace = new WeakSet<AnyField>();
-
-/**
- * Wraps one field's resolver in a rule, the same way `graphql-middleware` does:
- * the `resolve` handed to the rule defaults every argument to the current call,
- * so a rule may call it bare or with rewritten arguments.
- *
- * @param resolver - The field's resolver.
- * @param rule - The rule guarding it.
- * @returns The guarded resolver.
- */
-function wrapResolver(
-  resolver: GraphQLFieldResolver<unknown, unknown>,
-  rule: Rule,
-): GraphQLFieldResolver<unknown, unknown> {
-  return (parent, args, context, info) =>
-    rule(
-      (p = parent, a = args, c = context, i = info) =>
-        resolver(p, a as Record<string, unknown>, c, i as GraphQLResolveInfo) as Promise<unknown>,
-      parent,
-      args,
-      context,
-      info,
-    );
-}
-
-/**
- * Guards the schema's fields by replacing their resolvers in place, with the
- * same field selection `graphql-middleware` makes: a field's own resolver if it
- * has one, else a subscription field's `subscribe`, else the default resolver.
- *
- * @param schema - The schema; its field definitions are mutated.
- * @param permissionFor - Looks up the rule for a field.
- * @returns The same schema.
- */
-function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
-  for (const type of Object.values(schema.getTypeMap())) {
-    if (isObjectType(type) === false || isIntrospectionType(type)) {
-      continue;
-    }
-
-    for (const field of Object.values(type.getFields())) {
-      const rule = permissionFor(type.name, field.name);
-      if (!rule) {
-        continue;
-      }
-      if (guardedInPlace.has(field)) {
-        throw new Error(
-          `graphql-casl: \`${type.name}.${field.name}\` is already guarded. ` +
-            '`applyPermissions` with `inPlace: true` mutates the schema, so apply it once per ' +
-            'schema — or drop `inPlace` to get a guarded copy each time.',
-        );
-      }
-      guardedInPlace.add(field);
-
-      if (field.resolve && field.resolve !== defaultFieldResolver) {
-        field.resolve = wrapResolver(field.resolve, rule);
-      } else if (field.subscribe) {
-        field.subscribe = wrapResolver(field.subscribe, rule);
-      } else {
-        field.resolve = wrapResolver(defaultFieldResolver, rule);
-      }
-    }
-  }
-  return schema;
-}
-
-/**
- * A replacement error for denials that did not name one: an `Error`, a message,
- * or a mapper that receives the original error and the resolver arguments.
- *
- * @remarks
- * The mapper is the form that lets a denial become a `GraphQLError` with a code
- * and extensions, or vary by field.
- */
-export type FallbackError =
-  | Error
-  | string
-  | ((
-      original: unknown,
-      parent: unknown,
-      args: unknown,
-      context: unknown,
-      info: GraphQLResolveInfo,
-    ) => Error | Promise<Error>);
-
-/** The error-control options, resolved to their defaults. Internal. */
-interface ErrorControl {
-  fallbackError: FallbackError | undefined;
-  allowExternalErrors: boolean;
-  debug: boolean;
-  onDeny: DenialMode;
-  report: DenialReport;
-}
+  DenialMode,
+  DenialReport,
+  type Mask,
+  maskFor,
+  // The two below are named only by the option docs' `{@link}`s.
+  type reportDenials,
+  type UNAUTHORIZED_FIELD_OR_TYPE,
+} from './denials.js';
+import { type ErrorControl, type FallbackError, withErrorControl } from './errorControl.js';
+import { getOrCreate } from './internal.js';
+import { type AnyField, validated } from './mapValidation.js';
+import { PermissionsError } from './permissionsError.js';
+import { type RawPermissions, ruleForField } from './rulePrecedence.js';
+import type { AnyResolvers, PermissionsMap, Rule } from './rules.js';
 
 /**
  * Resolves `onDeny` — from the key itself, the `maskDenials` shorthand, or the
@@ -1508,6 +275,219 @@ export interface ApplyPermissionsOptions {
    * to say so.
    */
   disabled?: boolean;
+}
+
+/**
+ * Looks up the rule guarding one field, already wrapped with the error-control
+ * and masking options.
+ *
+ * @remarks
+ * Returns `undefined` for a field left unguarded.
+ *
+ * This is the whole permission layer minus the binding to `graphql-middleware`
+ * — see {@link resolvePermissions}.
+ */
+export type PermissionResolver = (typeName: string, fieldName: string) => Rule | undefined;
+
+/**
+ * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
+ * without applying it to anything.
+ *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @param schema - The schema the map is checked against.
+ * @param permissions - The permissions map to resolve.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
+ * @returns A lookup from type and field name to the rule guarding that field.
+ * @throws {@link PermissionsError} if the map does not line up with the schema.
+ *
+ * @remarks
+ * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
+ * enforce the same map through another integration — an Apollo plugin,
+ * hand-wrapped resolvers — and get identical wildcard precedence,
+ * `fallbackRule` coverage, error control and masking, rather than a second
+ * implementation that drifts. The `@vantreeseba/graphql-casl/envelop` entry
+ * point is exactly that, already written.
+ *
+ * The map is validated up front, exactly as `applyPermissions` validates it, so
+ * a mismatched map fails at wiring time rather than mid-query. Lookups are
+ * memoized, so calling this per resolver call is cheap.
+ *
+ * @example
+ * ```ts
+ * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
+ * const rule = permissionFor(info.parentType.name, info.fieldName);
+ * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
+ * ```
+ */
+export function resolvePermissions<TResolvers = AnyResolvers>(
+  schema: GraphQLSchema,
+  // `NoInfer` keeps TS from inferring TResolvers *from the map being checked* —
+  // which would resolve every type key to `unknown` and report every real field
+  // name as unknown. Omitting the generic now falls back to the default instead.
+  permissions: PermissionsMap<NoInfer<TResolvers>>,
+  options?: ApplyPermissionsOptions,
+): PermissionResolver {
+  const raw = permissions as RawPermissions;
+  const supertypes = validated(schema, raw);
+
+  // `strict` moves the defaults, never the keys actually passed.
+  const strict = options?.strict ?? false;
+  const errorControl: ErrorControl = {
+    fallbackError: options?.fallbackError,
+    allowExternalErrors: options?.allowExternalErrors ?? strict === false,
+    debug: options?.debug ?? false,
+    onDeny: denialModeOf(options),
+    report: options?.report ?? DenialReport.Errors,
+  };
+
+  // Validated and resolved exactly as usual, so a stale map or a contradictory
+  // option still fails; only the lookup guards nothing.
+  if (options?.disabled) {
+    return () => undefined;
+  }
+
+  const fallbackRule = options?.fallbackRule;
+  const resolved = new Map<string, Rule | undefined>();
+
+  // One wrapper per distinct (rule, mask) pair rather than one per field. The
+  // wrapper depends on nothing else, and with a `fallbackRule` set every field
+  // in the schema gets one — on a 35,000-field generated CRUD schema that is
+  // 35,000 closures for what is really three.
+  const wrappers = new Map<Rule, Map<Mask | undefined, Rule>>();
+  function wrapped(rule: Rule, mask: Mask | undefined): Rule {
+    const byMask = getOrCreate(wrappers, rule, () => new Map());
+    return getOrCreate(byMask, mask, () => withErrorControl(rule, errorControl, mask));
+  }
+
+  return (typeName, fieldName) => {
+    const key = `${typeName}.${fieldName}`;
+    const cached = resolved.get(key);
+    if (cached !== undefined || resolved.has(key)) {
+      return cached;
+    }
+
+    const type = schema.getTypeMap()[typeName];
+    // Introspection is never guarded, so even `fallbackRule: deny` leaves it
+    // working; a non-object type has no field to guard in the first place.
+    const field = isObjectType(type) && isIntrospectionType(type) === false ? type.getFields()[fieldName] : undefined;
+    const rule = field ? ruleForField(raw, typeName, fieldName, supertypes, fallbackRule) : undefined;
+    const guard =
+      rule && field
+        ? wrapped(rule, errorControl.onDeny === DenialMode.Reject ? undefined : maskFor(field.type))
+        : undefined;
+
+    resolved.set(key, guard);
+    return guard;
+  };
+}
+
+/**
+ * Resolves the map into the per-field middleware `graphql-middleware` consumes.
+ *
+ * @param schema - The schema.
+ * @param permissionFor - Looks up the rule for a field.
+ * @returns Type name to field name to middleware.
+ *
+ * @remarks
+ * Walks the schema rather than the map, because a wildcard or a `fallbackRule`
+ * can guard a field no map entry names. Introspection types are skipped by the
+ * resolver itself, so even `fallbackRule: deny` leaves introspection working.
+ */
+function resolveFieldRules(schema: GraphQLSchema, permissionFor: PermissionResolver): IMiddlewareTypeMap {
+  const middleware: IMiddlewareTypeMap = {};
+
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (isObjectType(type) === false || isIntrospectionType(type)) {
+      continue;
+    }
+
+    const fieldRules: IMiddlewareFieldMap = {};
+    for (const fieldName of Object.keys(type.getFields())) {
+      const rule = permissionFor(type.name, fieldName);
+      if (rule) {
+        fieldRules[fieldName] = rule;
+      }
+    }
+
+    if (Object.keys(fieldRules).length > 0) {
+      middleware[type.name] = fieldRules;
+    }
+  }
+
+  return middleware;
+}
+
+/**
+ * Fields already guarded in place, across every schema this module has touched.
+ * Guarding a field twice would stack two rules on it, and a second `inPlace`
+ * apply to a schema that was already guarded is far more likely to be a test
+ * reusing one base schema than a deliberate layering, so it is refused.
+ */
+const guardedInPlace = new WeakSet<AnyField>();
+
+/**
+ * Wraps one field's resolver in a rule, the same way `graphql-middleware` does:
+ * the `resolve` handed to the rule defaults every argument to the current call,
+ * so a rule may call it bare or with rewritten arguments.
+ *
+ * @param resolver - The field's resolver.
+ * @param rule - The rule guarding it.
+ * @returns The guarded resolver.
+ */
+function wrapResolver(
+  resolver: GraphQLFieldResolver<unknown, unknown>,
+  rule: Rule,
+): GraphQLFieldResolver<unknown, unknown> {
+  return (parent, args, context, info) =>
+    rule(
+      (p = parent, a = args, c = context, i = info) =>
+        resolver(p, a as Record<string, unknown>, c, i as GraphQLResolveInfo) as Promise<unknown>,
+      parent,
+      args,
+      context,
+      info,
+    );
+}
+
+/**
+ * Guards the schema's fields by replacing their resolvers in place, with the
+ * same field selection `graphql-middleware` makes: a field's own resolver if it
+ * has one, else a subscription field's `subscribe`, else the default resolver.
+ *
+ * @param schema - The schema; its field definitions are mutated.
+ * @param permissionFor - Looks up the rule for a field.
+ * @returns The same schema.
+ */
+function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (isObjectType(type) === false || isIntrospectionType(type)) {
+      continue;
+    }
+
+    for (const field of Object.values(type.getFields())) {
+      const rule = permissionFor(type.name, field.name);
+      if (!rule) {
+        continue;
+      }
+      if (guardedInPlace.has(field)) {
+        throw new Error(
+          `graphql-casl: \`${type.name}.${field.name}\` is already guarded. ` +
+            '`applyPermissions` with `inPlace: true` mutates the schema, so apply it once per ' +
+            'schema — or drop `inPlace` to get a guarded copy each time.',
+        );
+      }
+      guardedInPlace.add(field);
+
+      if (field.resolve && field.resolve !== defaultFieldResolver) {
+        field.resolve = wrapResolver(field.resolve, rule);
+      } else if (field.subscribe) {
+        field.subscribe = wrapResolver(field.subscribe, rule);
+      } else {
+        field.resolve = wrapResolver(defaultFieldResolver, rule);
+      }
+    }
+  }
+  return schema;
 }
 
 /**

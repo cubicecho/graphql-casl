@@ -32,7 +32,7 @@
  */
 
 import type { ExecutionResult, FormattedExecutionResult, GraphQLError, GraphQLFormattedError } from 'graphql';
-import { reportDenials } from './applyPermissions.js';
+import { reportDenials } from './denials.js';
 
 /**
  * The response body Apollo Server hands `willSendResponse`: the slice of its

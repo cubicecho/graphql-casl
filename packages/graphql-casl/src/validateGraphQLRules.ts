@@ -25,7 +25,7 @@ import {
   isUnionType,
 } from 'graphql';
 import { Actions, isAction } from './ability.js';
-import { describeKind, PermissionsError } from './applyPermissions.js';
+import { describeKind, PermissionsError } from './permissionsError.js';
 
 /** Options for {@link validateGraphQLRules}. */
 export interface ValidateGraphQLRulesOptions {
