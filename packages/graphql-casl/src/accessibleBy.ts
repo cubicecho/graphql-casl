@@ -80,10 +80,8 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   // A one-element group is the group itself. Worth doing here rather than in
   // each adapter: the common case is a single rule with a single condition, and
   // wrapping it in a pointless `or` forces every dialect to support one.
-  const and = (filters: TFilter[]) =>
-    filters.length === 1 ? (filters[0] as TFilter) : adapter.and(filters);
-  const or = (filters: TFilter[]) =>
-    filters.length === 1 ? (filters[0] as TFilter) : adapter.or(filters);
+  const and = (filters: TFilter[]) => (filters.length === 1 ? filters[0] : adapter.and(filters));
+  const or = (filters: TFilter[]) => (filters.length === 1 ? filters[0] : adapter.or(filters));
   const bounds: TFilter[] = [];
   const branches: TFilter[] = [];
   let unrestricted = false;

@@ -284,7 +284,7 @@ export function chain(...rules: Rule[]): CheckableRule {
       // one hands the rest of the walk to a promise.
       function from(index: number): RuleResult | Promise<RuleResult> {
         for (let i = index; i < checks.length; i++) {
-          const answer = (checks[i] as Check)(parent, args, context, info);
+          const answer = checks[i](parent, args, context, info);
           if (isThenable(answer)) {
             return Promise.resolve(answer).then((result) => denialFrom(result) ?? from(i + 1));
           }
@@ -330,7 +330,7 @@ export function race(...rules: Rule[]): CheckableRule {
       // As in `chain`: a plain loop until an operand is pending.
       function from(index: number): RuleResult | Promise<RuleResult> {
         for (let i = index; i < checks.length; i++) {
-          const outcome = outcomeOf(checks[i] as Check, parent, args, context, info);
+          const outcome = outcomeOf(checks[i], parent, args, context, info);
           if (isThenable(outcome)) {
             return outcome.then((settled) => {
               if (passed(settled)) {

@@ -138,7 +138,7 @@ export type FilterAdapter<TFilter> = SkeletonAdapter<TFilter> | LeafAdapter<TFil
 export function isLeafAdapter<TFilter>(
   adapter: FilterAdapter<TFilter>,
 ): adapter is LeafAdapter<TFilter> {
-  return typeof (adapter as LeafAdapter<TFilter>).leaf === 'function';
+  return 'leaf' in adapter && typeof adapter.leaf === 'function';
 }
 
 /**
@@ -172,7 +172,7 @@ function combine<TFilter>(parts: TFilter[], adapter: LeafAdapter<TFilter>): TFil
   if (parts.length === 0) {
     return adapter.everything();
   }
-  return parts.length === 1 ? (parts[0] as TFilter) : adapter.and(parts);
+  return parts.length === 1 ? parts[0] : adapter.and(parts);
 }
 
 /**
@@ -223,7 +223,7 @@ function asGroup(key: string, value: unknown): object[] {
   if (Array.isArray(value) === false) {
     throw new Error(`graphql-casl: \`${key}\` in a condition must be an array of conditions.`);
   }
-  return value as object[];
+  return value;
 }
 
 /**

@@ -225,7 +225,7 @@ function isNamesShape(value: unknown): value is string[][] {
  * @returns The single rule, or their `and`.
  */
 function combine(rules: readonly CheckableRule[]): CheckableRule {
-  return rules.length === 1 ? (rules[0] as CheckableRule) : and(...rules);
+  return rules.length === 1 ? rules[0] : and(...rules);
 }
 
 /**
@@ -497,7 +497,7 @@ class Translator {
     // Inner lists are AND groups, the outer list ORs them. A single name at
     // either level is used as-is rather than wrapped in a one-operand combinator.
     const alternatives = groups.map(combine);
-    return alternatives.length === 1 ? (alternatives[0] as CheckableRule) : or(...alternatives);
+    return alternatives.length === 1 ? alternatives[0] : or(...alternatives);
   }
 }
 

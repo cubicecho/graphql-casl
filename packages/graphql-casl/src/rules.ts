@@ -419,7 +419,7 @@ export interface RuleOptions {
  * asks the check directly, which a hand-written {@link CheckableRule} whose
  * middleware does more than that must not be given. Internal.
  */
-export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule') as never;
+export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule');
 
 /**
  * Wraps a {@link Check} into a {@link CheckableRule} — a rule usable directly in

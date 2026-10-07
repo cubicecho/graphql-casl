@@ -201,7 +201,7 @@ function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Super
 function listed(names: readonly string[]): string {
   const quoted = names.map((name) => `\`${name}\``);
   if (quoted.length === 1) {
-    return quoted[0] as string;
+    return quoted[0];
   }
   return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
 }
@@ -424,7 +424,7 @@ function collectProblems(
       const targets =
         fieldName === WILDCARD
           ? guarded.flatMap((object) => Object.values(object.getFields()))
-          : guarded.map((object) => object.getFields()[fieldName] as AnyField);
+          : guarded.map((object) => object.getFields()[fieldName]);
       const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
       if (problem) {
         problems.push(problem);

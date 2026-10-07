@@ -475,7 +475,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     if (context === null || (typeof context !== 'object' && typeof context !== 'function')) {
       return Promise.resolve(getAbility(context));
     }
-    const key = context as unknown as object;
+    const key: object = context;
     const cached = abilityCache.get(key);
     if (cached) {
       return cached;
