@@ -107,7 +107,8 @@ export interface CheckableRule extends Rule {
 const DENIAL: unique symbol = Symbol.for('graphql-casl.denial');
 
 /** How a denial's error was chosen. Internal. */
-export type DenialKind = 'default' | 'explicit';
+export const DenialKind = { Default: 'default', Explicit: 'explicit' } as const;
+export type DenialKind = (typeof DenialKind)[keyof typeof DenialKind];
 
 /**
  * Reads the denial marker off an error. `undefined` means the error is not a
@@ -174,15 +175,15 @@ export function denialFrom(result: RuleResult): Error | undefined {
     return undefined;
   }
   if (typeof result === 'string') {
-    return markDenial(new Error(result), 'explicit');
+    return markDenial(new Error(result), DenialKind.Explicit);
   }
   if (result instanceof Error) {
-    return markDenial(result, 'explicit');
+    return markDenial(result, DenialKind.Explicit);
   }
   // Anything else is off-contract, and `Check`'s `any` context lets it compile.
   // Fall back to truthiness so an off-contract value denies rather than crashing
   // `markDenial` on a non-object — deny being the safe direction here.
-  return result ? undefined : markDenial(new Error('Forbidden'), 'default');
+  return result ? undefined : markDenial(new Error('Forbidden'), DenialKind.Default);
 }
 
 /**
@@ -344,7 +345,7 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
     return isThenable(answer) ? Promise.resolve(answer) : answer;
   }
 
-  if (mode === 'contextual') {
+  if (mode === CacheMode.Contextual) {
     // One slot per request; the parent and args are irrelevant by definition.
     const byContext = new WeakMap<object, Answer>();
     return (parent, args, context, info) => {
@@ -444,10 +445,10 @@ export const PLAIN_RULE: unique symbol = Symbol.for('graphql-casl.plainRule') as
  * ```
  */
 export function rule(check: Check, options?: RuleOptions): CheckableRule {
-  const mode = options?.cache ?? 'no_cache';
+  const mode = options?.cache ?? CacheMode.NoCache;
   // Memoize the *check*, not the middleware: the combinators call `.check`
   // directly, so caching applied any higher up would not reach an operand.
-  const cached = mode === 'no_cache' ? check : memoize(check, mode);
+  const cached = mode === CacheMode.NoCache ? check : memoize(check, mode);
   const middleware: Rule = (resolve, parent, args, context, info) => {
     let answer: RuleResult | Promise<RuleResult>;
     try {

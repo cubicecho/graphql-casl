@@ -44,6 +44,7 @@ import {
   type AnyResolvers,
   type Check,
   type CheckableRule,
+  DenialKind,
   denialFrom,
   denialKindOf,
   isThenable,
@@ -449,6 +450,9 @@ function scopeTargetsOf(rule: unknown): readonly string[] {
   return info?.into ?? [];
 }
 
+/** How many field names a scope problem lists before it says `and N more`. */
+const MAX_LISTED_NAMES = 4;
+
 /**
  * Checks that every field a scoping rule guards actually has the argument the
  * rule injects into.
@@ -475,8 +479,8 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
     // By name, once: an interface field's targets are that field on every implementor.
     const names = [...new Set(missing.map((field) => `\`${field.name}\``))];
     const shown =
-      names.length > 4
-        ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`
+      names.length > MAX_LISTED_NAMES
+        ? `${names.slice(0, MAX_LISTED_NAMES).join(', ')} and ${names.length - MAX_LISTED_NAMES} more`
         : names.join(', ');
     return (
       `Rule for \`${label}\` injects a filter into an argument named \`${into}\`, but ` +
@@ -735,7 +739,11 @@ function deliver(
   info: GraphQLResolveInfo,
 ): unknown {
   const error = standardized(denial);
-  if (!mask || (mask === MASK_NULL && report === 'errors') || isRecordable(context) === false) {
+  if (
+    !mask ||
+    (mask === MASK_NULL && report === DenialReport.Errors) ||
+    isRecordable(context) === false
+  ) {
     return Promise.reject(error);
   }
   let record = recorded.get(context);
@@ -783,7 +791,7 @@ export function reportDenials<TResult extends ExecutionResult>(
     return result;
   }
   recorded.delete(context);
-  if (record.report === 'errors') {
+  if (record.report === DenialReport.Errors) {
     return { ...result, errors: [...(result.errors ?? []), ...record.errors] };
   }
   const existing = result.extensions?.[AUTHORIZATION_ERRORS_EXTENSION];
@@ -837,7 +845,13 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  */
 function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
   const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
-  if (!fallbackError && allowExternalErrors && debug === false && !mask && onDeny !== 'filter') {
+  if (
+    !fallbackError &&
+    allowExternalErrors &&
+    debug === false &&
+    !mask &&
+    onDeny !== DenialMode.Filter
+  ) {
     return rule;
   }
 
@@ -881,9 +895,9 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
       // Filtering changes how a decision is delivered, not what it says: the
       // denial keeps its words, `fallbackError` still rewords a generic one,
       // and only then is it masked and reported.
-      if (denialKind !== undefined && onDeny === 'filter') {
+      if (denialKind !== undefined && onDeny === DenialMode.Filter) {
         const denial =
-          fallbackError && denialKind === 'default'
+          fallbackError && denialKind === DenialKind.Default
             ? await resolveFallbackError(fallbackError, error, parent, args, context, info)
             : (error as Error);
         return deliver(denial, mask, report, context, info);
@@ -897,7 +911,7 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
 
       // An explicit denial is the rule author's own words; only the generic
       // default is replaced.
-      if (denialKind === 'explicit') {
+      if (denialKind === DenialKind.Explicit) {
         throw error;
       }
       if (isResolverError && allowExternalErrors) {
@@ -993,14 +1007,14 @@ function withCheckedErrorControl(
       return allowed(resolve, parent, args, context, info);
     }
     // Masking replaces a decision the rule made, whatever words it chose.
-    if (mask && onDeny === 'mask') {
+    if (mask && onDeny === DenialMode.Mask) {
       return mask();
     }
     const denial = denialFrom(result) as Error;
     // An explicit denial is the rule author's own words; only the generic
     // default is replaced.
-    const explicit = denialKindOf(denial) === 'explicit';
-    if (onDeny === 'filter') {
+    const explicit = denialKindOf(denial) === DenialKind.Explicit;
+    if (onDeny === DenialMode.Filter) {
       if (fallbackError && explicit === false) {
         return resolveFallbackError(fallbackError, denial, parent, args, context, info).then(
           (error) => deliver(error, mask, report, context, info),
@@ -1143,7 +1157,7 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     allowExternalErrors: options?.allowExternalErrors ?? strict === false,
     debug: options?.debug ?? false,
     onDeny: denialModeOf(options),
-    report: options?.report ?? 'errors',
+    report: options?.report ?? DenialReport.Errors,
   };
 
   // Validated and resolved exactly as usual, so a stale map or a contradictory
@@ -1193,7 +1207,7 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
       : undefined;
     const guard =
       rule && field
-        ? wrapped(rule, errorControl.onDeny === 'reject' ? undefined : maskFor(field.type))
+        ? wrapped(rule, errorControl.onDeny === DenialMode.Reject ? undefined : maskFor(field.type))
         : undefined;
 
     resolved.set(key, guard);
@@ -1352,14 +1366,19 @@ interface ErrorControl {
  */
 export function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {
   const onDeny =
-    options?.onDeny ?? (options?.maskDenials ? 'mask' : options?.strict ? 'filter' : 'reject');
+    options?.onDeny ??
+    (options?.maskDenials
+      ? DenialMode.Mask
+      : options?.strict
+        ? DenialMode.Filter
+        : DenialMode.Reject);
   const problems: string[] = [];
-  if (options?.maskDenials && onDeny !== 'mask') {
+  if (options?.maskDenials && onDeny !== DenialMode.Mask) {
     problems.push(
       `\`maskDenials: true\` is \`onDeny: 'mask'\`, which contradicts \`onDeny: '${onDeny}'\``,
     );
   }
-  if (options?.report !== undefined && onDeny !== 'filter') {
+  if (options?.report !== undefined && onDeny !== DenialMode.Filter) {
     problems.push(`\`report\` only applies under \`onDeny: 'filter'\`, not \`'${onDeny}'\``);
   }
   if (problems.length > 0) {

@@ -455,7 +455,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   const hasTagger = typeof buildSubjectOrOptions === 'function';
   const buildSubject = hasTagger ? buildSubjectOrOptions : undefined;
   const options = (hasTagger ? maybeOptions : buildSubjectOrOptions) ?? {};
-  const onUnconditionedSubject = options.onUnconditionedSubject ?? 'warn';
+  const onUnconditionedSubject = options.onUnconditionedSubject ?? UnconditionedSubjectMode.Warn;
 
   // One ability per context object, shared by every rule this factory produces.
   // A query touching 50 guarded fields otherwise rebuilds it 50 times. Keyed on
@@ -567,11 +567,11 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
 
       let result: RuleResult | undefined;
       if (
-        onUnconditionedSubject !== 'allow' &&
-        (onUnconditionedSubject === 'throw' || warned === false) &&
+        onUnconditionedSubject !== UnconditionedSubjectMode.Allow &&
+        (onUnconditionedSubject === UnconditionedSubjectMode.Throw || warned === false) &&
         isUnconditionedCheck(ability, action, subject)
       ) {
-        if (onUnconditionedSubject === 'throw') {
+        if (onUnconditionedSubject === UnconditionedSubjectMode.Throw) {
           result = new Error(unconditionedMessage(action, subject));
         } else {
           warned = true;

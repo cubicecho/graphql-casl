@@ -142,9 +142,9 @@ export function scopeArgs<
 ): Rule {
   const { adapter, merge } = options;
   const into = options.into ?? 'where';
-  const onDenyAll = options.onDenyAll ?? 'deny';
+  const onDenyAll = options.onDenyAll ?? OnDenyAll.Deny;
 
-  if (onDenyAll === 'nothing' && typeof adapter.nothing !== 'function') {
+  if (onDenyAll === OnDenyAll.Nothing && typeof adapter.nothing !== 'function') {
     throw new Error(
       "graphql-casl: `scopeArgs` with `onDenyAll: 'nothing'` needs an adapter that supplies " +
         '`nothing()` — the filter matching no row. Add it, or use the default `deny`.',
@@ -179,7 +179,7 @@ export function scopeArgs<
     );
 
     if (filter === null) {
-      if (onDenyAll === 'deny') {
+      if (onDenyAll === OnDenyAll.Deny) {
         // Marked as a denial so `applyPermissions`' masking and error control
         // treat it like any other refusal.
         throw denialFrom(false) ?? new Error('Forbidden');

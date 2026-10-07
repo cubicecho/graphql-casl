@@ -14,9 +14,15 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "style": { "useBlockStatements": "error" }
+      "style": { "useBlockStatements": "error", "noMagicNumbers": "warn" }
     }
   },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/test/**", "**/bench/**"],
+      "linter": { "rules": { "style": { "noMagicNumbers": "off" } } }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

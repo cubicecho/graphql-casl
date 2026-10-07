@@ -40,6 +40,7 @@ import { useOnResolve } from '@envelop/on-resolve';
 import type { GraphQLField, GraphQLSchema } from 'graphql';
 import {
   type ApplyPermissionsOptions,
+  DenialMode,
   denialModeOf,
   type PermissionResolver,
   reportDenials,
@@ -96,7 +97,7 @@ export function useGraphQLCasl<
   // Resolved here rather than read off the key, so `strict` alone (which
   // defaults the mode to `'filter'`) still gets its report hook. Resolving also
   // rejects a contradictory pair at wiring time, before any schema arrives.
-  const filtering = denialModeOf(permissionOptions) === 'filter';
+  const filtering = denialModeOf(permissionOptions) === DenialMode.Filter;
   // `disabled` still validates — `permissionsFor` runs on every schema — but
   // installs no resolver hook, so nothing is wrapped.
   const enforcing = permissionOptions.disabled !== true;

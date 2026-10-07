@@ -84,6 +84,9 @@ const GROUP_OPERATORS: ReadonlySet<string> = new Set(['$and', '$or', '$nor']);
 
 const ACTION_NAMES = Object.values(Actions);
 
+/** The values of {@link ValidateGraphQLRulesOptions.conditionFields}. */
+const ConditionFields = { Schema: 'schema', None: 'none' } as const;
+
 /**
  * Checks stored {@link GraphQLRule}s against a schema and throws
  * {@link PermissionsError} if any of them could not do what it says.
@@ -130,7 +133,8 @@ export function validateGraphQLRules(
   rules: readonly unknown[],
   options?: ValidateGraphQLRulesOptions,
 ): void {
-  const checkPaths = (options?.conditionFields ?? 'schema') === 'schema';
+  const checkPaths =
+    (options?.conditionFields ?? ConditionFields.Schema) === ConditionFields.Schema;
   const problems: string[] = [];
   for (const [index, rule] of rules.entries()) {
     collectRuleProblems(schema, rule, index, checkPaths, problems);
