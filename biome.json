@@ -7,6 +7,7 @@
   },
   "plugins": ["./no-negation.grit"],
   "files": {
+    "ignoreUnknown": true,
     "includes": ["**", "!**/dist", "!**/node_modules"]
   },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
@@ -14,7 +15,25 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "style": { "useBlockStatements": "error", "noMagicNumbers": "warn" }
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error"
+      },
+      "style": {
+        "useImportType": "error",
+        "useConst": "error",
+        "useBlockStatements": "error",
+        "noMagicNumbers": "warn",
+        "noCommonJs": "error",
+        "noEnum": "error",
+        "noNamespace": "error",
+        "noParameterProperties": "error",
+        "noNonNullAssertion": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error"
+      }
     }
   },
   "overrides": [

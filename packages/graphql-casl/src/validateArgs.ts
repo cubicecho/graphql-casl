@@ -28,6 +28,7 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly '~standard': StandardSchemaV1.Props<Input, Output>;
 }
 
+// biome-ignore lint/style/noNamespace: vendored verbatim; an ambient namespace holds only types and is erased.
 export declare namespace StandardSchemaV1 {
   /** The Standard Schema properties interface. */
   export interface Props<Input = unknown, Output = Input> {
