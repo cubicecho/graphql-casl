@@ -10,7 +10,7 @@
  */
 
 import type { GraphQLResolveInfo } from 'graphql';
-import { SCOPE_INFO, type ScopeInfo } from './internal.js';
+import { markScope, scopeInfoOf } from './internal.js';
 import {
   type Check,
   type CheckableRule,
@@ -459,14 +459,9 @@ export function wrap(...rules: Rule[]): Rule {
   // Argument-scoping rules advertise the argument they inject into so
   // `applyPermissions` can check the field declares it. Nesting one must not
   // hide it, so the composed rule re-advertises every target beneath it.
-  const targets = [
-    ...new Set(
-      rules.flatMap((operand) => (operand as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO]?.into ?? []),
-    ),
-  ];
+  const targets = [...new Set(rules.flatMap((operand) => scopeInfoOf(operand)?.into ?? []))];
   if (targets.length > 0) {
-    const info: ScopeInfo = { into: targets };
-    Object.defineProperty(composed, SCOPE_INFO, { value: info });
+    markScope(composed, { into: targets });
   }
   return composed;
 }

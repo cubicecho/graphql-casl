@@ -5,7 +5,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
-import { CAN_INTERNALS, type CanInternals } from './internal.js';
+import { markCanInternals } from './internal.js';
 import {
   type CacheKey,
   type CacheMode,
@@ -687,8 +687,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   // same authentication check and the same per-request ability memo but is not
   // a `requireCan` method — it lives behind a subpath export so the core
   // surface stays unchanged for anyone not using it.
-  const internals: CanInternals<TContext> = { authorize };
-  Object.defineProperty(requireCan, CAN_INTERNALS, { value: internals });
+  markCanInternals<TContext>(requireCan, { authorize });
 
   return requireCan as RequireCan<TSubjectMap>;
 }

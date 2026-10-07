@@ -17,7 +17,7 @@
  * unless that field grants too.
  */
 
-import { SCOPE_INFO, type ScopeInfo } from './internal.js';
+import { markScope, scopeInfoOf } from './internal.js';
 import { type CheckableRule, isThenable, type Rule, rule } from './rules.js';
 
 /**
@@ -173,9 +173,9 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   // An argument-scoping rule advertises the argument it injects into so
   // `applyPermissions` can check the field declares it. Wrapping one must not
   // hide that — the same care `wrap()` takes.
-  const scopeInfo = (inner as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
+  const scopeInfo = scopeInfoOf(inner);
   if (scopeInfo) {
-    Object.defineProperty(granting, SCOPE_INFO, { value: scopeInfo });
+    markScope(granting, scopeInfo);
   }
   return granting;
 }

@@ -40,7 +40,7 @@ import { accessibleBy } from './accessibleBy.js';
 import type { FilterAdapter } from './conditions.js';
 import type { RequireCan, RequireCanBare } from './createCan.js';
 import type { GraphQLAbility } from './graphqlAbility.js';
-import { CAN_INTERNALS, type CanInternals, SCOPE_INFO, type ScopeInfo } from './internal.js';
+import { canInternalsOf, markScope } from './internal.js';
 import { denialFrom, type Rule } from './rules.js';
 
 /**
@@ -147,7 +147,7 @@ export function scopeArgs<TSubjectMap extends Record<string, object>, K extends 
     );
   }
 
-  const internals = (requireCan as Partial<Record<typeof CAN_INTERNALS, CanInternals<unknown>>>)[CAN_INTERNALS];
+  const internals = canInternalsOf(requireCan);
   if (!internals) {
     throw new Error(
       'graphql-casl: `scopeArgs` expects the `requireCan` returned by `createCan`, so it can ' +
@@ -190,8 +190,7 @@ export function scopeArgs<TSubjectMap extends Record<string, object>, K extends 
     return resolve(parent, withArg(args, into, combined), context, info);
   };
 
-  const info: ScopeInfo = { into: [into] };
-  Object.defineProperty(scoped, SCOPE_INFO, { value: info });
+  markScope(scoped, { into: [into] });
   return scoped;
 }
 

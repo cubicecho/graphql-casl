@@ -35,7 +35,7 @@ import {
   responsePathAsArray,
 } from 'graphql';
 import { applyMiddleware, type IMiddlewareFieldMap, type IMiddlewareTypeMap } from 'graphql-middleware';
-import { SCOPE_INFO, type ScopeInfo } from './internal.js';
+import { scopeInfoOf } from './internal.js';
 import {
   type AnyResolvers,
   type Check,
@@ -422,9 +422,8 @@ type AnyField = GraphQLField<any, any>;
  * @param rule - The map value to inspect.
  * @returns The argument names.
  */
-function scopeTargetsOf(rule: unknown): readonly string[] {
-  const info = (rule as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
-  return info?.into ?? [];
+function scopeTargetsOf(rule: object): readonly string[] {
+  return scopeInfoOf(rule)?.into ?? [];
 }
 
 /** How many field names a scope problem lists before it says `and N more`. */
