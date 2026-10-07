@@ -106,6 +106,12 @@ export interface CheckableRule extends Rule {
  */
 const DENIAL: unique symbol = Symbol.for('graphql-casl.denial');
 
+/** The message of a denial whose rule gave no reason. Internal. */
+export const FORBIDDEN = 'Forbidden';
+
+/** The message of a denial for a caller who is not signed in. Internal. */
+export const NOT_AUTHENTICATED = 'Not authenticated';
+
 /** How a denial's error was chosen. Internal. */
 export const DenialKind = { Default: 'default', Explicit: 'explicit' } as const;
 export type DenialKind = (typeof DenialKind)[keyof typeof DenialKind];
@@ -171,19 +177,23 @@ export function passes(result: RuleResult): boolean {
  * @returns The denial, or `undefined` for a pass.
  */
 export function denialFrom(result: RuleResult): Error | undefined {
-  if (result === true) {
-    return undefined;
-  }
+  return passes(result) ? undefined : denialOf(result);
+}
+
+/**
+ * Builds the error for a result that did not pass. Internal.
+ *
+ * @param result - A result {@link passes} rejects.
+ * @returns The rule's own error or message, marked explicit; otherwise a marked `Forbidden`.
+ */
+export function denialOf(result: RuleResult): Error {
   if (typeof result === 'string') {
     return markDenial(new Error(result), DenialKind.Explicit);
   }
   if (result instanceof Error) {
     return markDenial(result, DenialKind.Explicit);
   }
-  // Anything else is off-contract, and `Check`'s `any` context lets it compile.
-  // Fall back to truthiness so an off-contract value denies rather than crashing
-  // `markDenial` on a non-object — deny being the safe direction here.
-  return result ? undefined : markDenial(new Error('Forbidden'), DenialKind.Default);
+  return markDenial(new Error(FORBIDDEN), DenialKind.Default);
 }
 
 /**

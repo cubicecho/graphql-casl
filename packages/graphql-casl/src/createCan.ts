@@ -10,8 +10,9 @@ import {
   type CacheKey,
   type CacheMode,
   type CheckableRule,
-  denialFrom,
+  denialOf,
   isThenable,
+  NOT_AUTHENTICATED,
   type Rule,
   type RuleResult,
   rule,
@@ -485,7 +486,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   /** Shared prologue: authenticate, then get the request's ability. */
   async function authorize(context: TContext): Promise<AbilityLike> {
     if (isAuthenticated(context) === false) {
-      throw denialFrom('Not authenticated') ?? new Error('Not authenticated');
+      throw denialOf(NOT_AUTHENTICATED);
     }
     return resolveAbility(context);
   }
@@ -500,7 +501,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     decide: (ability: AbilityLike) => RuleResult,
   ): RuleResult | Promise<RuleResult> {
     if (isAuthenticated(context) === false) {
-      return new Error('Not authenticated');
+      return new Error(NOT_AUTHENTICATED);
     }
     const ability = resolveAbility(context);
     return isThenable(ability) ? ability.then(decide) : decide(ability);
@@ -673,10 +674,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
         if (ability.can(action, instance) === false) {
           // Marked as a denial so the error-control and masking options in
           // `applyPermissions` can tell it apart from a rule that broke.
-          const denial = denialFrom(reasonFor(ability, action, instance) ?? false);
-          if (denial) {
-            throw denial;
-          }
+          throw denialOf(reasonFor(ability, action, instance) ?? false);
         }
       }
       return result;

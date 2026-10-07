@@ -13,7 +13,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import { GraphQLError } from 'graphql';
-import { denialFrom, isThenable, type Rule } from './rules.js';
+import { denialOf, isThenable, type Rule } from './rules.js';
 
 // ---------------------------------------------------------------------------
 // The Standard Schema interface, copied verbatim from
@@ -277,7 +277,7 @@ function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error 
   const error = new GraphQLError(message, {
     extensions: { code: BAD_USER_INPUT, issues: flattened },
   });
-  return denialFrom(error) as Error;
+  return denialOf(error);
 }
 
 /**

@@ -41,7 +41,7 @@ import type { FilterAdapter } from './conditions.js';
 import type { RequireCan, RequireCanBare } from './createCan.js';
 import type { GraphQLAbility } from './graphqlAbility.js';
 import { canInternalsOf, markScope } from './internal.js';
-import { denialFrom, type Rule } from './rules.js';
+import { denialOf, type Rule } from './rules.js';
 
 /**
  * What {@link scopeArgs} does when the ability permits no row at all. The
@@ -171,7 +171,7 @@ export function scopeArgs<TSubjectMap extends Record<string, object>, K extends 
       if (onDenyAll === OnDenyAll.Deny) {
         // Marked as a denial so `applyPermissions`' masking and error control
         // treat it like any other refusal.
-        throw denialFrom(false) ?? new Error('Forbidden');
+        throw denialOf(false);
       }
       return resolve(parent, withArg(args, into, adapter.nothing?.()), context, info);
     }

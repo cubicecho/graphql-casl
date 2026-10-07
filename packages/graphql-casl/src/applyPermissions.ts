@@ -41,8 +41,8 @@ import {
   type Check,
   type CheckableRule,
   DenialKind,
-  denialFrom,
   denialKindOf,
+  denialOf,
   isThenable,
   type PermissionsMap,
   PLAIN_RULE,
@@ -957,7 +957,7 @@ function withCheckedErrorControl(check: Check, options: ErrorControl, mask: Mask
     if (mask && onDeny === DenialMode.Mask) {
       return mask();
     }
-    const denial = denialFrom(result) as Error;
+    const denial = denialOf(result);
     // An explicit denial is the rule author's own words; only the generic
     // default is replaced.
     const explicit = denialKindOf(denial) === DenialKind.Explicit;
