@@ -812,34 +812,6 @@ function withCheckedErrorControl(
 export type PermissionResolver = (typeName: string, fieldName: string) => Rule | undefined;
 
 /**
- * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
- * without applying it to anything.
- *
- * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
- * enforce the same map through another integration — an Apollo plugin,
- * hand-wrapped resolvers — and get identical wildcard precedence,
- * `fallbackRule` coverage, error control and masking, rather than a second
- * implementation that drifts. The `@vantreeseba/graphql-casl/envelop` entry
- * point is exactly that, already written.
- *
- * The map is validated up front, exactly as `applyPermissions` validates it, so
- * a mismatched map fails at wiring time rather than mid-query. Lookups are
- * memoized, so calling this per resolver call is cheap.
- *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @param schema - The schema the map is checked against.
- * @param permissions - The permissions map to resolve.
- * @param options - Optional {@link ApplyPermissionsOptions}.
- * @returns A lookup from type and field name to the rule guarding that field.
- * @throws {@link PermissionsError} if the map does not line up with the schema.
- * @example
- * ```ts
- * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
- * const rule = permissionFor(info.parentType.name, info.fieldName);
- * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
- * ```
- */
-/**
  * Checks a {@link PermissionsMap} against a schema and throws
  * {@link PermissionsError} if anything in it is stale — without building any
  * middleware.
@@ -879,6 +851,34 @@ function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertyp
   return supertypes;
 }
 
+/**
+ * Resolves a {@link PermissionsMap} against a schema into a per-field lookup,
+ * without applying it to anything.
+ *
+ * {@link applyPermissions} is this plus `graphql-middleware`. Use this directly to
+ * enforce the same map through another integration — an Apollo plugin,
+ * hand-wrapped resolvers — and get identical wildcard precedence,
+ * `fallbackRule` coverage, error control and masking, rather than a second
+ * implementation that drifts. The `@vantreeseba/graphql-casl/envelop` entry
+ * point is exactly that, already written.
+ *
+ * The map is validated up front, exactly as `applyPermissions` validates it, so
+ * a mismatched map fails at wiring time rather than mid-query. Lookups are
+ * memoized, so calling this per resolver call is cheap.
+ *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @param schema - The schema the map is checked against.
+ * @param permissions - The permissions map to resolve.
+ * @param options - Optional {@link ApplyPermissionsOptions}.
+ * @returns A lookup from type and field name to the rule guarding that field.
+ * @throws {@link PermissionsError} if the map does not line up with the schema.
+ * @example
+ * ```ts
+ * const permissionFor = resolvePermissions<Resolvers>(schema, permissions);
+ * const rule = permissionFor(info.parentType.name, info.fieldName);
+ * return rule ? rule(resolver, root, args, context, info) : resolver(root, args, context, info);
+ * ```
+ */
 export function resolvePermissions<TResolvers = AnyResolvers>(
   schema: GraphQLSchema,
   // `NoInfer` keeps TS from inferring TResolvers *from the map being checked* —

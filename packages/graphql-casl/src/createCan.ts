@@ -50,12 +50,6 @@ export interface CreateCanOptions {
 }
 
 /**
- * The subset of CASL's `PureAbility` used to detect the conditioned-subject
- * footgun. Optional because {@link AbilityLike} only promises `can`, and a
- * hand-rolled ability may not implement it — in which case the check is skipped
- * rather than guessed at.
- */
-/**
  * Reads the `reason` CASL attached to the rule that decided a check, so a
  * `cannot(...).because('...')` explanation reaches the caller instead of being
  * replaced by a generic `Forbidden`.
@@ -73,10 +67,17 @@ function reasonFor(ability: AbilityLike, action: Action, subject: unknown): stri
   return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
 }
 
+/** The subset of CASL's `PureAbility` that {@link reasonFor} reads. Optional for the same reason. */
 type ReasonIntrospection = {
   relevantRuleFor?: (action: Action, subject: unknown) => { reason?: unknown } | undefined;
 };
 
+/**
+ * The subset of CASL's `PureAbility` used to detect the conditioned-subject
+ * footgun. Optional because {@link AbilityLike} only promises `can`, and a
+ * hand-rolled ability may not implement it — in which case the check is skipped
+ * rather than guessed at.
+ */
 type RuleIntrospection = {
   rulesFor?: (
     action: Action,
