@@ -7,10 +7,12 @@
 import { buildSchema } from 'graphql';
 import { describe, expect, it } from 'vitest';
 import {
+  accessibleBy,
   buildGraphQLAbility,
   createGraphQLAbility,
   createTyped,
   type GraphQLRule,
+  type LeafAdapter,
   PermissionsError,
   type ValidateGraphQLRulesOptions,
   validateGraphQLRules,
@@ -327,6 +329,60 @@ describe('validateGraphQLRules — conditions', () => {
     expect(problemsOf([read({ conditions: { ownr: { $foo: 1 } } })], { conditionFields: 'none' })).toEqual([
       'Rule 0 (`read` on `Note`): `$foo` on `ownr` is not a condition operator CASL supports.',
     ]);
+  });
+
+  /** A leaf adapter that translates nothing in particular; only whether the walk throws matters. */
+  const leafAdapter: LeafAdapter<string> = {
+    leaf: ({ operator }) => operator,
+    and: (filters) => filters.join('&'),
+    or: (filters) => filters.join('|'),
+    not: (filter) => `!${filter}`,
+    everything: () => 'ALL',
+  };
+  const fold = (rules: object[]) =>
+    accessibleBy(
+      buildGraphQLAbility<AppSubjectMap>(rules as GraphQLRule<AppSubjectMap>[]),
+      'read',
+      'Note',
+      leafAdapter,
+    );
+
+  it("operators: 'leaf' also rejects what a leaf adapter cannot translate", () => {
+    const rules = [
+      read({ conditions: { title: { $regex: 'x', $options: 'i' } } }),
+      read({ conditions: { ownerId: { $not: { $eq: 'u1' } } } }),
+      read({ conditions: { $or: [{ title: { $mod: [2, 0] } }] } }),
+    ];
+    expect(() => validateGraphQLRules(schema, rules)).not.toThrow();
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'matcher' })).not.toThrow();
+    expect(problemsOf(rules, { operators: 'leaf' })).toEqual([
+      'Rule 0 (`read` on `Note`): `$options` on `title` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+      'Rule 1 (`read` on `Note`): `$not` on `ownerId` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+      'Rule 2 (`read` on `Note`): `$mod` on `title` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+    ]);
+    // What the option guards against: each of these throws when folded.
+    for (const rule of rules) {
+      expect(() => fold([rule])).toThrow(/unsupported condition operator/);
+    }
+  });
+
+  it("operators: 'leaf' accepts exactly what the leaf walker translates", () => {
+    const translated = {
+      $and: [{ ownerId: { $eq: 'u1', $ne: 'u2', $in: ['u1'], $nin: ['u2'], $exists: true } }],
+      $nor: [{ title: { $gt: 'a', $gte: 'a', $lt: 'z', $lte: 'z', $regex: 'x' } }],
+      tags: { $all: [], $size: 2, $elemMatch: { name: 'z' } },
+    };
+    const rules = [read({ conditions: translated })];
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'leaf' })).not.toThrow();
+    // The claim the option makes: a rule that passes it folds without throwing.
+    expect(() => fold(rules)).not.toThrow();
+  });
+
+  it("operators: 'leaf' leaves the conditions under $elemMatch to the adapter", () => {
+    // The walker hands an `$elemMatch` operand to `leaf` as written.
+    const rules = [read({ conditions: { tags: { $elemMatch: { name: { $not: { $eq: 'z' } } } } } })];
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'leaf' })).not.toThrow();
+    expect(() => fold(rules)).not.toThrow();
   });
 });
 

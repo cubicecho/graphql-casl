@@ -38,7 +38,8 @@ export type LeafOperator =
   | '$size'
   | '$elemMatch';
 
-const LEAF_OPERATORS: ReadonlySet<string> = new Set<LeafOperator>([
+/** Every {@link LeafOperator}, for the walker and for `validateGraphQLRules`. */
+export const LEAF_OPERATORS: ReadonlySet<string> = new Set<LeafOperator>([
   '$eq',
   '$ne',
   '$in',

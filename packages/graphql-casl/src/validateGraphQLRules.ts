@@ -25,6 +25,7 @@ import {
   isUnionType,
 } from 'graphql';
 import { Actions, isAction } from './ability.js';
+import { LEAF_OPERATORS } from './conditions.js';
 import { describeKind, PermissionsError } from './permissionsError.js';
 
 /** Options for {@link validateGraphQLRules}. */
@@ -44,6 +45,26 @@ export interface ValidateGraphQLRulesOptions {
    * those *are* schema names.
    */
   readonly conditionFields?: 'schema' | 'none';
+
+  /**
+   * Which condition operators a rule may use.
+   *
+   * @remarks
+   * `'matcher'` (the default) accepts every operator CASL's matcher knows,
+   * which is all a rule needs to be *checked* — `can()`, `createCan`.
+   *
+   * `'leaf'` accepts only the operators a leaf filter adapter is handed, so it
+   * also reports `$not`, `$mod` and `$options`. Use it when the rules are
+   * folded into a query filter by `accessibleBy` or `scopeArgs` with a leaf
+   * adapter: the walker throws on those three, per request, rather than drop a
+   * condition and widen access. A skeleton adapter passes conditions through
+   * untranslated and needs no more than `'matcher'`.
+   *
+   * The conditions under an `$elemMatch` are not held to the shorter list: the
+   * walker hands them to the adapter's `leaf` as written, so whether they
+   * translate is up to the adapter.
+   */
+  readonly operators?: 'matcher' | 'leaf';
 }
 
 /** The parts of a raw CASL rule this walk looks at, typing erased. */
@@ -87,6 +108,17 @@ const ACTION_NAMES = Object.values(Actions);
 /** The values of {@link ValidateGraphQLRulesOptions.conditionFields}. */
 const ConditionFields = { Schema: 'schema', None: 'none' } as const;
 
+/** The values of {@link ValidateGraphQLRulesOptions.operators}. */
+const ConditionOperators = { Matcher: 'matcher', Leaf: 'leaf' } as const;
+
+/** The condition checks the options ask for, resolved to their defaults. */
+interface ConditionChecks {
+  /** Whether condition paths are checked against the schema. */
+  readonly paths: boolean;
+  /** Whether only the operators a leaf adapter translates are accepted. */
+  readonly leafOnly: boolean;
+}
+
 /**
  * Checks stored {@link GraphQLRule}s against a schema and throws
  * {@link PermissionsError} if any of them could not do what it says.
@@ -115,7 +147,9 @@ const ConditionFields = { Schema: 'schema', None: 'none' } as const;
  *   operators with plain keys, and — by default — names only fields of the
  *   subject, following dotted paths through object-typed fields. See
  *   {@link ValidateGraphQLRulesOptions.conditionFields} to relax that last check
- *   when subjects are database models rather than GraphQL types.
+ *   when subjects are database models rather than GraphQL types, and
+ *   {@link ValidateGraphQLRulesOptions.operators} to tighten the first when a
+ *   leaf adapter folds the rules into a query filter.
  *
  * Every problem is reported at once, labelled by the rule's index in the array.
  * Condition *values* are not checked against field types; CASL compares them
@@ -133,10 +167,13 @@ export function validateGraphQLRules(
   rules: readonly unknown[],
   options?: ValidateGraphQLRulesOptions,
 ): void {
-  const checkPaths = (options?.conditionFields ?? ConditionFields.Schema) === ConditionFields.Schema;
+  const checks: ConditionChecks = {
+    paths: (options?.conditionFields ?? ConditionFields.Schema) === ConditionFields.Schema,
+    leafOnly: (options?.operators ?? ConditionOperators.Matcher) === ConditionOperators.Leaf,
+  };
   const problems: string[] = [];
   for (const [index, rule] of rules.entries()) {
-    collectRuleProblems(schema, rule, index, checkPaths, problems);
+    collectRuleProblems(schema, rule, index, checks, problems);
   }
   if (problems.length > 0) {
     throw new PermissionsError(problems, 'the ability rules do not match the schema');
@@ -149,14 +186,14 @@ export function validateGraphQLRules(
  * @param schema - The schema.
  * @param raw - The rule as stored.
  * @param index - Its position, for the label.
- * @param checkPaths - Whether condition paths are checked against the schema.
+ * @param checks - Which condition checks to run.
  * @param problems - Appended to.
  */
 function collectRuleProblems(
   schema: GraphQLSchema,
   raw: unknown,
   index: number,
-  checkPaths: boolean,
+  checks: ConditionChecks,
   problems: string[],
 ): void {
   if (isPlainObject(raw) === false) {
@@ -207,7 +244,7 @@ function collectRuleProblems(
     if (isPlainObject(rule.conditions) === false) {
       problems.push(`${label}: \`conditions\` is ${describeValue(rule.conditions)}, not an object.`);
     } else {
-      walkConditions(rule.conditions, checkPaths ? subjects : undefined, label, problems);
+      walkConditions(rule.conditions, checks.paths ? subjects : undefined, checks.leafOnly, label, problems);
     }
   }
 
@@ -263,12 +300,14 @@ function subjectType(schema: GraphQLSchema, name: string, label: string, problem
  *
  * @param conditions - The condition object.
  * @param types - The subject types, or `undefined` to skip path checks.
+ * @param leafOnly - Whether only a leaf adapter's operators are accepted.
  * @param label - The rule's label.
  * @param problems - Appended to.
  */
 function walkConditions(
   conditions: object,
   types: readonly Composite[] | undefined,
+  leafOnly: boolean,
   label: string,
   problems: string[],
 ): void {
@@ -280,7 +319,7 @@ function walkConditions(
       }
       value.forEach((member, i) => {
         if (isPlainObject(member)) {
-          walkConditions(member, types, label, problems);
+          walkConditions(member, types, leafOnly, label, problems);
         } else {
           problems.push(`${label}: \`${key}[${i}]\` is ${describeValue(member)}, not a condition object.`);
         }
@@ -294,7 +333,7 @@ function walkConditions(
       continue;
     }
     const leaves = types ? resolvePath(key, types, label, problems) : undefined;
-    checkOperators(key, value, leaves, label, problems);
+    checkOperators(key, value, leaves, leafOnly, label, problems);
   }
 }
 
@@ -360,6 +399,7 @@ function resolvePath(
  * @param path - The field path, for the message.
  * @param value - The right-hand side.
  * @param leaves - The types at the end of the path.
+ * @param leafOnly - Whether only a leaf adapter's operators are accepted.
  * @param label - The rule's label.
  * @param problems - Appended to.
  */
@@ -367,6 +407,7 @@ function checkOperators(
   path: string,
   value: unknown,
   leaves: readonly Composite[] | undefined,
+  leafOnly: boolean,
   label: string,
   problems: string[],
 ): void {
@@ -388,11 +429,17 @@ function checkOperators(
   for (const [operator, operand] of entries) {
     if (FIELD_OPERATORS.has(operator) === false) {
       problems.push(`${label}: \`${operator}\` on \`${path}\` is not a condition operator CASL supports.`);
+    } else if (leafOnly && LEAF_OPERATORS.has(operator) === false) {
+      problems.push(
+        `${label}: \`${operator}\` on \`${path}\` is an operator CASL supports, but a leaf filter adapter cannot translate it.`,
+      );
     } else if (operator === '$not') {
-      checkOperators(path, operand, leaves, label, problems);
+      checkOperators(path, operand, leaves, leafOnly, label, problems);
     } else if (operator === '$elemMatch') {
       if (isPlainObject(operand)) {
-        walkConditions(operand, leaves, label, problems);
+        // The leaf walker hands this operand to the adapter as written, so what
+        // it may hold is the adapter's business, not the walker's operator list.
+        walkConditions(operand, leaves, false, label, problems);
       } else {
         problems.push(
           `${label}: \`$elemMatch\` on \`${path}\` must be a condition object, not ${describeValue(operand)}.`,
