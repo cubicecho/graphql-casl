@@ -28,7 +28,7 @@
  */
 
 export type { AbilityLike, Action } from './ability.js';
-export { Actions } from './ability.js';
+export { Actions, isAction } from './ability.js';
 export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
 export type {
@@ -87,7 +87,7 @@ export type {
   RuleResult,
   Wildcard,
 } from './rules.js';
-export { accept, deny, isCheckableRule, rule } from './rules.js';
+export { accept, deny, isCheckableRule, rule, WILDCARD } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';
 export type {

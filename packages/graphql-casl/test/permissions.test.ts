@@ -11,12 +11,14 @@ import {
   createTyped,
   deny,
   type GraphQLAbility,
+  isAction,
   isCheckableRule,
   or,
   type PermissionsMap,
   type RequireCan,
   type Rule,
   subjectsOf,
+  WILDCARD,
 } from '../src/index.js';
 
 // An example subject map — in a real app this comes from SubjectMap<Resolvers, ResolversTypes>.
@@ -54,6 +56,26 @@ const resultInfo = {
   parentType: queryOnlySchema.getQueryType(),
   fieldName: 'note',
 } as unknown as GraphQLResolveInfo;
+
+describe('isAction', () => {
+  it('accepts every member of Actions', () => {
+    for (const action of Object.values(Actions)) {
+      expect(isAction(action)).toBe(true);
+    }
+  });
+
+  it('rejects other strings and non-strings', () => {
+    expect(isAction('publish')).toBe(false);
+    expect(isAction(undefined)).toBe(false);
+    expect(isAction(1)).toBe(false);
+  });
+});
+
+describe('WILDCARD', () => {
+  it('is the key a permissions map treats as the wildcard', () => {
+    expect(WILDCARD).toBe('*');
+  });
+});
 
 describe('accept / deny', () => {
   it('accept invokes resolve and returns its value', async () => {

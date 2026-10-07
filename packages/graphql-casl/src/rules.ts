@@ -432,6 +432,12 @@ type ResolverInternalKeys = '__isTypeOf' | '__resolveType';
  */
 export type Wildcard = '*';
 
+/**
+ * The {@link Wildcard} key as a value, for code that builds or reads a
+ * {@link PermissionsMap} by key.
+ */
+export const WILDCARD: Wildcard = '*';
+
 /** A type's guardable field names: its resolver keys, minus the discriminators. */
 type FieldNamesOf<TFields> = Exclude<keyof NonNullable<TFields>, ResolverInternalKeys>;
 

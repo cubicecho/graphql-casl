@@ -53,7 +53,7 @@ README is also published to npm).
   `@apollo/server` is a devDependency for its tests only
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
-- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.5.0`
+- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.11.0`
   (it imports `and` / `or` / `PermissionsError` from the runtime). Its tests and
   typecheck resolve the runtime through the workspace symlink to
   `packages/graphql-casl/dist`, so build the runtime first — CI builds before it

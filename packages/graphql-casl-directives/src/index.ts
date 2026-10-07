@@ -27,10 +27,12 @@ import {
   type AnyResolvers,
   and,
   type CheckableRule,
+  isAction,
   isCheckableRule,
   or,
   PermissionsError,
   type PermissionsMap,
+  WILDCARD,
 } from '@vantreeseba/graphql-casl';
 import {
   type ConstDirectiveNode,
@@ -124,7 +126,6 @@ export type DirectivePermissions = PermissionsMap<AnyResolvers>;
 
 const CAN = 'can';
 const RULE = 'rule';
-const WILDCARD = '*';
 
 /** Where a directive was found, for rule resolution and for error messages. */
 interface Site {
@@ -164,13 +165,9 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-const ACTIONS: ReadonlySet<string> = new Set(Object.values(Actions));
-const ACTION_NAMES = [...ACTIONS].map((action) => `"${action}"`).join(', ');
-
-/** Whether a value is one of the runtime's `Action`s — the only ones `createCan` accepts. */
-function isAction(value: unknown): value is Action {
-  return typeof value === 'string' && ACTIONS.has(value);
-}
+const ACTION_NAMES = Object.values(Actions)
+  .map((action) => `"${action}"`)
+  .join(', ');
 
 /** The `names` shape `@rule` accepts: a non-empty list of non-empty lists of names. */
 function isNamesShape(value: unknown): value is string[][] {

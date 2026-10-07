@@ -48,7 +48,7 @@
     "coverage": "vitest run --coverage"
   },
   "peerDependencies": {
-    "@vantreeseba/graphql-casl": ">=1.5.0",
+    "@vantreeseba/graphql-casl": ">=1.11.0",
     "graphql": ">=16"
   },
   "devDependencies": {

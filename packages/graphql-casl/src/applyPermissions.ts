@@ -51,10 +51,8 @@ import {
   passes,
   type Rule,
   type RuleResult,
+  WILDCARD,
 } from './rules.js';
-
-/** The wildcard key, in either the type or the field position. */
-const WILDCARD = '*';
 
 /**
  * Thrown by {@link applyPermissions} / {@link validatePermissions} when a

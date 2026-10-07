@@ -23,7 +23,7 @@ import {
   isObjectType,
   isUnionType,
 } from 'graphql';
-import { Actions } from './ability.js';
+import { Actions, isAction } from './ability.js';
 import { describeKind, PermissionsError } from './applyPermissions.js';
 
 /** Options for {@link validateGraphQLRules}. */
@@ -151,7 +151,7 @@ function collectRuleProblems(
   const label = labelOf(rule, index);
 
   for (const action of stringList(rule.action, 'action', label, problems) ?? []) {
-    if (!ACTION_NAMES.includes(action as (typeof ACTION_NAMES)[number])) {
+    if (!isAction(action)) {
       problems.push(
         `${label}: action \`${action}\` is not one of ${ACTION_NAMES.map((name) => `\`${name}\``).join(', ')}.`,
       );

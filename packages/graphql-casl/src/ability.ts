@@ -24,6 +24,19 @@ export const Actions = {
   manage: 'manage',
 } as const satisfies Record<Action, Action>;
 
+const ACTION_VALUES: ReadonlySet<string> = new Set(Object.values(Actions));
+
+/**
+ * Whether a value is one of the {@link Action} verbs. Use it to narrow an
+ * action read from outside the type system: a stored rule, a directive argument.
+ *
+ * @param value - The value to test.
+ * @returns `true` when `value` is a member of {@link Actions}.
+ */
+export function isAction(value: unknown): value is Action {
+  return typeof value === 'string' && ACTION_VALUES.has(value);
+}
+
 /**
  * Minimal structural type for anything with a CASL-style `can` method — what the
  * rule layer needs to check an action against a subject. A typed

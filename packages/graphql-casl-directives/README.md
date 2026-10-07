@@ -19,7 +19,7 @@ npm install @vantreeseba/graphql-casl-directives
 npm install @vantreeseba/graphql-casl graphql
 ```
 
-Peer dependencies: `graphql >=16` and `@vantreeseba/graphql-casl >=1.5.0`.
+Peer dependencies: `graphql >=16` and `@vantreeseba/graphql-casl >=1.11.0`.
 
 ## The two directives
 
