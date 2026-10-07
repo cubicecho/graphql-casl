@@ -21,8 +21,6 @@ export type Scalars = {
   Boolean: { input: boolean; output: boolean };
 };
 
-// --- Object types -----------------------------------------------------------
-
 export type Todo = {
   __typename?: 'Todo';
   id: Scalars['ID']['output'];
@@ -44,8 +42,6 @@ export type Mutation = {
   deleteAllTodos?: Maybe<Scalars['Boolean']['output']>;
 };
 
-// --- Field argument types ----------------------------------------------------
-
 export type MutationAddTodoArgs = {
   title: Scalars['String']['input'];
 };
@@ -55,8 +51,6 @@ export type MutationSetDoneArgs = {
   ownerId: Scalars['ID']['input'];
   done: Scalars['Boolean']['input'];
 };
-
-// --- Resolver plumbing -------------------------------------------------------
 
 export type ResolverTypeWrapper<T> = Promise<T> | T;
 
@@ -78,8 +72,6 @@ export type RequireFields<T, K extends keyof T> = Omit<T, K> & {
   [P in K]-?: NonNullable<T[P]>;
 };
 
-// --- ResolversTypes / ResolversParentTypes ----------------------------------
-
 export type ResolversTypes = {
   Query: ResolverTypeWrapper<Query>;
   Mutation: ResolverTypeWrapper<Mutation>;
@@ -97,8 +89,6 @@ export type ResolversParentTypes = {
   String: Scalars['String']['output'];
   Boolean: Scalars['Boolean']['output'];
 };
-
-// --- Per-type resolver maps --------------------------------------------------
 
 export type QueryResolvers<
   ContextType = unknown,

@@ -27,8 +27,6 @@ import {
 } from '../../src/index.js';
 import { scopeArgs } from '../../src/scoping.js';
 
-// --- Domain -----------------------------------------------------------------
-
 interface Note {
   id: string;
   userId: string;
@@ -61,8 +59,6 @@ const canUser = createCan<Context, AppSubjectMap>(
   async (context) => abilityFor(context.userId),
   (context) => Boolean(context.userId),
 );
-
-// --- The dialect the generated schema actually speaks ------------------------
 
 /** A drizzle-graphql-shaped filter: `{ userId: { eq: 'alice' } }`. */
 type Filter = Record<string, unknown>;

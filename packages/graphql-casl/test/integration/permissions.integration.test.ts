@@ -19,8 +19,6 @@ import {
   type PermissionsMap,
 } from '../../src/index.js';
 
-// --- The app's domain model -------------------------------------------------
-
 interface Note {
   id: string;
   userId: string;
@@ -34,8 +32,6 @@ const SEED: readonly Note[] = [
 
 // Resolvers mutate notes in place, so this is reset before each test (see beforeEach).
 let NOTES: Note[];
-
-// --- Request context + ability builder -------------------------------------
 
 interface Context {
   userId?: string;
@@ -65,8 +61,6 @@ const canUser = createCan<Context, AppSubjectMap>(
   (ctx) => ctx.userId != null,
   typed,
 );
-
-// --- The schema + resolvers -------------------------------------------------
 
 const typeDefs = /* GraphQL */ `
   type Query {

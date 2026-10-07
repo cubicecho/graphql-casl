@@ -35,8 +35,6 @@ import {
   permissionsFromDirectives,
 } from '../src/index.js';
 
-// --- Domain -----------------------------------------------------------------
-
 interface User {
   id: string;
   email: string;
@@ -73,8 +71,6 @@ let NOTES: Note[];
 beforeEach(() => {
   NOTES = SEED.map((note) => ({ ...note }));
 });
-
-// --- Context, ability, rules ------------------------------------------------
 
 interface Context {
   userId?: string;
@@ -141,8 +137,6 @@ const bob: Context = { userId: 'bob', verified: true };
 const carol: Context = { userId: 'carol' };
 const carolAdmin: Context = { userId: 'carol', roles: ['admin'], verified: true };
 const root: Context = { userId: 'root', roles: ['admin'], verified: true };
-
-// --- Schema -----------------------------------------------------------------
 
 const typeDefs = /* GraphQL */ `
   type Query {
@@ -227,8 +221,6 @@ function problemsOf(
   }
   throw new Error('expected the translation to fail');
 }
-
-// --- Tests ------------------------------------------------------------------
 
 describe('permissionsFromDirectives', () => {
   const schema = build(typeDefs, resolvers);
