@@ -57,8 +57,11 @@ const typed = createTyped<SubjectMap>();
 function abilityFor(userId: string | null, conditioned: boolean) {
   const { can, build } = createGraphQLAbility<SubjectMap>();
   if (userId) {
-    if (conditioned) can('read', 'Note', { author: userId });
-    else can('read', 'Note');
+    if (conditioned) {
+      can('read', 'Note', { author: userId });
+    } else {
+      can('read', 'Note');
+    }
   }
   return build();
 }
@@ -78,7 +81,9 @@ function guarded(permissions: Map, options?: ApplyPermissionsOptions): () => Pro
   const schema = applyPermissions(baseSchema(), permissions, options);
   return async () => {
     const result = await graphql({ schema, source: query, contextValue: { userId: 'u1' } });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   };
 }
 
@@ -86,7 +91,9 @@ describe('100 rows x 5 fields', () => {
   const unguarded = baseSchema();
   bench('unguarded schema (graphql-js baseline)', async () => {
     const result = await graphql({ schema: unguarded, source: query, contextValue: {} });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   });
 
   bench('accept on every field', guarded({ Query: { notes: accept }, Note: accept }));
@@ -208,7 +215,9 @@ describe('100 rows x 5 fields', () => {
       document,
       contextValue: await contextFactory(),
     });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   });
 
   void deny;
@@ -252,8 +261,12 @@ describe('apply time', () => {
       { fallbackRule: deny },
     );
     for (const type of Object.values(big.getTypeMap())) {
-      if (!isObjectType(type)) continue;
-      for (const fieldName of Object.keys(type.getFields())) permissionFor(type.name, fieldName);
+      if (!isObjectType(type)) {
+        continue;
+      }
+      for (const fieldName of Object.keys(type.getFields())) {
+        permissionFor(type.name, fieldName);
+      }
     }
   });
 

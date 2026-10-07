@@ -186,7 +186,9 @@ export function scopeArgs<
       }
       return resolve(parent, withArg(args, into, adapter.nothing?.()), context, info);
     }
-    if (filter === unrestricted) return resolve(parent, args, context, info);
+    if (filter === unrestricted) {
+      return resolve(parent, args, context, info);
+    }
 
     const clientFilter = (args as Record<string, unknown> | null | undefined)?.[into];
     const combined =

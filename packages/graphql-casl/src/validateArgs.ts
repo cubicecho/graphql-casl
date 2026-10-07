@@ -241,7 +241,9 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
     context: unknown,
     info: GraphQLResolveInfo,
   ): unknown {
-    if (result.issues) return Promise.reject(invalidArguments(result.issues));
+    if (result.issues) {
+      return Promise.reject(invalidArguments(result.issues));
+    }
     return resolve(parent, replace ? result.value : args, context, info);
   }
 
@@ -297,7 +299,9 @@ function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error 
  * @returns The keys, outermost first; empty when the issue has no path.
  */
 function pathOf(issue: StandardSchemaV1.Issue): ReadonlyArray<string | number> {
-  if (!issue.path) return [];
+  if (!issue.path) {
+    return [];
+  }
   return issue.path.map((segment) => {
     const key = typeof segment === 'object' && segment !== null ? segment.key : segment;
     return typeof key === 'symbol' ? String(key) : key;

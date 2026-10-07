@@ -102,11 +102,21 @@ function isRule(value: unknown): value is Rule {
  * @returns A phrase such as `an enum`.
  */
 export function describeKind(type: GraphQLNamedType): string {
-  if (isInterfaceType(type)) return 'an interface type';
-  if (isUnionType(type)) return 'a union type';
-  if (isScalarType(type)) return 'a scalar type';
-  if (isEnumType(type)) return 'an enum type';
-  if (isInputObjectType(type)) return 'an input object type';
+  if (isInterfaceType(type)) {
+    return 'an interface type';
+  }
+  if (isUnionType(type)) {
+    return 'a union type';
+  }
+  if (isScalarType(type)) {
+    return 'a scalar type';
+  }
+  if (isEnumType(type)) {
+    return 'an enum type';
+  }
+  if (isInputObjectType(type)) {
+    return 'an input object type';
+  }
   return 'not an object type';
 }
 
@@ -124,15 +134,23 @@ function possibleTypesOf(
   schema: GraphQLSchema,
   abstract: GraphQLAbstractType,
 ): GraphQLObjectType[] {
-  if (isUnionType(abstract)) return [...abstract.getTypes()];
+  if (isUnionType(abstract)) {
+    return [...abstract.getTypes()];
+  }
   const objects = new Set<GraphQLObjectType>();
   const seen = new Set<GraphQLInterfaceType>();
   const visit = (iface: GraphQLInterfaceType): void => {
-    if (seen.has(iface)) return;
+    if (seen.has(iface)) {
+      return;
+    }
     seen.add(iface);
     const implementations = schema.getImplementations(iface);
-    for (const object of implementations.objects) objects.add(object);
-    for (const sub of implementations.interfaces) visit(sub);
+    for (const object of implementations.objects) {
+      objects.add(object);
+    }
+    for (const sub of implementations.interfaces) {
+      visit(sub);
+    }
   };
   visit(abstract);
   return [...objects];
@@ -154,13 +172,20 @@ type Supertypes = ReadonlyMap<string, readonly string[]>;
 function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
   const supertypes = new Map<string, string[]>();
   for (const [typeName, entry] of Object.entries(permissions)) {
-    if (entry == null) continue;
+    if (entry == null) {
+      continue;
+    }
     const type = schema.getType(typeName);
-    if (!type || !isAbstractType(type)) continue;
+    if (!type || !isAbstractType(type)) {
+      continue;
+    }
     for (const object of possibleTypesOf(schema, type)) {
       const seen = supertypes.get(object.name);
-      if (seen) seen.push(typeName);
-      else supertypes.set(object.name, [typeName]);
+      if (seen) {
+        seen.push(typeName);
+      } else {
+        supertypes.set(object.name, [typeName]);
+      }
     }
   }
   return supertypes;
@@ -174,7 +199,9 @@ function supertypesOf(schema: GraphQLSchema, permissions: RawPermissions): Super
  */
 function listed(names: readonly string[]): string {
   const quoted = names.map((name) => `\`${name}\``);
-  if (quoted.length === 1) return quoted[0] as string;
+  if (quoted.length === 1) {
+    return quoted[0] as string;
+  }
   return `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
 }
 
@@ -195,7 +222,9 @@ function sourcesOf(
   const byRule = new Map<Rule, string>();
   for (const name of abstracts) {
     const rule = fieldRuleOf(permissions[name], key);
-    if (rule && !byRule.has(rule)) byRule.set(rule, name);
+    if (rule && !byRule.has(rule)) {
+      byRule.set(rule, name);
+    }
   }
   return [...byRule.values()];
 }
@@ -223,7 +252,9 @@ function ambiguityProblems(
 ): string[] {
   const problems: string[] = [];
   for (const [typeName, abstracts] of supertypes) {
-    if (abstracts.length < 2) continue;
+    if (abstracts.length < 2) {
+      continue;
+    }
     const type = schema.getType(typeName) as GraphQLObjectType;
     const own = permissions[typeName];
     const ownWild = fieldRuleOf(own, WILDCARD) !== undefined;
@@ -231,7 +262,9 @@ function ambiguityProblems(
     const unsettled: string[] = [];
 
     for (const fieldName of Object.keys(type.getFields())) {
-      if (fieldRuleOf(own, fieldName)) continue;
+      if (fieldRuleOf(own, fieldName)) {
+        continue;
+      }
       const fieldSources = sourcesOf(permissions, abstracts, fieldName);
       if (fieldSources.length > 1) {
         problems.push(
@@ -240,9 +273,13 @@ function ambiguityProblems(
         );
         continue;
       }
-      if (fieldSources.length === 1 || ownWild) continue;
+      if (fieldSources.length === 1 || ownWild) {
+        continue;
+      }
       wildSources ??= sourcesOf(permissions, abstracts, WILDCARD);
-      if (wildSources.length > 1) unsettled.push(fieldName);
+      if (wildSources.length > 1) {
+        unsettled.push(fieldName);
+      }
     }
 
     if (wildSources && unsettled.length > 0) {
@@ -290,14 +327,19 @@ function collectProblems(
     if (isObjectType(type) && !isIntrospectionType(type)) {
       for (const field of Object.values(type.getFields())) {
         const seen = guardableFields.get(field.name);
-        if (seen) seen.push(field);
-        else guardableFields.set(field.name, [field]);
+        if (seen) {
+          seen.push(field);
+        } else {
+          guardableFields.set(field.name, [field]);
+        }
       }
     }
   }
 
   for (const [typeName, rawEntry] of Object.entries(permissions)) {
-    if (rawEntry == null) continue;
+    if (rawEntry == null) {
+      continue;
+    }
     // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`, and is
     // checked as such — a bare scoping rule still has arguments to verify.
     const entry = isRule(rawEntry) ? { [WILDCARD]: rawEntry } : rawEntry;
@@ -306,7 +348,9 @@ function collectProblems(
     // against every guardable field instead, so a typo there is still caught.
     if (typeName === WILDCARD) {
       for (const [fieldName, rule] of Object.entries(entry)) {
-        if (rule === undefined || fieldName === WILDCARD) continue;
+        if (rule === undefined || fieldName === WILDCARD) {
+          continue;
+        }
         const targets = guardableFields.get(fieldName);
         if (!targets) {
           problems.push(
@@ -316,7 +360,9 @@ function collectProblems(
           problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
         } else {
           const problem = scopeProblem(rule, `*.${fieldName}`, targets);
-          if (problem) problems.push(problem);
+          if (problem) {
+            problems.push(problem);
+          }
         }
       }
       const wildRule = entry[WILDCARD];
@@ -350,7 +396,9 @@ function collectProblems(
     const declared = isUnionType(type) ? undefined : type.getFields();
     const guarded = isAbstractType(type) ? possibleTypesOf(schema, type) : [type];
     for (const [fieldName, rule] of Object.entries(entry)) {
-      if (rule === undefined) continue;
+      if (rule === undefined) {
+        continue;
+      }
       if (fieldName !== WILDCARD && !declared) {
         problems.push(
           `Field \`${typeName}.${fieldName}\` is in the permissions map but \`${typeName}\` is a union type, ` +
@@ -375,7 +423,9 @@ function collectProblems(
           ? guarded.flatMap((object) => Object.values(object.getFields()))
           : guarded.map((object) => object.getFields()[fieldName] as AnyField);
       const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
-      if (problem) problems.push(problem);
+      if (problem) {
+        problems.push(problem);
+      }
     }
   }
 
@@ -415,7 +465,9 @@ function scopeTargetsOf(rule: unknown): readonly string[] {
 function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | undefined {
   for (const into of scopeTargetsOf(rule)) {
     const missing = targets.filter((field) => !field.args.some((arg) => arg.name === into));
-    if (missing.length === 0) continue;
+    if (missing.length === 0) {
+      continue;
+    }
     // By name, once: an interface field's targets are that field on every implementor.
     const names = [...new Set(missing.map((field) => `\`${field.name}\``))];
     const shown =
@@ -442,9 +494,13 @@ function fieldRuleOf(
   entry: Rule | Record<string, Rule | undefined> | undefined,
   fieldName: string,
 ): Rule | undefined {
-  if (entry === undefined) return undefined;
+  if (entry === undefined) {
+    return undefined;
+  }
   // `{ Note: rule }` is shorthand for `{ Note: { '*': rule } }`.
-  if (isRule(entry)) return fieldName === WILDCARD ? entry : undefined;
+  if (isRule(entry)) {
+    return fieldName === WILDCARD ? entry : undefined;
+  }
   const rule = entry[fieldName];
   return isRule(rule) ? rule : undefined;
 }
@@ -464,10 +520,14 @@ function inheritedRuleOf(
   abstracts: readonly string[] | undefined,
   fieldName: string,
 ): Rule | undefined {
-  if (!abstracts) return undefined;
+  if (!abstracts) {
+    return undefined;
+  }
   for (const name of abstracts) {
     const rule = fieldRuleOf(permissions[name], fieldName);
-    if (rule) return rule;
+    if (rule) {
+      return rule;
+    }
   }
   return undefined;
 }
@@ -527,7 +587,9 @@ async function resolveFallbackError(
   context: unknown,
   info: GraphQLResolveInfo,
 ): Promise<Error> {
-  if (typeof fallbackError === 'string') return new Error(fallbackError);
+  if (typeof fallbackError === 'string') {
+    return new Error(fallbackError);
+  }
   if (typeof fallbackError === 'function') {
     return fallbackError(original, parent, args, context, info);
   }
@@ -550,8 +612,12 @@ async function resolveFallbackError(
  * satisfies it, so it keeps throwing.
  */
 function maskFor(fieldType: GraphQLOutputType): Mask | undefined {
-  if (!isNonNullType(fieldType)) return MASK_NULL;
-  if (isListType(fieldType.ofType)) return MASK_LIST;
+  if (!isNonNullType(fieldType)) {
+    return MASK_NULL;
+  }
+  if (isListType(fieldType.ofType)) {
+    return MASK_LIST;
+  }
   return undefined;
 }
 
@@ -627,7 +693,9 @@ function standardized(denial: Error): Error {
     typeof extensions === 'object' && extensions !== null
       ? (extensions as Record<string, unknown>)
       : undefined;
-  if (typeof own?.code === 'string') return denial;
+  if (typeof own?.code === 'string') {
+    return denial;
+  }
   return new GraphQLError(denial.message, {
     originalError: denial,
     extensions: { ...own, code: UNAUTHORIZED_FIELD_OR_TYPE },
@@ -703,9 +771,13 @@ export function reportDenials<TResult extends ExecutionResult>(
   context: unknown,
   result: TResult,
 ): TResult {
-  if (!isRecordable(context)) return result;
+  if (!isRecordable(context)) {
+    return result;
+  }
   const record = recorded.get(context);
-  if (!record) return result;
+  if (!record) {
+    return result;
+  }
   recorded.delete(context);
   if (record.report === 'errors') {
     return { ...result, errors: [...(result.errors ?? []), ...record.errors] };
@@ -761,9 +833,13 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  */
 function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
   const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
-  if (!fallbackError && allowExternalErrors && !debug && !mask && onDeny !== 'filter') return rule;
+  if (!fallbackError && allowExternalErrors && !debug && !mask && onDeny !== 'filter') {
+    return rule;
+  }
 
-  if (isPlainRule(rule)) return withCheckedErrorControl(rule.check, options, mask);
+  if (isPlainRule(rule)) {
+    return withCheckedErrorControl(rule.check, options, mask);
+  }
 
   return async (resolve, parent, args, context, info) => {
     // Identity, not a flag: the rule may catch and rethrow, and a denial thrown
@@ -794,7 +870,9 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
 
       // A rule that broke is not a denial. Surfacing it as one would report a
       // bug as an authorization decision, so `debug` rethrows it untouched.
-      if (denialKind === undefined && !isResolverError && debug) throw error;
+      if (denialKind === undefined && !isResolverError && debug) {
+        throw error;
+      }
 
       // Filtering changes how a decision is delivered, not what it says: the
       // denial keeps its words, `fallbackError` still rewords a generic one,
@@ -809,13 +887,21 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
 
       // Masking replaces a decision the rule made, never a failure it suffered:
       // a broken rule or a broken resolver still surfaces.
-      if (mask && denialKind !== undefined) return mask();
+      if (mask && denialKind !== undefined) {
+        return mask();
+      }
 
       // An explicit denial is the rule author's own words; only the generic
       // default is replaced.
-      if (denialKind === 'explicit') throw error;
-      if (isResolverError && allowExternalErrors) throw error;
-      if (!fallbackError) throw error;
+      if (denialKind === 'explicit') {
+        throw error;
+      }
+      if (isResolverError && allowExternalErrors) {
+        throw error;
+      }
+      if (!fallbackError) {
+        throw error;
+      }
 
       throw await resolveFallbackError(fallbackError, error, parent, args, context, info);
     }
@@ -860,7 +946,9 @@ function withCheckedErrorControl(
     context: unknown,
     info: GraphQLResolveInfo,
   ): Promise<never> {
-    if (debug || !fallbackError) return Promise.reject(error);
+    if (debug || !fallbackError) {
+      return Promise.reject(error);
+    }
     return replaced(fallbackError, error, parent, args, context, info);
   }
 
@@ -872,7 +960,9 @@ function withCheckedErrorControl(
     context: unknown,
     info: GraphQLResolveInfo,
   ): unknown {
-    if (!replaceResolverErrors) return resolve(parent, args, context, info);
+    if (!replaceResolverErrors) {
+      return resolve(parent, args, context, info);
+    }
     let result: unknown;
     try {
       result = resolve(parent, args, context, info);
@@ -895,9 +985,13 @@ function withCheckedErrorControl(
     context: unknown,
     info: GraphQLResolveInfo,
   ): unknown {
-    if (passes(result)) return allowed(resolve, parent, args, context, info);
+    if (passes(result)) {
+      return allowed(resolve, parent, args, context, info);
+    }
     // Masking replaces a decision the rule made, whatever words it chose.
-    if (mask && onDeny === 'mask') return mask();
+    if (mask && onDeny === 'mask') {
+      return mask();
+    }
     const denial = denialFrom(result) as Error;
     // An explicit denial is the rule author's own words; only the generic
     // default is replaced.
@@ -910,7 +1004,9 @@ function withCheckedErrorControl(
       }
       return deliver(denial, mask, report, context, info);
     }
-    if (!fallbackError || explicit) return Promise.reject(denial);
+    if (!fallbackError || explicit) {
+      return Promise.reject(denial);
+    }
     return replaced(fallbackError, denial, parent, args, context, info);
   }
 
@@ -989,7 +1085,9 @@ export function validatePermissions<TResolvers = AnyResolvers>(
 function validated(schema: GraphQLSchema, permissions: RawPermissions): Supertypes {
   const supertypes = supertypesOf(schema, permissions);
   const problems = collectProblems(schema, permissions, supertypes);
-  if (problems.length > 0) throw new PermissionsError(problems);
+  if (problems.length > 0) {
+    throw new PermissionsError(problems);
+  }
   return supertypes;
 }
 
@@ -1046,7 +1144,9 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
 
   // Validated and resolved exactly as usual, so a stale map or a contradictory
   // option still fails; only the lookup guards nothing.
-  if (options?.disabled) return () => undefined;
+  if (options?.disabled) {
+    return () => undefined;
+  }
 
   const fallbackRule = options?.fallbackRule;
   const resolved = new Map<string, Rule | undefined>();
@@ -1073,7 +1173,9 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
   return (typeName, fieldName) => {
     const key = `${typeName}.${fieldName}`;
     const cached = resolved.get(key);
-    if (cached !== undefined || resolved.has(key)) return cached;
+    if (cached !== undefined || resolved.has(key)) {
+      return cached;
+    }
 
     const type = schema.getTypeMap()[typeName];
     // Introspection is never guarded, so even `fallbackRule: deny` leaves it
@@ -1112,15 +1214,21 @@ function resolveFieldRules(
   const middleware: IMiddlewareTypeMap = {};
 
   for (const type of Object.values(schema.getTypeMap())) {
-    if (!isObjectType(type) || isIntrospectionType(type)) continue;
+    if (!isObjectType(type) || isIntrospectionType(type)) {
+      continue;
+    }
 
     const fieldRules: IMiddlewareFieldMap = {};
     for (const fieldName of Object.keys(type.getFields())) {
       const rule = permissionFor(type.name, fieldName);
-      if (rule) fieldRules[fieldName] = rule;
+      if (rule) {
+        fieldRules[fieldName] = rule;
+      }
     }
 
-    if (Object.keys(fieldRules).length > 0) middleware[type.name] = fieldRules;
+    if (Object.keys(fieldRules).length > 0) {
+      middleware[type.name] = fieldRules;
+    }
   }
 
   return middleware;
@@ -1169,11 +1277,15 @@ function wrapResolver(
  */
 function guardInPlace(schema: GraphQLSchema, permissionFor: PermissionResolver): GraphQLSchema {
   for (const type of Object.values(schema.getTypeMap())) {
-    if (!isObjectType(type) || isIntrospectionType(type)) continue;
+    if (!isObjectType(type) || isIntrospectionType(type)) {
+      continue;
+    }
 
     for (const field of Object.values(type.getFields())) {
       const rule = permissionFor(type.name, field.name);
-      if (!rule) continue;
+      if (!rule) {
+        continue;
+      }
       if (guardedInPlace.has(field)) {
         throw new Error(
           `graphql-casl: \`${type.name}.${field.name}\` is already guarded. ` +
@@ -1244,8 +1356,9 @@ export function denialModeOf(options: ApplyPermissionsOptions | undefined): Deni
   if (options?.report !== undefined && onDeny !== 'filter') {
     problems.push(`\`report\` only applies under \`onDeny: 'filter'\`, not \`'${onDeny}'\``);
   }
-  if (problems.length > 0)
+  if (problems.length > 0) {
     throw new PermissionsError(problems, 'the options contradict each other');
+  }
   return onDeny;
 }
 
@@ -1525,7 +1638,11 @@ export function applyPermissions<TResolvers = AnyResolvers>(
 ): GraphQLSchema {
   const permissionFor = resolvePermissions(schema, permissions, options);
   // Validated above; the schema goes back exactly as it came, on either path.
-  if (options?.disabled) return schema;
-  if (options?.inPlace) return guardInPlace(schema, permissionFor);
+  if (options?.disabled) {
+    return schema;
+  }
+  if (options?.inPlace) {
+    return guardInPlace(schema, permissionFor);
+  }
   return applyMiddleware(schema, resolveFieldRules(schema, permissionFor));
 }

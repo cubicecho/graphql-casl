@@ -168,7 +168,9 @@ function passed(outcome: Outcome): boolean {
  */
 function failureOf(outcomes: readonly Outcome[]): Error {
   const broken = outcomes.find((outcome) => 'thrown' in outcome);
-  if (broken && 'thrown' in broken) throw broken.thrown;
+  if (broken && 'thrown' in broken) {
+    throw broken.thrown;
+  }
   const last = outcomes[outcomes.length - 1] as { readonly denial: Error | undefined };
   return last.denial as Error;
 }
@@ -196,7 +198,9 @@ export function and(...rules: Rule[]): CheckableRule {
   function firstDenial(results: readonly RuleResult[]): RuleResult {
     for (const result of results) {
       const denial = denialFrom(result);
-      if (denial) return denial;
+      if (denial) {
+        return denial;
+      }
     }
     return true;
   }
@@ -285,7 +289,9 @@ export function chain(...rules: Rule[]): CheckableRule {
             return Promise.resolve(answer).then((result) => denialFrom(result) ?? from(i + 1));
           }
           const denial = denialFrom(answer);
-          if (denial) return denial;
+          if (denial) {
+            return denial;
+          }
         }
         return true;
       }
@@ -327,12 +333,16 @@ export function race(...rules: Rule[]): CheckableRule {
           const outcome = outcomeOf(checks[i] as Check, parent, args, context, info);
           if (isThenable(outcome)) {
             return outcome.then((settled) => {
-              if (passed(settled)) return true;
+              if (passed(settled)) {
+                return true;
+              }
               outcomes.push(settled);
               return from(i + 1);
             });
           }
-          if (passed(outcome)) return true;
+          if (passed(outcome)) {
+            return true;
+          }
           outcomes.push(outcome);
         }
         return failureOf(outcomes);

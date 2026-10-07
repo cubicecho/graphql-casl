@@ -45,8 +45,11 @@ type AppAbility = GraphQLAbility<AppSubjectMap>;
 
 function abilityFor(userId: string | undefined): AppAbility {
   const { can, build } = createGraphQLAbility<AppSubjectMap>();
-  if (userId === 'admin') can(Actions.read, 'Note');
-  else if (userId === 'alice') can(Actions.read, 'Note', { userId: 'alice' });
+  if (userId === 'admin') {
+    can(Actions.read, 'Note');
+  } else if (userId === 'alice') {
+    can(Actions.read, 'Note', { userId: 'alice' });
+  }
   // Anyone else gets no rules at all: deny-all.
   return build();
 }
@@ -68,7 +71,9 @@ const OPERATORS: Record<string, string> = { $eq: 'eq', $ne: 'ne', $in: 'in' };
 const dialect: FilterAdapter<Filter> = {
   leaf: ({ path, operator, value }) => {
     const op = OPERATORS[operator];
-    if (!op) throw new Error(`this schema has no operator for ${operator}`);
+    if (!op) {
+      throw new Error(`this schema has no operator for ${operator}`);
+    }
     // Nested paths would need a relation filter; this schema is flat.
     return { [path.join('.')]: { [op]: value } };
   },
@@ -81,16 +86,30 @@ const dialect: FilterAdapter<Filter> = {
 
 /** The data layer: evaluates a `Filter` against a row. */
 function matches(note: Note, filter: Filter | null | undefined): boolean {
-  if (!filter) return true;
+  if (!filter) {
+    return true;
+  }
   return Object.entries(filter).every(([key, value]) => {
-    if (key === 'AND') return (value as Filter[]).every((member) => matches(note, member));
-    if (key === 'OR') return (value as Filter[]).some((member) => matches(note, member));
-    if (key === 'NOT') return !matches(note, value as Filter);
+    if (key === 'AND') {
+      return (value as Filter[]).every((member) => matches(note, member));
+    }
+    if (key === 'OR') {
+      return (value as Filter[]).some((member) => matches(note, member));
+    }
+    if (key === 'NOT') {
+      return !matches(note, value as Filter);
+    }
     const actual = note[key as keyof Note];
     const comparison = value as { eq?: string; ne?: string; in?: string[] };
-    if (comparison.eq !== undefined) return actual === comparison.eq;
-    if (comparison.ne !== undefined) return actual !== comparison.ne;
-    if (comparison.in !== undefined) return comparison.in.includes(actual);
+    if (comparison.eq !== undefined) {
+      return actual === comparison.eq;
+    }
+    if (comparison.ne !== undefined) {
+      return actual !== comparison.ne;
+    }
+    if (comparison.in !== undefined) {
+      return comparison.in.includes(actual);
+    }
     return true;
   });
 }

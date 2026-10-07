@@ -111,20 +111,26 @@ export function reportDenialsPlugin(): ReportDenialsApolloPlugin {
       return {
         async willSendResponse({ contextValue, response }) {
           const { body } = response;
-          if (body.kind !== 'single') return;
+          if (body.kind !== 'single') {
+            return;
+          }
           const { singleResult } = body;
           // Apollo has already formatted its own errors by this point, so the
           // result is a `FormattedExecutionResult`; `reportDenials` appends
           // `GraphQLError`s, which are formatted the same way below before the
           // response goes out.
           const reported = reportDenials(contextValue, singleResult as ExecutionResult);
-          if (reported === singleResult) return;
+          if (reported === singleResult) {
+            return;
+          }
           if (reported.errors) {
             singleResult.errors = reported.errors.map((error) =>
               isUnformatted(error) ? error.toJSON() : error,
             );
           }
-          if (reported.extensions) singleResult.extensions = reported.extensions;
+          if (reported.extensions) {
+            singleResult.extensions = reported.extensions;
+          }
         },
       };
     },

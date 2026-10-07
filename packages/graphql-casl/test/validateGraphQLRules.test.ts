@@ -66,7 +66,9 @@ function problemsOf(rules: readonly unknown[], options?: ValidateGraphQLRulesOpt
   try {
     validateGraphQLRules(schema, rules, options);
   } catch (error) {
-    if (error instanceof PermissionsError) return [...error.problems];
+    if (error instanceof PermissionsError) {
+      return [...error.problems];
+    }
     throw error;
   }
   throw new Error('expected validateGraphQLRules to throw');

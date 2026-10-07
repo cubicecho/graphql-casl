@@ -122,7 +122,9 @@ export function useGraphQLCasl<
 
   const plugin: Plugin<TContext> = {
     onPluginInit({ addPlugin }) {
-      if (!enforcing) return;
+      if (!enforcing) {
+        return;
+      }
       addPlugin(
         useOnResolve<TContext>(({ info, resolver, replaceResolver }) => {
           // `replaceResolver` is permanent for the field, not per call, so this
@@ -130,11 +132,15 @@ export function useGraphQLCasl<
           // callback itself still runs per call, so the "already done" test is
           // kept to one `WeakSet` lookup.
           const field = info.parentType.getFields()[info.fieldName];
-          if (!field || guarded.has(field)) return;
+          if (!field || guarded.has(field)) {
+            return;
+          }
           guarded.add(field);
 
           const rule = permissionsFor(info.schema)(info.parentType.name, info.fieldName);
-          if (!rule) return;
+          if (!rule) {
+            return;
+          }
 
           replaceResolver((root, args, context, resolveInfo) =>
             rule(
@@ -176,7 +182,9 @@ export function useGraphQLCasl<
       onExecuteDone(payload) {
         return handleStreamOrSingleExecutionResult(payload, ({ args, result, setResult }) => {
           const reported = reportDenials(args.contextValue, result);
-          if (reported !== result) setResult(reported);
+          if (reported !== result) {
+            setResult(reported);
+          }
         });
       },
     });

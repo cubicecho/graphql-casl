@@ -73,8 +73,12 @@ const branchesOf = (filter: DrizzleFilters): ColumnSet[] =>
 /** Rebuild a filter from its branches, keeping `OR` off a single branch. */
 const collapse = (sets: ColumnSet[]): DrizzleFilters => {
   // An empty branch matches every row, so a disjunction containing one does too.
-  if (sets.some((set) => Object.keys(set).length === 0)) return {};
-  if (sets.length === 0) throw unsupported('a filter matching no row (use `nothing()`)');
+  if (sets.some((set) => Object.keys(set).length === 0)) {
+    return {};
+  }
+  if (sets.length === 0) {
+    throw unsupported('a filter matching no row (use `nothing()`)');
+  }
   return sets.length === 1 ? (sets[0] as ColumnSet) : { OR: sets };
 };
 
@@ -114,7 +118,9 @@ export function drizzleFilters(options: DrizzleAdapterOptions): LeafAdapter<Driz
   });
 
   const and = (filters: DrizzleFilters[]): DrizzleFilters => {
-    if (filters.length === 0) return {};
+    if (filters.length === 0) {
+      return {};
+    }
     return filters.reduce((left, right) =>
       collapse(branchesOf(left).flatMap((a) => branchesOf(right).map((b) => mergeSets(a, b)))),
     );
@@ -125,7 +131,9 @@ export function drizzleFilters(options: DrizzleAdapterOptions): LeafAdapter<Driz
     const flipped = Object.entries(set).flatMap(([column, operators]) =>
       Object.entries(operators).map(([operator, value]) => {
         const opposite = NEGATED[operator];
-        if (!opposite) throw unsupported(`the negation of \`${operator}\``);
+        if (!opposite) {
+          throw unsupported(`the negation of \`${operator}\``);
+        }
         return { [column]: { [opposite]: value } } as ColumnSet;
       }),
     );
@@ -142,7 +150,9 @@ export function drizzleFilters(options: DrizzleAdapterOptions): LeafAdapter<Driz
         return { [column]: value === false ? { isNull: true } : { isNotNull: true } };
       }
       const mapped = OPERATORS[operator];
-      if (!mapped) throw unsupported(`the \`${operator}\` operator`);
+      if (!mapped) {
+        throw unsupported(`the \`${operator}\` operator`);
+      }
       return { [column]: { [mapped]: value } };
     },
     // NOT(b1 OR b2) === NOT(b1) AND NOT(b2).
@@ -166,18 +176,27 @@ export function assertLegalDrizzleFilter(filter: unknown): void {
   const keys = Object.keys(filter);
   const record = filter as Record<string, unknown>;
   for (const forbidden of ['AND', 'NOT']) {
-    if (keys.includes(forbidden)) throw new Error(`drizzle-graphql has no \`${forbidden}\` key`);
+    if (keys.includes(forbidden)) {
+      throw new Error(`drizzle-graphql has no \`${forbidden}\` key`);
+    }
   }
-  if (!keys.includes('OR')) return;
+  if (!keys.includes('OR')) {
+    return;
+  }
   if (keys.length > 1) {
     throw new Error("cannot specify both fields and 'OR' in table filters");
   }
   const or = record.OR;
-  if (!Array.isArray(or)) throw new Error('`OR` must be a list');
-  if (or.length === 0) throw new Error('an empty `OR` is dropped, and would match every row');
+  if (!Array.isArray(or)) {
+    throw new Error('`OR` must be a list');
+  }
+  if (or.length === 0) {
+    throw new Error('an empty `OR` is dropped, and would match every row');
+  }
   for (const branch of or) {
-    if (typeof branch !== 'object' || branch === null)
+    if (typeof branch !== 'object' || branch === null) {
       throw new Error('an `OR` branch must be an object');
+    }
     if (Object.keys(branch).some((key) => key === 'OR' || key === 'AND' || key === 'NOT')) {
       throw new Error('`OR` does not nest in drizzle-graphql');
     }

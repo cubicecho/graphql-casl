@@ -117,7 +117,9 @@ export type DenialKind = 'default' | 'explicit';
  * @returns The kind, or `undefined` when it is not a denial.
  */
 export function denialKindOf(error: unknown): DenialKind | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
   return (error as Record<symbol, DenialKind | undefined>)[DENIAL];
 }
 
@@ -134,7 +136,9 @@ export function denialKindOf(error: unknown): DenialKind | undefined {
  * not be demoted to a replaceable default on the way out.
  */
 function markDenial(error: Error, kind: DenialKind): Error {
-  if (denialKindOf(error) !== undefined) return error;
+  if (denialKindOf(error) !== undefined) {
+    return error;
+  }
   Object.defineProperty(error, DENIAL, { value: kind, enumerable: false, configurable: true });
   return error;
 }
@@ -148,8 +152,12 @@ function markDenial(error: Error, kind: DenialKind): Error {
  * @returns `true` only for `true`.
  */
 export function passes(result: RuleResult): boolean {
-  if (result === true) return true;
-  if (typeof result === 'string' || result instanceof Error) return false;
+  if (result === true) {
+    return true;
+  }
+  if (typeof result === 'string' || result instanceof Error) {
+    return false;
+  }
   return Boolean(result);
 }
 
@@ -162,9 +170,15 @@ export function passes(result: RuleResult): boolean {
  * @returns The denial, or `undefined` for a pass.
  */
 export function denialFrom(result: RuleResult): Error | undefined {
-  if (result === true) return undefined;
-  if (typeof result === 'string') return markDenial(new Error(result), 'explicit');
-  if (result instanceof Error) return markDenial(result, 'explicit');
+  if (result === true) {
+    return undefined;
+  }
+  if (typeof result === 'string') {
+    return markDenial(new Error(result), 'explicit');
+  }
+  if (result instanceof Error) {
+    return markDenial(result, 'explicit');
+  }
   // Anything else is off-contract, and `Check`'s `any` context lets it compile.
   // Fall back to truthiness so an off-contract value denies rather than crashing
   // `markDenial` on a non-object — deny being the safe direction here.
@@ -277,15 +291,21 @@ function isObject(value: unknown): value is object {
  * call, which is correct and costs only the caching.
  */
 function argsKey(args: unknown): string | undefined {
-  if (args === null || args === undefined) return '';
-  if (typeof args !== 'object') return String(args);
+  if (args === null || args === undefined) {
+    return '';
+  }
+  if (typeof args !== 'object') {
+    return String(args);
+  }
   if (!Array.isArray(args)) {
     let empty = true;
     for (const _ in args) {
       empty = false;
       break;
     }
-    if (empty) return '';
+    if (empty) {
+      return '';
+    }
   }
   try {
     return JSON.stringify(args, (_key, value) =>
@@ -331,9 +351,13 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
       // No object to hang the cache off — a request-scoped cache is not
       // available, so evaluate as if uncached rather than leaking entries into
       // a global map.
-      if (!isObject(context)) return check(parent, args, context, info);
+      if (!isObject(context)) {
+        return check(parent, args, context, info);
+      }
       const hit = byContext.get(context);
-      if (hit !== undefined) return hit;
+      if (hit !== undefined) {
+        return hit;
+      }
       const answer = evaluate(parent, args, context, info);
       byContext.set(context, answer);
       return answer;
@@ -346,12 +370,16 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
   const keyOf = typeof mode === 'function' ? mode : undefined;
   const byContext = new WeakMap<object, Map<unknown, Map<string, Answer>>>();
   return (parent, args, context, info) => {
-    if (!isObject(context)) return check(parent, args, context, info);
+    if (!isObject(context)) {
+      return check(parent, args, context, info);
+    }
 
     const parentKey = keyOf ? keyOf(parent, args, context, info) : parent;
     const key = keyOf ? '' : argsKey(args);
     // `undefined` from either means "unkeyable": run uncached for this call.
-    if (parentKey === undefined || key === undefined) return check(parent, args, context, info);
+    if (parentKey === undefined || key === undefined) {
+      return check(parent, args, context, info);
+    }
 
     let slot = byContext.get(context);
     if (!slot) {
@@ -364,7 +392,9 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
       slot.set(parentKey, byArgs);
     }
     const hit = byArgs.get(key);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) {
+      return hit;
+    }
     const answer = evaluate(parent, args, context, info);
     byArgs.set(key, answer);
     return answer;
@@ -435,7 +465,9 @@ export function rule(check: Check, options?: RuleOptions): CheckableRule {
     }
     return Promise.resolve(answer).then((result) => {
       const denial = denialFrom(result);
-      if (denial) throw denial;
+      if (denial) {
+        throw denial;
+      }
       return resolve(parent, args, context, info);
     });
   };

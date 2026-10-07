@@ -161,7 +161,9 @@ describe('rule caching', () => {
     const c = counted();
     const r = rule(c.check);
     const ctx = {};
-    for (let i = 0; i < 3; i++) await r(vi.fn(), { id: i }, {}, ctx, info);
+    for (let i = 0; i < 3; i++) {
+      await r(vi.fn(), { id: i }, {}, ctx, info);
+    }
     expect(c.calls).toBe(3);
   });
 
@@ -170,7 +172,9 @@ describe('rule caching', () => {
     const r = rule(c.check, { cache: 'contextual' });
     const ctx = {};
     // Different parents and args, one context: the answer cannot depend on them.
-    for (let i = 0; i < 3; i++) await r(vi.fn(), { id: i }, { n: i }, ctx, info);
+    for (let i = 0; i < 3; i++) {
+      await r(vi.fn(), { id: i }, { n: i }, ctx, info);
+    }
     expect(c.calls).toBe(1);
   });
 
@@ -188,7 +192,9 @@ describe('rule caching', () => {
     const ctx = {};
     const row = { id: 'n1' };
     // Same row, five fields: one evaluation.
-    for (let i = 0; i < 5; i++) await r(vi.fn(), row, {}, ctx, info);
+    for (let i = 0; i < 5; i++) {
+      await r(vi.fn(), row, {}, ctx, info);
+    }
     expect(c.calls).toBe(1);
     // A different row is a different subject, so it must be re-evaluated.
     await r(vi.fn(), { id: 'n2' }, {}, ctx, info);

@@ -32,7 +32,9 @@ const typed = createTyped<M>();
 const canUser = createCan<Context, M>(
   async (ctx) => {
     const { can, build } = createGraphQLAbility<M>();
-    if (!ctx.userId) return build();
+    if (!ctx.userId) {
+      return build();
+    }
     can(Actions.read, 'Note', ['id', 'body', 'userId']);
     can(Actions.read, 'Note', ['secret'], { userId: ctx.userId });
     can(Actions.update, 'Note', { userId: ctx.userId });

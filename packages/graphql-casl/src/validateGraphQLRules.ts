@@ -175,16 +175,22 @@ function collectRuleProblems(
   // fields against, and a subject that failed is already reported.
   const subjects: Composite[] = [];
   for (const subject of stringList(rule.subject, 'subject', label, problems) ?? []) {
-    if (subject === 'all') continue;
+    if (subject === 'all') {
+      continue;
+    }
     const type = subjectType(schema, subject, label, problems);
-    if (type) subjects.push(type);
+    if (type) {
+      subjects.push(type);
+    }
   }
 
   if (rule.fields !== undefined) {
     for (const field of stringList(rule.fields, 'fields', label, problems) ?? []) {
       // `createMongoAbility` matches fields by pattern, so `address.*` is legal.
       const [head = ''] = field.split('.');
-      if (head.includes('*')) continue;
+      if (head.includes('*')) {
+        continue;
+      }
       for (const type of subjects) {
         if (!(head in type.getFields())) {
           problems.push(`${label}: field \`${field}\` is not a field of \`${type.name}\`.`);
@@ -249,7 +255,9 @@ function subjectType(
     problems.push(`${label}: subject \`${name}\` is a root operation type, not a subject.`);
     return undefined;
   }
-  if (isObjectType(type)) return type;
+  if (isObjectType(type)) {
+    return type;
+  }
   const hint =
     isInterfaceType(type) || isUnionType(type)
       ? ' Subjects are detected by `__typename`, which is always a concrete object type, so this rule would never match a tagged object — attach it to each implementing type instead.'
@@ -284,8 +292,9 @@ function walkConditions(
         continue;
       }
       value.forEach((member, i) => {
-        if (isPlainObject(member)) walkConditions(member, types, label, problems);
-        else {
+        if (isPlainObject(member)) {
+          walkConditions(member, types, label, problems);
+        } else {
           problems.push(
             `${label}: \`${key}[${i}]\` is ${describeValue(member)}, not a condition object.`,
           );
@@ -335,7 +344,9 @@ function resolvePath(
   for (const type of types) {
     let current: GraphQLNamedType = type;
     for (const [i, segment] of segments.entries()) {
-      if (!isObjectType(current) && !isInterfaceType(current)) break;
+      if (!isObjectType(current) && !isInterfaceType(current)) {
+        break;
+      }
       const field: GraphQLField<unknown, unknown> | undefined = current.getFields()[segment];
       if (!field) {
         ok = false;
@@ -348,7 +359,9 @@ function resolvePath(
       }
       current = getNamedType(field.type);
     }
-    if (ok && (isObjectType(current) || isInterfaceType(current))) leaves.push(current);
+    if (ok && (isObjectType(current) || isInterfaceType(current))) {
+      leaves.push(current);
+    }
   }
 
   return ok && leaves.length > 0 ? leaves : undefined;
@@ -372,10 +385,14 @@ function checkOperators(
   label: string,
   problems: string[],
 ): void {
-  if (!isPlainObject(value)) return;
+  if (!isPlainObject(value)) {
+    return;
+  }
   const entries = Object.entries(value);
   const dollars = entries.filter(([key]) => key.startsWith('$'));
-  if (dollars.length === 0) return;
+  if (dollars.length === 0) {
+    return;
+  }
   if (dollars.length !== entries.length) {
     const plain = entries.find(([key]) => !key.startsWith('$'))?.[0];
     problems.push(
@@ -391,8 +408,9 @@ function checkOperators(
     } else if (operator === '$not') {
       checkOperators(path, operand, leaves, label, problems);
     } else if (operator === '$elemMatch') {
-      if (isPlainObject(operand)) walkConditions(operand, leaves, label, problems);
-      else {
+      if (isPlainObject(operand)) {
+        walkConditions(operand, leaves, label, problems);
+      } else {
         problems.push(
           `${label}: \`$elemMatch\` on \`${path}\` must be a condition object, not ${describeValue(operand)}.`,
         );
@@ -418,9 +436,13 @@ function stringList(
   label: string,
   problems: string[],
 ): readonly string[] | undefined {
-  if (typeof value === 'string') return [value];
+  if (typeof value === 'string') {
+    return [value];
+  }
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-    if (value.length > 0) return value;
+    if (value.length > 0) {
+      return value;
+    }
     problems.push(`${label}: \`${property}\` is an empty array.`);
     return undefined;
   }
@@ -443,7 +465,9 @@ function stringList(
 function labelOf(rule: RawRule, index: number): string {
   const actions = quietStringList(rule.action);
   const subjects = quietStringList(rule.subject);
-  if (!actions || !subjects) return `Rule ${index}`;
+  if (!actions || !subjects) {
+    return `Rule ${index}`;
+  }
   const quote = (names: readonly string[]) => names.map((name) => `\`${name}\``).join(', ');
   return `Rule ${index} (${quote(actions)} on ${quote(subjects)})`;
 }
@@ -455,7 +479,9 @@ function labelOf(rule: RawRule, index: number): string {
  * @returns The list, or `undefined` when it is neither.
  */
 function quietStringList(value: unknown): readonly string[] | undefined {
-  if (typeof value === 'string') return [value];
+  if (typeof value === 'string') {
+    return [value];
+  }
   if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string')) {
     return value;
   }
@@ -479,9 +505,17 @@ function isPlainObject(value: unknown): value is object {
  * @returns The phrase.
  */
 function describeValue(value: unknown): string {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'an array';
-  if (typeof value === 'string') return `the string ${JSON.stringify(value)}`;
-  if (typeof value === 'object') return 'an object';
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'an array';
+  }
+  if (typeof value === 'string') {
+    return `the string ${JSON.stringify(value)}`;
+  }
+  if (typeof value === 'object') {
+    return 'an object';
+  }
   return `a ${typeof value}`;
 }

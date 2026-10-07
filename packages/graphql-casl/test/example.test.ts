@@ -62,7 +62,9 @@ type AppAbility = GraphQLAbility<AppSubjectMap>;
 
 function defineAbilitiesFor(userId: string | undefined): AppAbility {
   const { can, build } = createGraphQLAbility<AppSubjectMap>();
-  if (!userId) return build(); // no rules ⇒ anonymous callers can do nothing
+  if (!userId) {
+    return build(); // no rules ⇒ anonymous callers can do nothing
+  }
   can(Actions.read, 'Todo'); // read any todo
   can(Actions.create, 'Todo'); // create todos
   can(Actions.update, 'Todo', { ownerId: userId }); // but only update your own
@@ -134,7 +136,9 @@ const resolvers: Resolvers<Context> = {
       // pass the check) but someone else's `id`. Middleware can't see the
       // to-be-loaded row, so the resolver enforces the row↔owner link.
       const todo = TODOS.find((t) => t.id === args.id && t.ownerId === args.ownerId);
-      if (!todo) return null;
+      if (!todo) {
+        return null;
+      }
       todo.done = args.done;
       return todo;
     },

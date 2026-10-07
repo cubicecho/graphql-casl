@@ -91,7 +91,9 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   for (const rule of rules) {
     if (rule.inverted) {
       // Nothing below an unconditioned `cannot` can be reached.
-      if (!rule.conditions) break;
+      if (!rule.conditions) {
+        break;
+      }
       bounds.push(translate(rule.conditions, true));
       continue;
     }
@@ -104,7 +106,9 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   }
 
   if (unrestricted) {
-    if (bounds.length === 0) return adapter.everything();
+    if (bounds.length === 0) {
+      return adapter.everything();
+    }
     branches.push(and(bounds));
   }
 

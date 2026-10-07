@@ -271,7 +271,9 @@ class Translator {
       // Interfaces are not walked on their own: the runtime resolves fields
       // against the concrete object type, so their directives are projected
       // onto each implementing type below instead.
-      if (!isObjectType(type) || isIntrospectionType(type)) continue;
+      if (!isObjectType(type) || isIntrospectionType(type)) {
+        continue;
+      }
 
       const root = this.roots.has(type.name);
       const interfaces = type.getInterfaces();
@@ -281,7 +283,9 @@ class Translator {
       ];
 
       const entry: Record<string, CheckableRule> = {};
-      if (typeRules.length > 0) entry[WILDCARD] = combine(typeRules);
+      if (typeRules.length > 0) {
+        entry[WILDCARD] = combine(typeRules);
+      }
 
       for (const field of Object.values(type.getFields())) {
         const fieldRules = [
@@ -291,10 +295,14 @@ class Translator {
         // A field with its own directives still honours the type's: the two
         // compose with AND here, rather than the field entry shadowing the
         // wildcard entry under the map's precedence rules.
-        if (fieldRules.length > 0) entry[field.name] = combine([...typeRules, ...fieldRules]);
+        if (fieldRules.length > 0) {
+          entry[field.name] = combine([...typeRules, ...fieldRules]);
+        }
       }
 
-      if (Object.keys(entry).length > 0) map[type.name] = entry;
+      if (Object.keys(entry).length > 0) {
+        map[type.name] = entry;
+      }
     }
 
     if (this.problems.length > 0) {
@@ -327,7 +335,9 @@ class Translator {
    */
   private interfaceFieldRules(iface: GraphQLInterfaceType, fieldName: string): CheckableRule[] {
     const field = iface.getFields()[fieldName];
-    if (!field) return [];
+    if (!field) {
+      return [];
+    }
     return this.memo(`${iface.name}.${fieldName}`, () =>
       this.rulesAt(fieldDirectives(field), { typeName: iface.name, field, root: false }),
     );
@@ -366,7 +376,9 @@ class Translator {
           : name === RULE
             ? this.ruleRule(argumentsOf(node), site)
             : undefined;
-      if (built) rules.push(built);
+      if (built) {
+        rules.push(built);
+      }
     }
     return rules;
   }
@@ -415,7 +427,9 @@ class Translator {
    * @returns The subject name, or `undefined` after recording a problem.
    */
   private inferSubject(site: Site): string | undefined {
-    if (!site.root) return site.typeName;
+    if (!site.root) {
+      return site.typeName;
+    }
     const label = labelOf(site);
     if (!site.field) {
       this.problems.push(
@@ -476,7 +490,9 @@ class Translator {
         return found as CheckableRule;
       }),
     );
-    if (broken) return undefined;
+    if (broken) {
+      return undefined;
+    }
 
     // Inner lists are AND groups, the outer list ORs them. A single name at
     // either level is used as-is rather than wrapped in a one-operand combinator.

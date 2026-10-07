@@ -103,7 +103,9 @@ const typed = createTyped<M>();
 const canUser = createCan<Context, M>(
   async (ctx) => {
     const { can, build } = createGraphQLAbility<M>();
-    for (const [action, subject] of GRANTS[ctx.userId ?? ''] ?? []) can(action, subject);
+    for (const [action, subject] of GRANTS[ctx.userId ?? ''] ?? []) {
+      can(action, subject);
+    }
     return build();
   },
   (ctx) => ctx.userId != null,
@@ -178,7 +180,9 @@ const resolvers = {
   Mutation: {
     updateNote: (_p: unknown, args: { id: string; body: string }) => {
       const note = NOTES.find((n) => n.id === args.id);
-      if (!note) return null;
+      if (!note) {
+        return null;
+      }
       note.body = args.body;
       return note;
     },
@@ -232,7 +236,9 @@ describe('permissionsFromDirectives', () => {
     expect(Object.keys(map.Mutation as object).sort()).toEqual(['purge', 'updateNote']);
     expect(Object.keys(map.User as object)).toEqual(['email']);
     for (const entry of Object.values(map)) {
-      for (const value of Object.values(entry as object)) expect(typeof value).toBe('function');
+      for (const value of Object.values(entry as object)) {
+        expect(typeof value).toBe('function');
+      }
     }
   });
 

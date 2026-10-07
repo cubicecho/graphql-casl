@@ -372,7 +372,9 @@ describe('grants / granted — the synchronous path', () => {
     const rows = [{}, {}];
     const granting = grants(accept, 'x');
     expect(granting(syncResolve(rows), null, null, ctx, info)).toBe(rows);
-    for (const row of rows) expect(granted('x').check(row, null, ctx, info)).toBe(true);
+    for (const row of rows) {
+      expect(granted('x').check(row, null, ctx, info)).toBe(true);
+    }
 
     const later = [{}];
     const out = granting(async () => later, null, null, ctx, info);

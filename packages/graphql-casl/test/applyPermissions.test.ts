@@ -128,7 +128,9 @@ describe('applyPermissions — schema validation', () => {
     try {
       apply(permissions);
     } catch (error) {
-      if (error instanceof PermissionsError) return [...error.problems];
+      if (error instanceof PermissionsError) {
+        return [...error.problems];
+      }
       throw error;
     }
     throw new Error('expected applyPermissions to throw');
@@ -389,7 +391,9 @@ describe('applyPermissions — rules on interfaces and unions', () => {
     try {
       validatePermissions(abstractSchema(), permissions);
     } catch (error) {
-      if (error instanceof PermissionsError) return [...error.problems];
+      if (error instanceof PermissionsError) {
+        return [...error.problems];
+      }
       throw error;
     }
     return [];
@@ -757,7 +761,9 @@ describe('applyPermissions — a fields() rule as a type-level entry', () => {
     const canUser = createCan<{ userId?: string }, M>(
       async (ctx) => {
         const { can, build } = createGraphQLAbility<M>();
-        if (!ctx.userId) return build();
+        if (!ctx.userId) {
+          return build();
+        }
         can('read', 'Note', ['id', 'body']);
         can('read', 'Note', ['secret'], { userId: ctx.userId });
         return build();

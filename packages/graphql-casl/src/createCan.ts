@@ -69,7 +69,9 @@ export interface CreateCanOptions {
  */
 function reasonFor(ability: AbilityLike, action: Action, subject: unknown): string | undefined {
   const { relevantRuleFor } = ability as AbilityLike & ReasonIntrospection;
-  if (typeof relevantRuleFor !== 'function') return undefined;
+  if (typeof relevantRuleFor !== 'function') {
+    return undefined;
+  }
   const reason = relevantRuleFor.call(ability, action, subject)?.reason;
   return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
 }
@@ -108,9 +110,13 @@ type RuleIntrospection = {
  */
 function isUnconditionedCheck(ability: AbilityLike, action: Action, subject: string): boolean {
   const { rulesFor } = ability as AbilityLike & RuleIntrospection;
-  if (typeof rulesFor !== 'function') return false;
+  if (typeof rulesFor !== 'function') {
+    return false;
+  }
   const rules = rulesFor.call(ability, action, subject);
-  if (!rules || rules.length === 0) return false;
+  if (!rules || rules.length === 0) {
+    return false;
+  }
   return rules.every((rule) => rule.inverted !== true && rule.conditions != null);
 }
 
@@ -158,7 +164,9 @@ function unconditionedMessage(action: Action, subject: string): string {
  * @returns The values to authorize.
  */
 function subjectCandidates(result: unknown): unknown[] {
-  if (result == null) return [];
+  if (result == null) {
+    return [];
+  }
   return Array.isArray(result) ? result.filter((item) => item != null) : [result];
 }
 
@@ -469,7 +477,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     }
     const key = context as unknown as object;
     const cached = abilityCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      return cached;
+    }
     const pending = Promise.resolve(getAbility(context));
     abilityCache.set(key, pending);
     pending.then(
@@ -497,7 +507,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     context: TContext,
     decide: (ability: AbilityLike) => RuleResult,
   ): RuleResult | Promise<RuleResult> {
-    if (!isAuthenticated(context)) return new Error('Not authenticated');
+    if (!isAuthenticated(context)) {
+      return new Error('Not authenticated');
+    }
     const ability = resolveAbility(context);
     return isThenable(ability) ? ability.then(decide) : decide(ability);
   }
@@ -532,7 +544,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     function verdict(ability: AbilityLike, instance: unknown): RuleResult {
       // `instance` is an opaque subject value or name here; the ability's `can`
       // is narrowly overloaded, so check through the loose AbilityLike shape.
-      if (ability.can(action, instance)) return true;
+      if (ability.can(action, instance)) {
+        return true;
+      }
       // A `cannot(...).because('...')` reason is the rule author's own words
       // for this denial; prefer it over the generic message.
       return reasonFor(ability, action, instance) ?? false;
@@ -547,7 +561,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     function bareVerdict(ability: AbilityLike): RuleResult {
       const key = rulesKeyOf(ability);
       const memo = key && bareVerdicts.get(key);
-      if (memo !== undefined) return memo;
+      if (memo !== undefined) {
+        return memo;
+      }
 
       let result: RuleResult | undefined;
       if (
@@ -563,7 +579,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
         }
       }
       result ??= verdict(ability, subject);
-      if (key) bareVerdicts.set(key, result);
+      if (key) {
+        bareVerdicts.set(key, result);
+      }
       return result;
     }
 
@@ -619,7 +637,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
                 )
               : subject;
 
-          if (ability.can(action, instance, info.fieldName)) return true;
+          if (ability.can(action, instance, info.fieldName)) {
+            return true;
+          }
           return reasonFor(ability, action, instance) ?? false;
         }),
       { name: `can(${action}, ${subject}, <field>)` },
@@ -670,7 +690,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
           // Marked as a denial so the error-control and masking options in
           // `applyPermissions` can tell it apart from a rule that broke.
           const denial = denialFrom(reasonFor(ability, action, instance) ?? false);
-          if (denial) throw denial;
+          if (denial) {
+            throw denial;
+          }
         }
       }
       return result;

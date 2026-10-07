@@ -151,7 +151,9 @@ export function isLeafAdapter<TFilter>(
 export function ruleTranslator<TFilter>(
   adapter: FilterAdapter<TFilter>,
 ): (conditions: object, inverted: boolean) => TFilter {
-  if (!isLeafAdapter(adapter)) return adapter.rule.bind(adapter);
+  if (!isLeafAdapter(adapter)) {
+    return adapter.rule.bind(adapter);
+  }
   const leafAdapter = adapter;
   return (conditions, inverted) => {
     const filter = walk(conditions, leafAdapter);
@@ -167,7 +169,9 @@ export function ruleTranslator<TFilter>(
  * @returns The only part, their `and`, or `everything()` for none.
  */
 function combine<TFilter>(parts: TFilter[], adapter: LeafAdapter<TFilter>): TFilter {
-  if (parts.length === 0) return adapter.everything();
+  if (parts.length === 0) {
+    return adapter.everything();
+  }
   return parts.length === 1 ? (parts[0] as TFilter) : adapter.and(parts);
 }
 
@@ -186,9 +190,13 @@ function walk<TFilter>(conditions: object, adapter: LeafAdapter<TFilter>): TFilt
       // Rules rehydrated from a database can carry these; the typed builder
       // cannot emit them, so they are rare but must not be dropped.
       const group = asGroup(key, value).map((member) => walk(member, adapter));
-      if (key === '$and') parts.push(adapter.and(group));
-      else if (key === '$or') parts.push(adapter.or(group));
-      else parts.push(adapter.not(adapter.or(group)));
+      if (key === '$and') {
+        parts.push(adapter.and(group));
+      } else if (key === '$or') {
+        parts.push(adapter.or(group));
+      } else {
+        parts.push(adapter.not(adapter.or(group)));
+      }
       continue;
     }
     if (key.startsWith('$')) {
@@ -228,7 +236,9 @@ function asGroup(key: string, value: unknown): object[] {
  */
 function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFilter>): TFilter {
   const operators = operatorEntries(value);
-  if (!operators) return adapter.leaf({ path, operator: '$eq', value });
+  if (!operators) {
+    return adapter.leaf({ path, operator: '$eq', value });
+  }
 
   const parts = operators.map(([operator, operand]) => {
     if (!LEAF_OPERATORS.has(operator)) {
@@ -257,12 +267,18 @@ function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFi
  * so this does too, rather than guessing.
  */
 function operatorEntries(value: unknown): [string, unknown][] | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
   // A `Date` or `RegExp` has no own enumerable keys, so it falls out here too.
   const entries = Object.entries(value);
-  if (entries.length === 0) return undefined;
+  if (entries.length === 0) {
+    return undefined;
+  }
   const dollars = entries.filter(([key]) => key.startsWith('$'));
-  if (dollars.length === 0) return undefined;
+  if (dollars.length === 0) {
+    return undefined;
+  }
   if (dollars.length !== entries.length) {
     const plain = entries.find(([key]) => !key.startsWith('$'));
     throw new Error(

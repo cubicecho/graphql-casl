@@ -54,9 +54,13 @@ function isObject(value: unknown): value is object {
  * @param scopes - The scopes to grant.
  */
 function tag(context: object, value: unknown, scopes: readonly string[]): void {
-  if (!isObject(value)) return;
+  if (!isObject(value)) {
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const item of value) tag(context, item, scopes);
+    for (const item of value) {
+      tag(context, item, scopes);
+    }
     return;
   }
   let byObject = grantsByContext.get(context);
@@ -69,7 +73,9 @@ function tag(context: object, value: unknown, scopes: readonly string[]): void {
     held = new Set();
     byObject.set(value, held);
   }
-  for (const scope of scopes) held.add(scope);
+  for (const scope of scopes) {
+    held.add(scope);
+  }
 }
 
 /**
@@ -81,7 +87,9 @@ function tag(context: object, value: unknown, scopes: readonly string[]): void {
  * @returns `true` when the grant exists.
  */
 function hasGrant(context: unknown, parent: unknown, scope: string): boolean {
-  if (!isObject(context) || !isObject(parent)) return false;
+  if (!isObject(context) || !isObject(parent)) {
+    return false;
+  }
   return grantsByContext.get(context)?.get(parent)?.has(scope) === true;
 }
 
@@ -149,7 +157,9 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   const granting: Rule = (resolve, parent, args, context, info) => {
     const out = inner(resolve, parent, args, context, info);
     // Nothing to hang the grants off — see the module comment.
-    if (!isObject(context)) return out;
+    if (!isObject(context)) {
+      return out;
+    }
     if (isThenable(out)) {
       return Promise.resolve(out).then((value) => {
         tag(context, value, scopes);
@@ -166,7 +176,9 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   // `applyPermissions` can check the field declares it. Wrapping one must not
   // hide that — the same care `wrap()` takes.
   const scopeInfo = (inner as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO];
-  if (scopeInfo) Object.defineProperty(granting, SCOPE_INFO, { value: scopeInfo });
+  if (scopeInfo) {
+    Object.defineProperty(granting, SCOPE_INFO, { value: scopeInfo });
+  }
   return granting;
 }
 

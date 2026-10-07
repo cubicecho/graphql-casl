@@ -43,7 +43,9 @@ const typed = createTyped<ExampleSubjectMap>();
 
 function buildAbility(userId: string | undefined): TestAbility {
   const { can, build } = createGraphQLAbility<ExampleSubjectMap>();
-  if (!userId) return build(); // no rules ⇒ everything denied
+  if (!userId) {
+    return build(); // no rules ⇒ everything denied
+  }
   can(Actions.read, 'Note');
   can(Actions.update, 'Note', { userId });
   return build();
@@ -726,7 +728,9 @@ describe('createCan — combinability', () => {
 describe('createCan — CASL reason plumbing', () => {
   function abilityWithReason(userId: string | undefined): TestAbility {
     const { can, cannot, build } = createGraphQLAbility<ExampleSubjectMap>();
-    if (!userId) return build();
+    if (!userId) {
+      return build();
+    }
     can(Actions.update, 'Note', { userId });
     cannot(Actions.update, 'Note', { id: 'locked' }).because('That note is locked');
     return build();
@@ -784,7 +788,9 @@ describe('createCan.fields — CASL field-level permissions', () => {
 
   function fieldAbility(userId: string | undefined) {
     const { can, build } = createGraphQLAbility<FieldSubjectMap>();
-    if (!userId) return build();
+    if (!userId) {
+      return build();
+    }
     can(Actions.read, 'User', ['id', 'name']);
     can(Actions.read, 'User', ['email'], { id: userId }); // only your own
     return build();
@@ -907,7 +913,9 @@ describe('createCan — rule cache option', () => {
     const update = canUser(Actions.update, 'Note', getSubjectData);
     const row = { userId: 'u1' };
     const resolve = vi.fn().mockResolvedValue('ok');
-    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    for (let i = 0; i < 5; i++) {
+      await update(resolve, row, {}, ctx, info);
+    }
     expect(getSubjectData).toHaveBeenCalledTimes(5);
   });
 
@@ -916,7 +924,9 @@ describe('createCan — rule cache option', () => {
     const update = canUser(Actions.update, 'Note', getSubjectData, { cache: 'strict' });
     const row = { userId: 'u1' };
     const resolve = vi.fn().mockResolvedValue('ok');
-    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    for (let i = 0; i < 5; i++) {
+      await update(resolve, row, {}, ctx, info);
+    }
     expect(getSubjectData).toHaveBeenCalledOnce();
     // Another row object is another subject.
     await update(resolve, { userId: 'u1' }, {}, ctx, info);

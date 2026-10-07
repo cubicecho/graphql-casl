@@ -11,7 +11,10 @@
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
-    "rules": { "preset": "recommended" }
+    "rules": {
+      "preset": "recommended",
+      "style": { "useBlockStatements": "error" }
+    }
   },
   "formatter": {
     "enabled": true,
