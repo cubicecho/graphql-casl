@@ -233,6 +233,7 @@ function combine(rules: readonly CheckableRule[]): CheckableRule {
  * mistakes reports all three.
  */
 class Translator {
+  private readonly schema: GraphQLSchema;
   private readonly problems: string[] = [];
   private readonly can: ((action: Action, subject: string) => CheckableRule) | undefined;
   private readonly rules: ReadonlyMap<string, CheckableRule> | undefined;
@@ -246,10 +247,8 @@ class Translator {
    * @param schema - The schema whose directives are translated.
    * @param options - The `can` builder and the rule registry.
    */
-  constructor(
-    private readonly schema: GraphQLSchema,
-    options: DirectivePermissionsOptions,
-  ) {
+  constructor(schema: GraphQLSchema, options: DirectivePermissionsOptions) {
+    this.schema = schema;
     this.can = options.can as typeof this.can;
     this.rules = options.rules && new Map(Object.entries(options.rules));
     this.roots = new Set(
