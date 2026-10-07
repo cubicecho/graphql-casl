@@ -33,14 +33,14 @@ export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
 export type {
   ApplyPermissionsOptions,
-  DenialMode,
-  DenialReport,
   FallbackError,
   PermissionResolver,
 } from './applyPermissions.js';
 export {
   AUTHORIZATION_ERRORS_EXTENSION,
   applyPermissions,
+  DenialMode,
+  DenialReport,
   PermissionsError,
   reportDenials,
   resolvePermissions,
@@ -64,9 +64,8 @@ export type {
   RequireCanBare,
   RequireCanFields,
   RequireCanOnResult,
-  UnconditionedSubjectMode,
 } from './createCan.js';
-export { createCan } from './createCan.js';
+export { createCan, UnconditionedSubjectMode } from './createCan.js';
 export { granted, grants } from './grants.js';
 export type {
   GraphQLAbilities,
@@ -78,7 +77,6 @@ export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
 export type {
   AnyResolvers,
   CacheKey,
-  CacheMode,
   Check,
   CheckableRule,
   PermissionsMap,
@@ -87,7 +85,7 @@ export type {
   RuleResult,
   Wildcard,
 } from './rules.js';
-export { accept, deny, isCheckableRule, rule, WILDCARD } from './rules.js';
+export { accept, CacheMode, deny, isCheckableRule, rule, WILDCARD } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';
 export type {

@@ -483,11 +483,20 @@ export const UNAUTHORIZED_FIELD_OR_TYPE = 'UNAUTHORIZED_FIELD_OR_TYPE';
  */
 export const AUTHORIZATION_ERRORS_EXTENSION = 'authorizationErrors';
 
-/** What a denied field does — see {@link ApplyPermissionsOptions.onDeny}. */
-export type DenialMode = 'reject' | 'filter' | 'mask';
+/**
+ * What a denied field does — see {@link ApplyPermissionsOptions.onDeny}. The
+ * object names each mode, so `onDeny: DenialMode.Filter` reads the same as
+ * `onDeny: 'filter'`.
+ */
+export const DenialMode = { Reject: 'reject', Filter: 'filter', Mask: 'mask' } as const;
+export type DenialMode = (typeof DenialMode)[keyof typeof DenialMode];
 
-/** Where a filtered denial is reported — see {@link ApplyPermissionsOptions.report}. */
-export type DenialReport = 'errors' | 'extensions';
+/**
+ * Where a filtered denial is reported — see {@link ApplyPermissionsOptions.report}.
+ * The object names each place: `report: DenialReport.Extensions`.
+ */
+export const DenialReport = { Errors: 'errors', Extensions: 'extensions' } as const;
+export type DenialReport = (typeof DenialReport)[keyof typeof DenialReport];
 
 /** Filtered denials the response itself could not carry, per request context. */
 interface DenialRecord {

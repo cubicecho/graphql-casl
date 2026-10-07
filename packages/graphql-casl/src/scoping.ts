@@ -42,8 +42,12 @@ import type { GraphQLAbility } from './graphqlAbility.js';
 import { CAN_INTERNALS, type CanInternals, SCOPE_INFO, type ScopeInfo } from './internal.js';
 import { denialFrom, type Rule } from './rules.js';
 
-/** What {@link scopeArgs} does when the ability permits no row at all. */
-export type OnDenyAll = 'deny' | 'nothing';
+/**
+ * What {@link scopeArgs} does when the ability permits no row at all. The
+ * object names each choice: `onDenyAll: OnDenyAll.Nothing`.
+ */
+export const OnDenyAll = { Deny: 'deny', Nothing: 'nothing' } as const;
+export type OnDenyAll = (typeof OnDenyAll)[keyof typeof OnDenyAll];
 
 /** Options for {@link scopeArgs}. */
 export interface ScopeOptions<TFilter> {

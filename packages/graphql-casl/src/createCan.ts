@@ -31,8 +31,12 @@ import {
  * - `'throw'` — deny with an explanatory error. Recommended for new projects.
  * - `'allow'` — say nothing. For deliberate "is this possible at all" gates, e.g.
  *   guarding a list field whose rows are filtered inside the resolver.
+ *
+ * The object names each mode: `onUnconditionedSubject: UnconditionedSubjectMode.Throw`.
  */
-export type UnconditionedSubjectMode = 'warn' | 'throw' | 'allow';
+export const UnconditionedSubjectMode = { Warn: 'warn', Throw: 'throw', Allow: 'allow' } as const;
+export type UnconditionedSubjectMode =
+  (typeof UnconditionedSubjectMode)[keyof typeof UnconditionedSubjectMode];
 
 /** Options for {@link createCan}. */
 export interface CreateCanOptions {

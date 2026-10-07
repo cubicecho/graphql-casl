@@ -172,8 +172,15 @@ export function denialFrom(result: RuleResult): Error | undefined {
  * Caching is per rule and per request: entries hang off the context object in a
  * `WeakMap`, so they are unreachable once the request is. A context that is not
  * an object cannot be a `WeakMap` key, so such a rule is simply never cached.
+ *
+ * The object names each mode: `cache: CacheMode.Contextual`.
  */
-export type CacheMode = 'no_cache' | 'contextual' | 'strict';
+export const CacheMode = {
+  NoCache: 'no_cache',
+  Contextual: 'contextual',
+  Strict: 'strict',
+} as const;
+export type CacheMode = (typeof CacheMode)[keyof typeof CacheMode];
 
 /**
  * A custom cache key for {@link rule}'s `cache` option — the same escape hatch

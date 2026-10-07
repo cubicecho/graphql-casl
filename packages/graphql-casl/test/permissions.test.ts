@@ -5,10 +5,13 @@ import {
   Actions,
   accept,
   and,
+  CacheMode,
   createCan,
   createGraphQLAbility,
   createSubjects,
   createTyped,
+  DenialMode,
+  DenialReport,
   deny,
   type GraphQLAbility,
   isAction,
@@ -17,9 +20,12 @@ import {
   type PermissionsMap,
   type RequireCan,
   type Rule,
+  rule,
   subjectsOf,
+  UnconditionedSubjectMode,
   WILDCARD,
 } from '../src/index.js';
+import { OnDenyAll } from '../src/scoping.js';
 
 // An example subject map — in a real app this comes from SubjectMap<Resolvers, ResolversTypes>.
 type ExampleSubjectMap = {
@@ -74,6 +80,21 @@ describe('isAction', () => {
 describe('WILDCARD', () => {
   it('is the key a permissions map treats as the wildcard', () => {
     expect(WILDCARD).toBe('*');
+  });
+});
+
+describe('mode vocabularies', () => {
+  it('names every value its option accepts', () => {
+    expect(Object.values(DenialMode)).toEqual(['reject', 'filter', 'mask']);
+    expect(Object.values(DenialReport)).toEqual(['errors', 'extensions']);
+    expect(Object.values(CacheMode)).toEqual(['no_cache', 'contextual', 'strict']);
+    expect(Object.values(UnconditionedSubjectMode)).toEqual(['warn', 'throw', 'allow']);
+    expect(Object.values(OnDenyAll)).toEqual(['deny', 'nothing']);
+  });
+
+  it('is accepted where the string it names is', () => {
+    const cached = rule(() => true, { cache: CacheMode.Contextual });
+    expect(isCheckableRule(cached)).toBe(true);
   });
 });
 
