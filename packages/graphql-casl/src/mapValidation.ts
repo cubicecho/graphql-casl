@@ -9,7 +9,9 @@
  */
 
 import {
+  type GraphQLAbstractType,
   type GraphQLField,
+  type GraphQLNamedType,
   type GraphQLObjectType,
   type GraphQLSchema,
   isAbstractType,
@@ -175,6 +177,211 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
   return undefined;
 }
 
+/** A type's map entry by field key, with the type-level shorthand expanded. */
+type Entry = Record<string, Rule | undefined>;
+
+/** The kinds of type an entry can guard: an object type, or what stands for some. */
+type GuardableType = GraphQLObjectType | GraphQLAbstractType;
+
+/**
+ * Every object-type field in the schema, by field name — what a `*`-keyed rule
+ * would actually guard.
+ *
+ * @param schema - The schema.
+ * @returns Field name to every guardable field with that name.
+ */
+function guardableFieldsOf(schema: GraphQLSchema): ReadonlyMap<string, AnyField[]> {
+  const guardableFields = new Map<string, AnyField[]>();
+  for (const type of Object.values(schema.getTypeMap())) {
+    if (isObjectType(type) && isIntrospectionType(type) === false) {
+      for (const field of Object.values(type.getFields())) {
+        getOrCreate(guardableFields, field.name, () => []).push(field);
+      }
+    }
+  }
+  return guardableFields;
+}
+
+/**
+ * The problem with a map value that is not a rule.
+ *
+ * @param label - The map key, for the message.
+ * @param rule - The map value.
+ * @returns The problem, or `undefined` for a function.
+ */
+function nonFunctionProblem(label: string, rule: unknown): string | undefined {
+  return isRule(rule) ? undefined : `Rule for \`${label}\` is ${typeof rule}, not a function.`;
+}
+
+/**
+ * The problem with one named field of the wildcard type, `'*': { field: rule }`.
+ *
+ * @param fieldName - The field key.
+ * @param rule - Its rule.
+ * @param guardableFields - Every guardable field, by name.
+ * @returns The problem, or `undefined`.
+ */
+function wildcardFieldProblem(
+  fieldName: string,
+  rule: Rule,
+  guardableFields: ReadonlyMap<string, AnyField[]>,
+): string | undefined {
+  const targets = guardableFields.get(fieldName);
+  if (!targets) {
+    return `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`;
+  }
+  const label = `*.${fieldName}`;
+  return nonFunctionProblem(label, rule) ?? scopeProblem(rule, label, targets);
+}
+
+/**
+ * The problem with the catch-all rule, `'*': { '*': rule }`.
+ *
+ * @param rule - The rule, if the map has one.
+ * @returns The problem, or `undefined`.
+ */
+function catchAllProblem(rule: Rule | undefined): string | undefined {
+  if (rule === undefined) {
+    return undefined;
+  }
+  const notFunction = nonFunctionProblem('*.*', rule);
+  if (notFunction) {
+    return notFunction;
+  }
+  if (scopeTargetsOf(rule).length === 0) {
+    return undefined;
+  }
+  return (
+    'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
+    'every type. Attach the scoping rule to the fields it filters.'
+  );
+}
+
+/**
+ * The problems with the wildcard type's entry.
+ *
+ * @param entry - The `'*'` entry.
+ * @param guardableFields - Every guardable field, by name.
+ * @returns One message per problem.
+ *
+ * @remarks
+ * A wildcard type is not looked up in the schema; its field keys are checked
+ * against every guardable field instead, so a typo there is still caught.
+ */
+function wildcardEntryProblems(entry: Entry, guardableFields: ReadonlyMap<string, AnyField[]>): string[] {
+  const problems: string[] = [];
+  for (const [fieldName, rule] of Object.entries(entry)) {
+    if (rule === undefined || fieldName === WILDCARD) {
+      continue;
+    }
+    const problem = wildcardFieldProblem(fieldName, rule, guardableFields);
+    if (problem) {
+      problems.push(problem);
+    }
+  }
+  const catchAll = catchAllProblem(entry[WILDCARD]);
+  if (catchAll) {
+    problems.push(catchAll);
+  }
+  return problems;
+}
+
+/**
+ * Narrows a map key's type to one an entry can guard.
+ *
+ * @param type - The schema's type for the key, if it has one.
+ * @returns The type, or `undefined` when nothing can be attached to it.
+ */
+function guardableTypeOf(type: GraphQLNamedType | undefined): GuardableType | undefined {
+  if (!type || isIntrospectionType(type)) {
+    return undefined;
+  }
+  return isObjectType(type) || isAbstractType(type) ? type : undefined;
+}
+
+/**
+ * The problem with a map key that names nothing guardable.
+ *
+ * @param typeName - The map key.
+ * @param type - The schema's type for it, if it has one.
+ * @returns Why no entry can be attached to it.
+ */
+function unguardableProblem(typeName: string, type: GraphQLNamedType | undefined): string {
+  if (!type) {
+    return `Type \`${typeName}\` is in the permissions map but not in the schema.`;
+  }
+  if (isIntrospectionType(type)) {
+    return `\`${typeName}\` is an introspection type and cannot be guarded.`;
+  }
+  return `\`${typeName}\` is ${describeKind(type)}, not an object type.`;
+}
+
+/**
+ * The problem with a field key the type does not declare.
+ *
+ * @param type - The entry's type.
+ * @param fieldName - The field key.
+ * @returns The problem, or `undefined` for the wildcard or a declared field.
+ *
+ * @remarks
+ * A union declares no fields of its own, so only `'*'` can be attached to it.
+ */
+function undeclaredFieldProblem(type: GuardableType, fieldName: string): string | undefined {
+  if (fieldName === WILDCARD) {
+    return undefined;
+  }
+  const label = `${type.name}.${fieldName}`;
+  if (isUnionType(type)) {
+    return (
+      `Field \`${label}\` is in the permissions map but \`${type.name}\` is a union type, ` +
+      "which declares no fields — only `'*'` can be attached to a union."
+    );
+  }
+  if (fieldName in type.getFields()) {
+    return undefined;
+  }
+  return isInterfaceType(type)
+    ? `Field \`${label}\` is in the permissions map but interface \`${type.name}\` does not declare it.`
+    : `Field \`${label}\` is in the permissions map but not in the schema.`;
+}
+
+/**
+ * The problems with one named type's entry.
+ *
+ * @param schema - The schema.
+ * @param type - The entry's type.
+ * @param entry - The entry.
+ * @returns One message per problem.
+ *
+ * @remarks
+ * An abstract entry guards the fields of the object types it stands for, so a
+ * scoping rule on it is checked against that field on every one of them.
+ */
+function typeEntryProblems(schema: GraphQLSchema, type: GuardableType, entry: Entry): string[] {
+  const problems: string[] = [];
+  const guarded = isAbstractType(type) ? possibleTypesOf(schema, type) : [type];
+  for (const [fieldName, rule] of Object.entries(entry)) {
+    if (rule === undefined) {
+      continue;
+    }
+    const label = `${type.name}.${fieldName}`;
+    const invalid = undeclaredFieldProblem(type, fieldName) ?? nonFunctionProblem(label, rule);
+    if (invalid) {
+      problems.push(invalid);
+      continue;
+    }
+    const targets =
+      fieldName === WILDCARD
+        ? guarded.flatMap((object) => Object.values(object.getFields()))
+        : guarded.map((object) => object.getFields()[fieldName]);
+    const problem = scopeProblem(rule, label, targets);
+    if (problem) {
+      problems.push(problem);
+    }
+  }
+  return problems;
+}
+
 /**
  * Every way a permissions map can fail to line up with the schema.
  *
@@ -198,17 +405,7 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
 function collectProblems(schema: GraphQLSchema, permissions: RawPermissions, supertypes: Supertypes): string[] {
   const problems: string[] = [];
   const typeMap = schema.getTypeMap();
-
-  // Field name -> every object-type field with that name, so a `*`-keyed rule
-  // can be checked against all the fields it would actually guard.
-  const guardableFields = new Map<string, AnyField[]>();
-  for (const type of Object.values(typeMap)) {
-    if (isObjectType(type) && isIntrospectionType(type) === false) {
-      for (const field of Object.values(type.getFields())) {
-        getOrCreate(guardableFields, field.name, () => []).push(field);
-      }
-    }
-  }
+  const guardableFields = guardableFieldsOf(schema);
 
   for (const [typeName, rawEntry] of Object.entries(permissions)) {
     if (rawEntry == null) {
@@ -218,90 +415,17 @@ function collectProblems(schema: GraphQLSchema, permissions: RawPermissions, sup
     // checked as such — a bare scoping rule still has arguments to verify.
     const entry = isRule(rawEntry) ? { [WILDCARD]: rawEntry } : rawEntry;
 
-    // A wildcard type is not looked up in the schema; its field keys are checked
-    // against every guardable field instead, so a typo there is still caught.
     if (typeName === WILDCARD) {
-      for (const [fieldName, rule] of Object.entries(entry)) {
-        if (rule === undefined || fieldName === WILDCARD) {
-          continue;
-        }
-        const targets = guardableFields.get(fieldName);
-        if (!targets) {
-          problems.push(
-            `Field \`*.${fieldName}\` is in the permissions map but no type in the schema has a field named \`${fieldName}\`.`,
-          );
-        } else if (isRule(rule) === false) {
-          problems.push(`Rule for \`*.${fieldName}\` is ${typeof rule}, not a function.`);
-        } else {
-          const problem = scopeProblem(rule, `*.${fieldName}`, targets);
-          if (problem) {
-            problems.push(problem);
-          }
-        }
-      }
-      const wildRule = entry[WILDCARD];
-      if (wildRule !== undefined && isRule(wildRule) === false) {
-        problems.push(`Rule for \`*.*\` is ${typeof wildRule}, not a function.`);
-      } else if (wildRule !== undefined && scopeTargetsOf(wildRule).length > 0) {
-        problems.push(
-          'Rule for `*.*` rewrites a field argument, which cannot be right for every field of ' +
-            'every type. Attach the scoping rule to the fields it filters.',
-        );
-      }
+      problems.push(...wildcardEntryProblems(entry, guardableFields));
       continue;
     }
 
-    const type = typeMap[typeName];
+    const type = guardableTypeOf(typeMap[typeName]);
     if (!type) {
-      problems.push(`Type \`${typeName}\` is in the permissions map but not in the schema.`);
+      problems.push(unguardableProblem(typeName, typeMap[typeName]));
       continue;
     }
-    if (isIntrospectionType(type)) {
-      problems.push(`\`${typeName}\` is an introspection type and cannot be guarded.`);
-      continue;
-    }
-    if (isObjectType(type) === false && isAbstractType(type) === false) {
-      problems.push(`\`${typeName}\` is ${describeKind(type)}, not an object type.`);
-      continue;
-    }
-
-    // An abstract entry guards the fields of the object types it stands for. A
-    // union declares no fields of its own, so only `'*'` can be attached to it.
-    const declared = isUnionType(type) ? undefined : type.getFields();
-    const guarded = isAbstractType(type) ? possibleTypesOf(schema, type) : [type];
-    for (const [fieldName, rule] of Object.entries(entry)) {
-      if (rule === undefined) {
-        continue;
-      }
-      if (fieldName !== WILDCARD && !declared) {
-        problems.push(
-          `Field \`${typeName}.${fieldName}\` is in the permissions map but \`${typeName}\` is a union type, ` +
-            "which declares no fields — only `'*'` can be attached to a union.",
-        );
-        continue;
-      }
-      const isDeclared = fieldName === WILDCARD || fieldName in (declared as Record<string, AnyField>);
-      if (isDeclared === false) {
-        problems.push(
-          isInterfaceType(type)
-            ? `Field \`${typeName}.${fieldName}\` is in the permissions map but interface \`${typeName}\` does not declare it.`
-            : `Field \`${typeName}.${fieldName}\` is in the permissions map but not in the schema.`,
-        );
-        continue;
-      }
-      if (isRule(rule) === false) {
-        problems.push(`Rule for \`${typeName}.${fieldName}\` is ${typeof rule}, not a function.`);
-        continue;
-      }
-      const targets =
-        fieldName === WILDCARD
-          ? guarded.flatMap((object) => Object.values(object.getFields()))
-          : guarded.map((object) => object.getFields()[fieldName]);
-      const problem = scopeProblem(rule, `${typeName}.${fieldName}`, targets);
-      if (problem) {
-        problems.push(problem);
-      }
-    }
+    problems.push(...typeEntryProblems(schema, type, entry));
   }
 
   problems.push(...ambiguityProblems(schema, permissions, supertypes));
