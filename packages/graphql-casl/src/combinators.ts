@@ -207,9 +207,7 @@ export function and(...rules: Rule[]): CheckableRule {
   return rule(
     (parent, args, context, info) => {
       const answers = checks.map((check) => check(parent, args, context, info));
-      return anyPending(answers)
-        ? Promise.all(answers).then(firstDenial)
-        : firstDenial(answers as RuleResult[]);
+      return anyPending(answers) ? Promise.all(answers).then(firstDenial) : firstDenial(answers as RuleResult[]);
     },
     { name: label('and', rules) },
   );
@@ -436,9 +434,7 @@ export function wrap(...rules: Rule[]): Rule {
   }
   for (const [index, operand] of rules.entries()) {
     if (typeof operand !== 'function') {
-      throw new Error(
-        `graphql-casl: \`wrap()\` operand ${index} is ${typeof operand}, not a rule.`,
-      );
+      throw new Error(`graphql-casl: \`wrap()\` operand ${index} is ${typeof operand}, not a rule.`);
     }
   }
 
@@ -457,8 +453,7 @@ export function wrap(...rules: Rule[]): Rule {
         context,
         info,
       ),
-    (resolve, parent, args, context, info) =>
-      resolve(parent, args, context, info as GraphQLResolveInfo),
+    (resolve, parent, args, context, info) => resolve(parent, args, context, info as GraphQLResolveInfo),
   );
 
   // Argument-scoping rules advertise the argument they inject into so
@@ -466,10 +461,7 @@ export function wrap(...rules: Rule[]): Rule {
   // hide it, so the composed rule re-advertises every target beneath it.
   const targets = [
     ...new Set(
-      rules.flatMap(
-        (operand) =>
-          (operand as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO]?.into ?? [],
-      ),
+      rules.flatMap((operand) => (operand as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO]?.into ?? []),
     ),
   ];
   if (targets.length > 0) {

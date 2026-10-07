@@ -257,11 +257,7 @@ export type CacheKey = (
  * @returns `true` when it has a `then` method.
  */
 export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    typeof (value as PromiseLike<T>).then === 'function'
-  );
+  return value !== null && typeof value === 'object' && typeof (value as PromiseLike<T>).then === 'function';
 }
 
 /**
@@ -621,9 +617,7 @@ export type PermissionsMap<TResolvers = AnyResolvers> = {
     | Rule
     | {
         [FieldName in
-          | (TypeName extends keyof TResolvers
-              ? FieldNamesOf<TResolvers[TypeName]>
-              : AnyFieldName<TResolvers>)
+          | (TypeName extends keyof TResolvers ? FieldNamesOf<TResolvers[TypeName]> : AnyFieldName<TResolvers>)
           | Wildcard]?: Rule;
       };
 };

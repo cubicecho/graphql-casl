@@ -135,9 +135,7 @@ export type FilterAdapter<TFilter> = SkeletonAdapter<TFilter> | LeafAdapter<TFil
  * @param adapter - Either adapter kind.
  * @returns `true` for a leaf adapter.
  */
-export function isLeafAdapter<TFilter>(
-  adapter: FilterAdapter<TFilter>,
-): adapter is LeafAdapter<TFilter> {
+export function isLeafAdapter<TFilter>(adapter: FilterAdapter<TFilter>): adapter is LeafAdapter<TFilter> {
   return 'leaf' in adapter && typeof adapter.leaf === 'function';
 }
 

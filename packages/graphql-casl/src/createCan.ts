@@ -36,8 +36,7 @@ import {
  * The object names each mode: `onUnconditionedSubject: UnconditionedSubjectMode.Throw`.
  */
 export const UnconditionedSubjectMode = { Warn: 'warn', Throw: 'throw', Allow: 'allow' } as const;
-export type UnconditionedSubjectMode =
-  (typeof UnconditionedSubjectMode)[keyof typeof UnconditionedSubjectMode];
+export type UnconditionedSubjectMode = (typeof UnconditionedSubjectMode)[keyof typeof UnconditionedSubjectMode];
 
 /** Options for {@link createCan}. */
 export interface CreateCanOptions {
@@ -88,10 +87,7 @@ type ReasonIntrospection = {
  * rather than guessed at.
  */
 type RuleIntrospection = {
-  rulesFor?: (
-    action: Action,
-    subjectType: string,
-  ) => ReadonlyArray<{ conditions?: unknown; inverted?: boolean }>;
+  rulesFor?: (action: Action, subjectType: string) => ReadonlyArray<{ conditions?: unknown; inverted?: boolean }>;
 };
 
 /**
@@ -187,9 +183,7 @@ function isMutationField(info: GraphQLResolveInfo): boolean {
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type BuildSubject<TSubjectMap extends Record<string, object>> = <
-  K extends keyof TSubjectMap & string,
->(
+export type BuildSubject<TSubjectMap extends Record<string, object>> = <K extends keyof TSubjectMap & string>(
   type: K,
   attrs: Partial<TSubjectMap[K]>,
 ) => unknown;
@@ -345,9 +339,7 @@ export type RequireCanOnResult<TSubjectMap extends Record<string, object>> = <
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
-  K extends keyof TSubjectMap & string,
->(
+export type RequireCanBare<TSubjectMap extends Record<string, object>> = <K extends keyof TSubjectMap & string>(
   action: Action,
   subject: K,
   getSubjectData?: undefined,
@@ -588,18 +580,14 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     const decide =
       getSubjectData && buildSubject
         ? (ability: AbilityLike, parent: unknown, args: unknown) =>
-            verdict(
-              ability,
-              buildSubject(subject, getSubjectData(args as TArgs, parent as TParent)),
-            )
+            verdict(ability, buildSubject(subject, getSubjectData(args as TArgs, parent as TParent)))
         : bareVerdict;
 
     // A pre-execution check reaches its verdict without the resolver, so this is
     // a `rule()` rather than raw middleware — which is what makes it usable as an
     // operand of `and` / `or` / `not` / `chain` / `race`.
     return rule(
-      (parent, args, context) =>
-        withAbility(context as TContext, (ability) => decide(ability, parent, args)),
+      (parent, args, context) => withAbility(context as TContext, (ability) => decide(ability, parent, args)),
       { name: `can(${action}, ${subject})`, cache: ruleOptions?.cache },
     );
   }
@@ -646,11 +634,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     );
   };
 
-  requireCan.onResult = function onResult<
-    K extends keyof TSubjectMap & string,
-    TResult = unknown,
-    TParent = unknown,
-  >(
+  requireCan.onResult = function onResult<K extends keyof TSubjectMap & string, TResult = unknown, TParent = unknown>(
     action: Action,
     subject: K,
     getSubjectData?: (result: TResult, parent: TParent) => Partial<TSubjectMap[K]>,

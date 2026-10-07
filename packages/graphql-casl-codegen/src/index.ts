@@ -68,9 +68,7 @@ export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _docume
   ].join('\n');
 
   return {
-    prepend: [
-      `import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '${opts.importPath}';`,
-    ],
+    prepend: [`import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '${opts.importPath}';`],
     content,
   };
 };

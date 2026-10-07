@@ -41,9 +41,7 @@ export type SubjectName<TResolvers> = string &
  * lets CASL conditions match any subset of the model's fields.
  */
 export type SubjectMap<TResolvers, TResolversTypes> = {
-  [K in SubjectName<TResolvers>]: K extends keyof TResolversTypes
-    ? Partial<Awaited<TResolversTypes[K]>>
-    : never;
+  [K in SubjectName<TResolvers>]: K extends keyof TResolversTypes ? Partial<Awaited<TResolversTypes[K]>> : never;
 };
 
 /**
@@ -57,10 +55,7 @@ export type SubjectMap<TResolvers, TResolversTypes> = {
  * type P = ParentOf<F>; // Note
  * ```
  */
-export type ParentOf<TResolverField> = TResolverField extends (
-  parent: infer TParent,
-  ...rest: unknown[]
-) => unknown
+export type ParentOf<TResolverField> = TResolverField extends (parent: infer TParent, ...rest: unknown[]) => unknown
   ? TParent
   : unknown;
 

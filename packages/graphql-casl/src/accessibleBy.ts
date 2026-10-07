@@ -39,9 +39,7 @@ export type AccessibleFilter<T> =
 /** The default, mongo-style dialect. */
 const mongoAdapter: FilterAdapter<AccessibleFilter<object>> = {
   rule: (conditions, inverted) =>
-    inverted
-      ? { $nor: [conditions as AccessibleFilter<object>] }
-      : (conditions as AccessibleFilter<object>),
+    inverted ? { $nor: [conditions as AccessibleFilter<object>] } : (conditions as AccessibleFilter<object>),
   and: (filters) => ({ $and: filters }),
   or: (filters) => ({ $or: filters }),
   everything: () => ({}) as AccessibleFilter<object>,
@@ -162,10 +160,7 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * };
  * ```
  */
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
@@ -184,21 +179,13 @@ export function accessibleBy<
  * `LeafAdapter` (one with `leaf`) also receives each comparison individually.
  * @returns The filter, or `null` if no row is accessible.
  */
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
   adapter: FilterAdapter<TFilter>,
 ): TFilter | null;
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
@@ -207,7 +194,5 @@ export function accessibleBy<
   // `rulesFor` takes the ability's own subject union; a bare subject name is a
   // member of it, but only after the map's generic is resolved.
   const rules = (ability.rulesFor as (a: Action, s: K) => readonly FoldableRule[])(action, subject);
-  return adapter
-    ? fold(rules, adapter)
-    : (fold(rules, mongoAdapter) as AccessibleFilter<TSubjectMap[K]> | null);
+  return adapter ? fold(rules, adapter) : (fold(rules, mongoAdapter) as AccessibleFilter<TSubjectMap[K]> | null);
 }

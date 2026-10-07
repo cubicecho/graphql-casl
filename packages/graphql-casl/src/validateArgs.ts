@@ -82,14 +82,10 @@ export declare namespace StandardSchemaV1 {
   }
 
   /** Infers the input type of a Standard Schema. */
-  export type InferInput<Schema extends StandardSchemaV1> = NonNullable<
-    Schema['~standard']['types']
-  >['input'];
+  export type InferInput<Schema extends StandardSchemaV1> = NonNullable<Schema['~standard']['types']>['input'];
 
   /** Infers the output type of a Standard Schema. */
-  export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<
-    Schema['~standard']['types']
-  >['output'];
+  export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<Schema['~standard']['types']>['output'];
 }
 
 // ---------------------------------------------------------------------------
@@ -218,10 +214,7 @@ export interface ValidateArgsOptions {
  * } satisfies PermissionsMap<Resolvers>;
  * ```
  */
-export function validateArgs<TSchema extends StandardSchemaV1>(
-  schema: TSchema,
-  options?: ValidateArgsOptions,
-): Rule {
+export function validateArgs<TSchema extends StandardSchemaV1>(schema: TSchema, options?: ValidateArgsOptions): Rule {
   const standard = (schema as Partial<StandardSchemaV1> | null | undefined)?.['~standard'];
   if (typeof standard?.validate !== 'function') {
     throw new Error(
@@ -258,9 +251,7 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
       return Promise.reject(error);
     }
     if (isThenable(result)) {
-      return Promise.resolve(result).then((settled) =>
-        settle(settled, resolve, parent, args, context, info),
-      );
+      return Promise.resolve(result).then((settled) => settle(settled, resolve, parent, args, context, info));
     }
     // Synchronous end to end when the validator and the resolver both are — see
     // `Rule` on why that is within contract.
@@ -281,9 +272,7 @@ function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error 
     path: pathOf(issue),
   }));
   const message = flattened
-    .map((issue) =>
-      issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message,
-    )
+    .map((issue) => (issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message))
     .join('; ');
   const error = new GraphQLError(message, {
     extensions: { code: BAD_USER_INPUT, issues: flattened },

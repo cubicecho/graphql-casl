@@ -1,18 +1,6 @@
 import type { GraphQLResolveInfo } from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  accept,
-  and,
-  chain,
-  deny,
-  isCheckableRule,
-  not,
-  or,
-  type Rule,
-  race,
-  rule,
-  wrap,
-} from '../src/index.js';
+import { accept, and, chain, deny, isCheckableRule, not, or, type Rule, race, rule, wrap } from '../src/index.js';
 
 const info = {} as GraphQLResolveInfo;
 
@@ -35,8 +23,7 @@ function probe(result: boolean | string | Error, name = 'probe') {
 }
 
 /** A hand-written middleware rule — deliberately not checkable. */
-const handWritten: Rule = async (resolve, parent, args, context, info) =>
-  resolve(parent, args, context, info);
+const handWritten: Rule = async (resolve, parent, args, context, info) => resolve(parent, args, context, info);
 
 describe('rule', () => {
   it('resolves when the check returns true', async () => {
@@ -80,9 +67,7 @@ describe('rule', () => {
   });
 
   it('awaits an async check', async () => {
-    await expect(rule(async () => 'async denial')(vi.fn(), null, null, {}, info)).rejects.toThrow(
-      'async denial',
-    );
+    await expect(rule(async () => 'async denial')(vi.fn(), null, null, {}, info)).rejects.toThrow('async denial');
   });
 
   it('is checkable and carries its name', () => {
@@ -109,15 +94,11 @@ describe('rule — off-contract check results', () => {
   });
 
   it('denies when the check returns null', async () => {
-    await expect(isRoot(vi.fn(), null, null, { auth: { root: null } }, info)).rejects.toThrow(
-      'Forbidden',
-    );
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: null } }, info)).rejects.toThrow('Forbidden');
   });
 
   it('denies on any other falsy value', async () => {
-    await expect(isRoot(vi.fn(), null, null, { auth: { root: 0 } }, info)).rejects.toThrow(
-      'Forbidden',
-    );
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: 0 } }, info)).rejects.toThrow('Forbidden');
   });
 
   it('allows on a truthy non-boolean', async () => {
@@ -127,9 +108,7 @@ describe('rule — off-contract check results', () => {
 
   it('still reads a string as a denial message, not as truthiness', async () => {
     // Strings are on contract and must keep denying, truthy though they are.
-    await expect(isRoot(vi.fn(), null, null, { auth: { root: 'Nope' } }, info)).rejects.toThrow(
-      'Nope',
-    );
+    await expect(isRoot(vi.fn(), null, null, { auth: { root: 'Nope' } }, info)).rejects.toThrow('Nope');
   });
 
   it('propagates through the combinators', async () => {
@@ -299,9 +278,7 @@ describe('rule caching', () => {
 
 describe('and', () => {
   it('passes only when every operand passes', async () => {
-    await expect(
-      and(accept, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info),
-    ).resolves.toBe('ok');
+    await expect(and(accept, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe('ok');
     await expect(and(accept, deny)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
   });
 
@@ -323,9 +300,7 @@ describe('and', () => {
 
 describe('or', () => {
   it('passes when any operand passes', async () => {
-    await expect(
-      or(deny, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info),
-    ).resolves.toBe('ok');
+    await expect(or(deny, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe('ok');
   });
 
   it('throws the last operand′s error when all fail', async () => {
@@ -348,17 +323,13 @@ describe('chain', () => {
   it('stops at the first failure and does not evaluate the rest', async () => {
     const first = probe('denied');
     const second = probe(true);
-    await expect(chain(first.rule, second.rule)(vi.fn(), null, null, {}, info)).rejects.toThrow(
-      'denied',
-    );
+    await expect(chain(first.rule, second.rule)(vi.fn(), null, null, {}, info)).rejects.toThrow('denied');
     expect(first.evaluated).toBe(1);
     expect(second.evaluated).toBe(0);
   });
 
   it('passes when every operand passes', async () => {
-    await expect(
-      chain(accept, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info),
-    ).resolves.toBe('ok');
+    await expect(chain(accept, accept)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe('ok');
   });
 });
 
@@ -366,9 +337,9 @@ describe('race', () => {
   it('stops at the first pass and does not evaluate the rest', async () => {
     const first = probe(true);
     const second = probe(true);
-    await expect(
-      race(first.rule, second.rule)(vi.fn().mockResolvedValue('ok'), null, null, {}, info),
-    ).resolves.toBe('ok');
+    await expect(race(first.rule, second.rule)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe(
+      'ok',
+    );
     expect(second.evaluated).toBe(0);
   });
 
@@ -446,9 +417,7 @@ describe('a throwing operand', () => {
 
   it('is tolerated through nesting, since combinators compose', async () => {
     const resolve = vi.fn().mockResolvedValue('ok');
-    await expect(or(passes, and(passes, throws))(resolve, null, null, {}, info)).resolves.toBe(
-      'ok',
-    );
+    await expect(or(passes, and(passes, throws))(resolve, null, null, {}, info)).resolves.toBe('ok');
   });
 
   it('propagates a thrown non-Error unchanged', async () => {
@@ -461,23 +430,19 @@ describe('a throwing operand', () => {
 
 describe('not', () => {
   it('inverts the operand', async () => {
-    await expect(not(deny)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe(
-      'ok',
-    );
+    await expect(not(deny)(vi.fn().mockResolvedValue('ok'), null, null, {}, info)).resolves.toBe('ok');
     await expect(not(accept)(vi.fn(), null, null, {}, info)).rejects.toThrow('Forbidden');
   });
 
   it('uses the supplied error when the operand passes', async () => {
-    await expect(
-      not(accept, 'Not while impersonating')(vi.fn(), null, null, {}, info),
-    ).rejects.toThrow('Not while impersonating');
+    await expect(not(accept, 'Not while impersonating')(vi.fn(), null, null, {}, info)).rejects.toThrow(
+      'Not while impersonating',
+    );
   });
 
   it('discards the operand′s error — it explains why not() passed', async () => {
     const resolve = vi.fn().mockResolvedValue('ok');
-    await expect(not(rule(() => 'inner reason'))(resolve, null, null, {}, info)).resolves.toBe(
-      'ok',
-    );
+    await expect(not(rule(() => 'inner reason'))(resolve, null, null, {}, info)).resolves.toBe('ok');
   });
 });
 
@@ -593,9 +558,7 @@ describe('wrap', () => {
 
   it('rejects an empty call and a non-function operand', () => {
     expect(() => wrap()).toThrow(/needs at least one rule/);
-    expect(() => wrap(accept, undefined as unknown as Rule)).toThrow(
-      /operand 1 is undefined, not a rule/,
-    );
+    expect(() => wrap(accept, undefined as unknown as Rule)).toThrow(/operand 1 is undefined, not a rule/);
   });
 });
 

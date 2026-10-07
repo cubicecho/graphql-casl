@@ -71,8 +71,7 @@ function schemaWith(resolvers: Record<string, Record<string, unknown>> = {}) {
         notes: () => NOTES,
       },
       Mutation: {
-        updateNote: (_p: unknown, args: { id: string }) =>
-          NOTES.find((n) => n.id === args.id) ?? null,
+        updateNote: (_p: unknown, args: { id: string }) => NOTES.find((n) => n.id === args.id) ?? null,
       },
       ...resolvers,
     },
@@ -85,8 +84,7 @@ function run(
   options: Omit<Parameters<typeof useGraphQLCasl>[0], 'permissions'> = {},
 ) {
   const testkit = createTestkit([useGraphQLCasl({ permissions, ...options })], schemaWith());
-  return async (query: string, context: Context = {}) =>
-    (await testkit.execute(query, {}, context)) as ExecutionResult;
+  return async (query: string, context: Context = {}) => (await testkit.execute(query, {}, context)) as ExecutionResult;
 }
 
 describe('useGraphQLCasl', () => {

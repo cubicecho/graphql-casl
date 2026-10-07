@@ -196,11 +196,7 @@ describe('scopeArgs', () => {
   });
 
   it("ANDs the scope onto the client's own filter", async () => {
-    const result = await run(
-      schema,
-      '{ notes(where: { status: { eq: "live" } }) { id } }',
-      'alice',
-    );
+    const result = await run(schema, '{ notes(where: { status: { eq: "live" } }) { id } }', 'alice');
     expect(result.data?.notes).toEqual([{ id: 'n1' }]);
     expect(seenArgs).toEqual({
       where: { AND: [{ status: { eq: 'live' } }, { userId: { eq: 'alice' } }] },
@@ -229,10 +225,7 @@ describe('scopeArgs', () => {
 
   it('says nothing about the fields around it', async () => {
     // Scoping is not a gate: pair it with `fallbackRule`.
-    const guarded = schemaWith(
-      { Query: { notes: scopedNotes } },
-      { fallbackRule: deny, fallbackError: 'Nope' },
-    );
+    const guarded = schemaWith({ Query: { notes: scopedNotes } }, { fallbackRule: deny, fallbackError: 'Nope' });
     const result = await run(guarded, '{ noteCount }', 'admin');
     expect(result.errors?.[0]?.message).toBe('Nope');
   });
@@ -317,9 +310,9 @@ describe('scopeArgs options', () => {
   });
 
   it('rejects a `requireCan` that did not come from createCan', () => {
-    expect(() =>
-      scopeArgs((() => {}) as never, Actions.read, 'Note', { adapter: dialect }),
-    ).toThrow(/expects the `requireCan` returned by `createCan`/);
+    expect(() => scopeArgs((() => {}) as never, Actions.read, 'Note', { adapter: dialect })).toThrow(
+      /expects the `requireCan` returned by `createCan`/,
+    );
   });
 
   it('is not combinable', () => {
@@ -336,15 +329,11 @@ describe('validation of the injected argument', () => {
   });
 
   it('refuses a scope rule under a type wildcard that does not fit every field', () => {
-    expect(() => schemaWith({ Query: { '*': scopedNotes } })).toThrow(
-      /`noteCount` has no such argument/,
-    );
+    expect(() => schemaWith({ Query: { '*': scopedNotes } })).toThrow(/`noteCount` has no such argument/);
   });
 
   it('refuses a scope rule under `*.*`', () => {
-    expect(() => schemaWith({ '*': { '*': scopedNotes } })).toThrow(
-      /cannot be right for every field of every type/,
-    );
+    expect(() => schemaWith({ '*': { '*': scopedNotes } })).toThrow(/cannot be right for every field of every type/);
   });
 
   it('accepts a scope rule under a field wildcard when every match fits', () => {
@@ -359,10 +348,9 @@ describe('wrap, composing a scoping rule with rules that cannot be combined', ()
     (context) => Boolean(context.userId),
     typed,
   );
-  const isNotBanned = rule(
-    (_parent, _args, context: Context) => context.userId !== 'mallory' || 'Account suspended',
-    { name: 'isNotBanned' },
-  );
+  const isNotBanned = rule((_parent, _args, context: Context) => context.userId !== 'mallory' || 'Account suspended', {
+    name: 'isNotBanned',
+  });
 
   it('gates the field first, then scopes it', async () => {
     const schema = schemaWith({ Query: { notes: wrap(isNotBanned, scopedNotes) } });
@@ -401,19 +389,13 @@ describe('wrap, composing a scoping rule with rules that cannot be combined', ()
   });
 
   it('still validates the injected argument through the wrapper', () => {
-    const nested = wrap(
-      accept,
-      scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }),
-    );
+    const nested = wrap(accept, scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }));
     expect(() => schemaWith({ Query: { notes: nested } })).toThrow(PermissionsError);
     expect(() => schemaWith({ Query: { notes: nested } })).toThrow(/argument named `filter`/);
   });
 
   it('still validates the injected argument through a granting rule', () => {
-    const granting = grants(
-      scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }),
-      'note',
-    );
+    const granting = grants(scopeArgs(canUser, Actions.read, 'Note', { adapter: dialect, into: 'filter' }), 'note');
     expect(() => schemaWith({ Query: { notes: granting } })).toThrow(/argument named `filter`/);
   });
 
@@ -435,8 +417,6 @@ describe('wrap, composing a scoping rule with rules that cannot be combined', ()
   });
 
   it('still refuses a wrapped scoping rule under the `*.*` wildcard', () => {
-    expect(() => schemaWith({ '*': { '*': wrap(accept, scopedNotes) } })).toThrow(
-      /rewrites a field argument/,
-    );
+    expect(() => schemaWith({ '*': { '*': wrap(accept, scopedNotes) } })).toThrow(/rewrites a field argument/);
   });
 });

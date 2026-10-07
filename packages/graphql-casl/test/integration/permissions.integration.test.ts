@@ -279,9 +279,7 @@ describe('accessibleBy in a list resolver', () => {
   it('returns only the rows the caller may read', async () => {
     // `update` is the conditioned action here, so filter on it.
     const ability = defineAbilitiesFor('alice');
-    expect(findNotes(accessibleBy(ability, Actions.update, 'Note')).map((n) => n.id)).toEqual([
-      'n1',
-    ]);
+    expect(findNotes(accessibleBy(ability, Actions.update, 'Note')).map((n) => n.id)).toEqual(['n1']);
   });
 
   it('returns every row when the rule is unconditioned', async () => {

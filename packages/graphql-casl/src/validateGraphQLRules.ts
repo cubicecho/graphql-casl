@@ -133,8 +133,7 @@ export function validateGraphQLRules(
   rules: readonly unknown[],
   options?: ValidateGraphQLRulesOptions,
 ): void {
-  const checkPaths =
-    (options?.conditionFields ?? ConditionFields.Schema) === ConditionFields.Schema;
+  const checkPaths = (options?.conditionFields ?? ConditionFields.Schema) === ConditionFields.Schema;
   const problems: string[] = [];
   for (const [index, rule] of rules.entries()) {
     collectRuleProblems(schema, rule, index, checkPaths, problems);
@@ -206,9 +205,7 @@ function collectRuleProblems(
 
   if (rule.conditions !== undefined) {
     if (isPlainObject(rule.conditions) === false) {
-      problems.push(
-        `${label}: \`conditions\` is ${describeValue(rule.conditions)}, not an object.`,
-      );
+      problems.push(`${label}: \`conditions\` is ${describeValue(rule.conditions)}, not an object.`);
     } else {
       walkConditions(rule.conditions, checkPaths ? subjects : undefined, label, problems);
     }
@@ -235,28 +232,17 @@ function collectRuleProblems(
  * @param problems - Appended to.
  * @returns The type, or `undefined` after reporting.
  */
-function subjectType(
-  schema: GraphQLSchema,
-  name: string,
-  label: string,
-  problems: string[],
-): Composite | undefined {
+function subjectType(schema: GraphQLSchema, name: string, label: string, problems: string[]): Composite | undefined {
   const type: GraphQLNamedType | undefined = schema.getType(name);
   if (!type) {
     problems.push(`${label}: subject \`${name}\` is not a type in the schema.`);
     return undefined;
   }
   if (isIntrospectionType(type)) {
-    problems.push(
-      `${label}: subject \`${name}\` is an introspection type and cannot be a subject.`,
-    );
+    problems.push(`${label}: subject \`${name}\` is an introspection type and cannot be a subject.`);
     return undefined;
   }
-  if (
-    type === schema.getQueryType() ||
-    type === schema.getMutationType() ||
-    type === schema.getSubscriptionType()
-  ) {
+  if (type === schema.getQueryType() || type === schema.getMutationType() || type === schema.getSubscriptionType()) {
     problems.push(`${label}: subject \`${name}\` is a root operation type, not a subject.`);
     return undefined;
   }
@@ -267,9 +253,7 @@ function subjectType(
     isInterfaceType(type) || isUnionType(type)
       ? ' Subjects are detected by `__typename`, which is always a concrete object type, so this rule would never match a tagged object — attach it to each implementing type instead.'
       : '';
-  problems.push(
-    `${label}: subject \`${name}\` is ${describeKind(type)}, not an object type.${hint}`,
-  );
+  problems.push(`${label}: subject \`${name}\` is ${describeKind(type)}, not an object type.${hint}`);
   return undefined;
 }
 
@@ -291,18 +275,14 @@ function walkConditions(
   for (const [key, value] of Object.entries(conditions)) {
     if (GROUP_OPERATORS.has(key)) {
       if (Array.isArray(value) === false) {
-        problems.push(
-          `${label}: \`${key}\` must be an array of conditions, not ${describeValue(value)}.`,
-        );
+        problems.push(`${label}: \`${key}\` must be an array of conditions, not ${describeValue(value)}.`);
         continue;
       }
       value.forEach((member, i) => {
         if (isPlainObject(member)) {
           walkConditions(member, types, label, problems);
         } else {
-          problems.push(
-            `${label}: \`${key}[${i}]\` is ${describeValue(member)}, not a condition object.`,
-          );
+          problems.push(`${label}: \`${key}[${i}]\` is ${describeValue(member)}, not a condition object.`);
         }
       });
       continue;
@@ -407,9 +387,7 @@ function checkOperators(
   }
   for (const [operator, operand] of entries) {
     if (FIELD_OPERATORS.has(operator) === false) {
-      problems.push(
-        `${label}: \`${operator}\` on \`${path}\` is not a condition operator CASL supports.`,
-      );
+      problems.push(`${label}: \`${operator}\` on \`${path}\` is not a condition operator CASL supports.`);
     } else if (operator === '$not') {
       checkOperators(path, operand, leaves, label, problems);
     } else if (operator === '$elemMatch') {

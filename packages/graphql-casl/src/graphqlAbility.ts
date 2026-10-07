@@ -49,9 +49,7 @@ export type GraphQLAbilities<TSubjectMap extends Record<string, object>> =
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAbility<
-  GraphQLAbilities<TSubjectMap>
->;
+export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAbility<GraphQLAbilities<TSubjectMap>>;
 
 /**
  * A single serializable permission rule for a {@link GraphQLAbility}. This is a
@@ -61,9 +59,7 @@ export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAb
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type GraphQLRule<TSubjectMap extends Record<string, object>> = RawRuleOf<
-  GraphQLAbility<TSubjectMap>
->;
+export type GraphQLRule<TSubjectMap extends Record<string, object>> = RawRuleOf<GraphQLAbility<TSubjectMap>>;
 
 /** Options accepted by {@link buildGraphQLAbility} / the builder's `build()`. */
 export type GraphQLAbilityOptions<TSubjectMap extends Record<string, object>> = Partial<
@@ -101,9 +97,7 @@ function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
 ): AbilityOptionsOf<GraphQLAbility<TSubjectMap>> {
   // Drop present-but-`undefined` overrides so they can't silently clobber the
   // default `__typename` detection (e.g. `build({ detectSubjectType: undefined })`).
-  const defined = Object.fromEntries(
-    Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
-  );
+  const defined = Object.fromEntries(Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined));
   return {
     detectSubjectType,
     ...defined,
@@ -165,7 +159,6 @@ export function buildGraphQLAbility<TSubjectMap extends Record<string, object>>(
 export function createGraphQLAbility<TSubjectMap extends Record<string, object>>() {
   const builder = new AbilityBuilder<GraphQLAbility<TSubjectMap>>(createMongoAbility);
   const build = builder.build;
-  builder.build = (options?: GraphQLAbilityOptions<TSubjectMap>) =>
-    build(gqlAbilityOptions(options));
+  builder.build = (options?: GraphQLAbilityOptions<TSubjectMap>) => build(gqlAbilityOptions(options));
   return builder;
 }

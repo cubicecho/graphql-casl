@@ -212,9 +212,7 @@ function isNamesShape(value: unknown): value is string[][] {
   return (
     Array.isArray(value) &&
     value.length > 0 &&
-    value.every(
-      (group) => Array.isArray(group) && group.length > 0 && group.every(isNonEmptyString),
-    )
+    value.every((group) => Array.isArray(group) && group.length > 0 && group.every(isNonEmptyString))
   );
 }
 
@@ -305,10 +303,7 @@ class Translator {
     }
 
     if (this.problems.length > 0) {
-      throw new PermissionsError(
-        [...new Set(this.problems)],
-        'the schema directives could not be translated',
-      );
+      throw new PermissionsError([...new Set(this.problems)], 'the schema directives could not be translated');
     }
     return map;
   }
@@ -320,9 +315,7 @@ class Translator {
    * @returns Its type-level rules.
    */
   private interfaceTypeRules(iface: GraphQLInterfaceType): CheckableRule[] {
-    return this.memo(iface.name, () =>
-      this.rulesAt(typeDirectives(iface), { typeName: iface.name, root: false }),
-    );
+    return this.memo(iface.name, () => this.rulesAt(typeDirectives(iface), { typeName: iface.name, root: false }));
   }
 
   /**
@@ -406,9 +399,7 @@ class Translator {
     const subject = args.subject === undefined ? this.inferSubject(site) : args.subject;
     if (isNonEmptyString(subject) === false) {
       if (args.subject !== undefined) {
-        this.problems.push(
-          `\`@can\` on \`${label}\` has a \`subject\` that is not a non-empty string.`,
-        );
+        this.problems.push(`\`@can\` on \`${label}\` has a \`subject\` that is not a non-empty string.`);
       }
       return undefined;
     }
@@ -477,9 +468,7 @@ class Translator {
         const found = registry.get(name);
         if (found === undefined) {
           broken = true;
-          this.problems.push(
-            `\`@rule\` on \`${label}\` names \`${name}\`, which is not in the rules registry.`,
-          );
+          this.problems.push(`\`@rule\` on \`${label}\` names \`${name}\`, which is not in the rules registry.`);
         } else if (isCheckableRule(found) === false) {
           broken = true;
           this.problems.push(

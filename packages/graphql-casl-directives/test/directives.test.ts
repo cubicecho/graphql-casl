@@ -19,14 +19,7 @@ import {
   wrap,
 } from '@vantreeseba/graphql-casl';
 import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
-import {
-  buildSchema,
-  type ExecutionResult,
-  GraphQLBoolean,
-  GraphQLObjectType,
-  GraphQLSchema,
-  graphql,
-} from 'graphql';
+import { buildSchema, type ExecutionResult, GraphQLBoolean, GraphQLObjectType, GraphQLSchema, graphql } from 'graphql';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type DirectivePermissions,
@@ -121,10 +114,9 @@ const isAdmin = rule((_p, _a, ctx: Context) => ctx.roles?.includes('admin') || '
 const isVerified = rule((_p, _a, ctx: Context) => ctx.verified === true || 'Verify your email', {
   name: 'isVerified',
 });
-const isOwner = rule(
-  (parent, _a, ctx: Context) => (parent as Note).userId === ctx.userId || 'Not your note',
-  { name: 'isOwner' },
-);
+const isOwner = rule((parent, _a, ctx: Context) => (parent as Note).userId === ctx.userId || 'Not your note', {
+  name: 'isOwner',
+});
 const isSelf = rule((parent, _a, ctx: Context) => (parent as User).id === ctx.userId || 'Not you', {
   name: 'isSelf',
 });
@@ -213,10 +205,7 @@ function messagesOf(result: ExecutionResult): string[] {
 }
 
 /** The aggregated problems a translation fails with. */
-function problemsOf(
-  sdl: string,
-  options: DirectivePermissionsOptions = { can: canUser, rules },
-): readonly string[] {
+function problemsOf(sdl: string, options: DirectivePermissionsOptions = { can: canUser, rules }): readonly string[] {
   try {
     permissionsFromDirectives(build(sdl, {}), options);
   } catch (error) {
@@ -542,9 +531,7 @@ describe('validation', () => {
       rules: { ...rules, audit: wrap(accept) as never },
     });
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain(
-      '`@rule` on `Query.a` names `audit`, which is not a checkable rule.',
-    );
+    expect(problems[0]).toContain('`@rule` on `Query.a` names `audit`, which is not a checkable rule.');
   });
 
   it('rejects @can on a root field whose subject cannot be inferred', () => {
@@ -616,9 +603,7 @@ describe('validation', () => {
     expect(caught).toBeInstanceOf(PermissionsError);
     const error = caught as PermissionsError;
     expect(error.problems).toHaveLength(2);
-    expect(error.message).toMatch(
-      /^graphql-casl: the schema directives could not be translated\.\n {2}- /,
-    );
+    expect(error.message).toMatch(/^graphql-casl: the schema directives could not be translated\.\n {2}- /);
   });
 
   it('reports an interface problem once, not once per implementor', () => {

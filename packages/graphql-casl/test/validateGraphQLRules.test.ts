@@ -116,17 +116,13 @@ describe('validateGraphQLRules — what passes', () => {
 
   it('follows dotted paths through object-typed fields and lists', () => {
     expect(() =>
-      validateGraphQLRules(schema, [
-        read({ conditions: { 'author.id': 'u1', 'tags.name': { $in: ['a'] } } }),
-      ]),
+      validateGraphQLRules(schema, [read({ conditions: { 'author.id': 'u1', 'tags.name': { $in: ['a'] } } })]),
     ).not.toThrow();
   });
 
   it('accepts any path below a scalar, an enum or a union', () => {
     // A `JSON` column has whatever keys it has; there is nothing to check.
-    expect(() =>
-      validateGraphQLRules(schema, [read({ conditions: { 'meta.anything.deeper': 1 } })]),
-    ).not.toThrow();
+    expect(() => validateGraphQLRules(schema, [read({ conditions: { 'meta.anything.deeper': 1 } })])).not.toThrow();
   });
 
   it('accepts field patterns and dotted fields', () => {
@@ -142,9 +138,7 @@ describe('validateGraphQLRules — what passes', () => {
     expect(() =>
       validateGraphQLRules(schema, [{ action: 'read', subject: 'all', conditions: { x: 1 } }]),
     ).not.toThrow();
-    expect(
-      problemsOf([{ action: 'read', subject: 'all', conditions: { x: { $foo: 1 } } }]),
-    ).toEqual([
+    expect(problemsOf([{ action: 'read', subject: 'all', conditions: { x: { $foo: 1 } } }])).toEqual([
       'Rule 0 (`read` on `all`): `$foo` on `x` is not a condition operator CASL supports.',
     ]);
   });
@@ -216,9 +210,7 @@ describe('validateGraphQLRules — subjects', () => {
       { action: 'read', subject: 'Node' },
       { action: 'read', subject: 'Thing' },
     ]);
-    expect(problems[0]).toMatch(
-      /^Rule 0 .*subject `Node` is an interface type, not an object type\./,
-    );
+    expect(problems[0]).toMatch(/^Rule 0 .*subject `Node` is an interface type, not an object type\./);
     expect(problems[0]).toContain('Subjects are detected by `__typename`');
     expect(problems[1]).toMatch(/subject `Thing` is a union type, not an object type\./);
   });
@@ -299,15 +291,13 @@ describe('validateGraphQLRules — conditions', () => {
   });
 
   it('checks inside $and / $or / $nor groups', () => {
-    expect(
-      problemsOf([read({ conditions: { $and: [{ ownerId: 'u1' }, { titel: 'x' }] } })]),
-    ).toEqual(['Rule 0 (`read` on `Note`): condition field `titel` is not a field of `Note`.']);
+    expect(problemsOf([read({ conditions: { $and: [{ ownerId: 'u1' }, { titel: 'x' }] } })])).toEqual([
+      'Rule 0 (`read` on `Note`): condition field `titel` is not a field of `Note`.',
+    ]);
   });
 
   it('rejects a malformed group', () => {
-    expect(
-      problemsOf([read({ conditions: { $and: 'x' } }), read({ conditions: { $or: [1] } })]),
-    ).toEqual([
+    expect(problemsOf([read({ conditions: { $and: 'x' } }), read({ conditions: { $or: [1] } })])).toEqual([
       'Rule 0 (`read` on `Note`): `$and` must be an array of conditions, not the string "x".',
       'Rule 1 (`read` on `Note`): `$or[0]` is a number, not a condition object.',
     ]);
@@ -334,9 +324,7 @@ describe('validateGraphQLRules — conditions', () => {
   it("conditionFields: 'none' skips the field check but still checks operators", () => {
     const stale = read({ conditions: { ownr: 'u1' } });
     expect(() => validateGraphQLRules(schema, [stale], { conditionFields: 'none' })).not.toThrow();
-    expect(
-      problemsOf([read({ conditions: { ownr: { $foo: 1 } } })], { conditionFields: 'none' }),
-    ).toEqual([
+    expect(problemsOf([read({ conditions: { ownr: { $foo: 1 } } })], { conditionFields: 'none' })).toEqual([
       'Rule 0 (`read` on `Note`): `$foo` on `ownr` is not a condition operator CASL supports.',
     ]);
   });
@@ -369,9 +357,7 @@ describe('validateGraphQLRules — reporting', () => {
     const error = caught as PermissionsError;
     expect(error.name).toBe('PermissionsError');
     expect(error.message).toContain('graphql-casl: the ability rules do not match the schema.');
-    expect(error.message).toContain(
-      '  - Rule 0 (`read` on `Ghost`): subject `Ghost` is not a type in the schema.',
-    );
+    expect(error.message).toContain('  - Rule 0 (`read` on `Ghost`): subject `Ghost` is not a type in the schema.');
   });
 
   it('catches what buildGraphQLAbility lets through silently', () => {

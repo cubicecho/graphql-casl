@@ -102,9 +102,7 @@ function hasGrant(context: unknown, parent: unknown, scope: string): boolean {
 function scopesOf(scope: string | readonly string[]): readonly string[] {
   const scopes = typeof scope === 'string' ? [scope] : [...scope];
   if (scopes.length === 0 || scopes.some((name) => typeof name !== 'string' || name === '')) {
-    throw new Error(
-      'graphql-casl: `grants()` needs a scope name — a non-empty string, or a list of them.',
-    );
+    throw new Error('graphql-casl: `grants()` needs a scope name — a non-empty string, or a list of them.');
   }
   return scopes;
 }

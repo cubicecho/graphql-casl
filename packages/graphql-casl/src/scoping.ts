@@ -130,11 +130,7 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * };
  * ```
  */
-export function scopeArgs<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function scopeArgs<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   requireCan: Scopable<TSubjectMap>,
   action: Action,
   subject: K,
@@ -151,9 +147,7 @@ export function scopeArgs<
     );
   }
 
-  const internals = (requireCan as Partial<Record<typeof CAN_INTERNALS, CanInternals<unknown>>>)[
-    CAN_INTERNALS
-  ];
+  const internals = (requireCan as Partial<Record<typeof CAN_INTERNALS, CanInternals<unknown>>>)[CAN_INTERNALS];
   if (!internals) {
     throw new Error(
       'graphql-casl: `scopeArgs` expects the `requireCan` returned by `createCan`, so it can ' +
@@ -171,12 +165,7 @@ export function scopeArgs<
 
   const scoped: Rule = async (resolve, parent, args, context, info) => {
     const ability = await internals.authorize(context);
-    const filter = accessibleBy(
-      ability as unknown as GraphQLAbility<TSubjectMap>,
-      action,
-      subject,
-      probe,
-    );
+    const filter = accessibleBy(ability as unknown as GraphQLAbility<TSubjectMap>, action, subject, probe);
 
     if (filter === null) {
       if (onDenyAll === OnDenyAll.Deny) {

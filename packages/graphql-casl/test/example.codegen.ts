@@ -102,12 +102,7 @@ export type MutationResolvers<
   ContextType = unknown,
   ParentType extends ResolversParentTypes['Mutation'] = ResolversParentTypes['Mutation'],
 > = {
-  addTodo?: Resolver<
-    ResolversTypes['Todo'],
-    ParentType,
-    ContextType,
-    RequireFields<MutationAddTodoArgs, 'title'>
-  >;
+  addTodo?: Resolver<ResolversTypes['Todo'], ParentType, ContextType, RequireFields<MutationAddTodoArgs, 'title'>>;
   setDone?: Resolver<
     Maybe<ResolversTypes['Todo']>,
     ParentType,

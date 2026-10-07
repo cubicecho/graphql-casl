@@ -31,12 +31,7 @@
  * @packageDocumentation
  */
 
-import type {
-  ExecutionResult,
-  FormattedExecutionResult,
-  GraphQLError,
-  GraphQLFormattedError,
-} from 'graphql';
+import type { ExecutionResult, FormattedExecutionResult, GraphQLError, GraphQLFormattedError } from 'graphql';
 import { reportDenials } from './applyPermissions.js';
 
 /**
@@ -45,9 +40,7 @@ import { reportDenials } from './applyPermissions.js';
  * result; an `'incremental'` one (`@defer` / `@stream`) is a stream of
  * payloads, which the plugin leaves alone.
  */
-export type ApolloResponseBody =
-  | { kind: 'single'; singleResult: FormattedExecutionResult }
-  | { kind: 'incremental' };
+export type ApolloResponseBody = { kind: 'single'; singleResult: FormattedExecutionResult } | { kind: 'incremental' };
 
 /**
  * The slice of Apollo Server's `ApolloServerPlugin` that
@@ -57,10 +50,7 @@ export type ApolloResponseBody =
  */
 export interface ReportDenialsApolloPlugin {
   requestDidStart(requestContext: { contextValue: unknown }): Promise<{
-    willSendResponse(requestContext: {
-      contextValue: unknown;
-      response: { body: ApolloResponseBody };
-    }): Promise<void>;
+    willSendResponse(requestContext: { contextValue: unknown; response: { body: ApolloResponseBody } }): Promise<void>;
   }>;
 }
 
@@ -124,9 +114,7 @@ export function reportDenialsPlugin(): ReportDenialsApolloPlugin {
             return;
           }
           if (reported.errors) {
-            singleResult.errors = reported.errors.map((error) =>
-              isUnformatted(error) ? error.toJSON() : error,
-            );
+            singleResult.errors = reported.errors.map((error) => (isUnformatted(error) ? error.toJSON() : error));
           }
           if (reported.extensions) {
             singleResult.extensions = reported.extensions;

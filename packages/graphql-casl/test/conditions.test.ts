@@ -89,9 +89,7 @@ describe('leaf adapters', () => {
 
   it('recurses into $and, $or and $nor groups', () => {
     const { adapter } = recorder();
-    expect(translate({ $or: [{ status: 'live' }, { n: 1 }] }, adapter)).toBe(
-      'OR(status $eq "live", n $eq 1)',
-    );
+    expect(translate({ $or: [{ status: 'live' }, { n: 1 }] }, adapter)).toBe('OR(status $eq "live", n $eq 1)');
     // A group the caller wrote is kept as a group, even with one member.
     expect(translate({ $and: [{ status: 'live' }] }, adapter)).toBe('AND(status $eq "live")');
     expect(translate({ $nor: [{ status: 'live' }] }, adapter)).toBe('NOT(OR(status $eq "live"))');
@@ -102,9 +100,7 @@ describe('leaf adapters', () => {
     const builder = createGraphQLAbility<M>();
     builder.can(Actions.read, 'Note');
     builder.cannot(Actions.read, 'Note', { status: 'archived' });
-    expect(accessibleBy(builder.build(), Actions.read, 'Note', adapter)).toBe(
-      'NOT(status $eq "archived")',
-    );
+    expect(accessibleBy(builder.build(), Actions.read, 'Note', adapter)).toBe('NOT(status $eq "archived")');
   });
 
   it('treats an empty condition object as no restriction', () => {
@@ -114,30 +110,22 @@ describe('leaf adapters', () => {
 
   it('throws on an operator it cannot translate', () => {
     const { adapter } = recorder();
-    expect(() => translate({ n: { $where: 'x' } }, adapter)).toThrow(
-      /unsupported condition operator `\$where`/,
-    );
+    expect(() => translate({ n: { $where: 'x' } }, adapter)).toThrow(/unsupported condition operator `\$where`/);
   });
 
   it('throws on an unknown top-level operator', () => {
     const { adapter } = recorder();
-    expect(() => translate({ $comment: 'x' }, adapter)).toThrow(
-      /unsupported condition operator `\$comment`/,
-    );
+    expect(() => translate({ $comment: 'x' }, adapter)).toThrow(/unsupported condition operator `\$comment`/);
   });
 
   it('refuses to guess at operators mixed with plain keys', () => {
     const { adapter } = recorder();
-    expect(() => translate({ n: { $gt: 2, oops: 1 } }, adapter)).toThrow(
-      /cannot mix operators with plain keys/,
-    );
+    expect(() => translate({ n: { $gt: 2, oops: 1 } }, adapter)).toThrow(/cannot mix operators with plain keys/);
   });
 
   it('requires a group operator to hold an array', () => {
     const { adapter } = recorder();
-    expect(() => translate({ $or: { status: 'live' } }, adapter)).toThrow(
-      /`\$or` in a condition must be an array/,
-    );
+    expect(() => translate({ $or: { status: 'live' } }, adapter)).toThrow(/`\$or` in a condition must be an array/);
   });
 
   it('still passes conditions through untranslated for a skeleton adapter', () => {
@@ -209,10 +197,7 @@ describe('a folded filter matches the same rows as the ability', () => {
 
   const cases: [string, (b: ReturnType<typeof createGraphQLAbility<RowMap>>) => void][] = [
     ['a single condition', ({ can }) => can(Actions.read, 'Note', { owner: 'u1' })],
-    [
-      'two conditions on one rule',
-      ({ can }) => can(Actions.read, 'Note', { owner: 'u1', status: 'live' }),
-    ],
+    ['two conditions on one rule', ({ can }) => can(Actions.read, 'Note', { owner: 'u1', status: 'live' })],
     [
       'two rules, ORed',
       ({ can }) => {

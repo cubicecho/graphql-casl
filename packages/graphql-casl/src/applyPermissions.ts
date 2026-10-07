@@ -34,11 +34,7 @@ import {
   locatedError,
   responsePathAsArray,
 } from 'graphql';
-import {
-  applyMiddleware,
-  type IMiddlewareFieldMap,
-  type IMiddlewareTypeMap,
-} from 'graphql-middleware';
+import { applyMiddleware, type IMiddlewareFieldMap, type IMiddlewareTypeMap } from 'graphql-middleware';
 import { SCOPE_INFO, type ScopeInfo } from './internal.js';
 import {
   type AnyResolvers,
@@ -73,10 +69,7 @@ export class PermissionsError extends Error {
    * @param problems - Every problem found.
    * @param [heading] - What failed to line up, as the message's first line.
    */
-  constructor(
-    problems: readonly string[],
-    heading = 'the permissions map does not match the schema',
-  ) {
+  constructor(problems: readonly string[], heading = 'the permissions map does not match the schema') {
     super(`graphql-casl: ${heading}.\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);
     this.name = 'PermissionsError';
     this.problems = problems;
@@ -131,10 +124,7 @@ export function describeKind(type: GraphQLNamedType): string {
  * @param abstract - The interface or union.
  * @returns Its concrete object types.
  */
-function possibleTypesOf(
-  schema: GraphQLSchema,
-  abstract: GraphQLAbstractType,
-): GraphQLObjectType[] {
+function possibleTypesOf(schema: GraphQLSchema, abstract: GraphQLAbstractType): GraphQLObjectType[] {
   if (isUnionType(abstract)) {
     return [...abstract.getTypes()];
   }
@@ -215,11 +205,7 @@ function listed(names: readonly string[]): string {
  * @param key - The field name, or the wildcard.
  * @returns The names of the entries that supply a rule.
  */
-function sourcesOf(
-  permissions: RawPermissions,
-  abstracts: readonly string[],
-  key: string,
-): string[] {
+function sourcesOf(permissions: RawPermissions, abstracts: readonly string[], key: string): string[] {
   const byRule = new Map<Rule, string>();
   for (const name of abstracts) {
     const rule = fieldRuleOf(permissions[name], key);
@@ -246,11 +232,7 @@ function sourcesOf(
  * entry settles it: `T.f` settles `f` outright, and `T['*']` settles the
  * type-wide tier (an `I.f` still beats it, as the precedence table says).
  */
-function ambiguityProblems(
-  schema: GraphQLSchema,
-  permissions: RawPermissions,
-  supertypes: Supertypes,
-): string[] {
+function ambiguityProblems(schema: GraphQLSchema, permissions: RawPermissions, supertypes: Supertypes): string[] {
   const problems: string[] = [];
   for (const [typeName, abstracts] of supertypes) {
     if (abstracts.length < 2) {
@@ -313,11 +295,7 @@ function ambiguityProblems(
  * that cannot be — an introspection type, a union's named field, a field the
  * interface does not declare — is rejected outright.
  */
-function collectProblems(
-  schema: GraphQLSchema,
-  permissions: RawPermissions,
-  supertypes: Supertypes,
-): string[] {
+function collectProblems(schema: GraphQLSchema, permissions: RawPermissions, supertypes: Supertypes): string[] {
   const problems: string[] = [];
   const typeMap = schema.getTypeMap();
 
@@ -407,8 +385,7 @@ function collectProblems(
         );
         continue;
       }
-      const isDeclared =
-        fieldName === WILDCARD || fieldName in (declared as Record<string, AnyField>);
+      const isDeclared = fieldName === WILDCARD || fieldName in (declared as Record<string, AnyField>);
       if (isDeclared === false) {
         problems.push(
           isInterfaceType(type)
@@ -470,9 +447,7 @@ const MAX_LISTED_NAMES = 4;
  */
 function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | undefined {
   for (const into of scopeTargetsOf(rule)) {
-    const missing = targets.filter(
-      (field) => field.args.some((arg) => arg.name === into) === false,
-    );
+    const missing = targets.filter((field) => field.args.some((arg) => arg.name === into) === false);
     if (missing.length === 0) {
       continue;
     }
@@ -498,10 +473,7 @@ function scopeProblem(rule: Rule, label: string, targets: AnyField[]): string | 
  * @param fieldName - The field name, or the wildcard.
  * @returns The rule, or `undefined` when the entry has none for that key.
  */
-function fieldRuleOf(
-  entry: Rule | Record<string, Rule | undefined> | undefined,
-  fieldName: string,
-): Rule | undefined {
+function fieldRuleOf(entry: Rule | Record<string, Rule | undefined> | undefined, fieldName: string): Rule | undefined {
   if (entry === undefined) {
     return undefined;
   }
@@ -698,9 +670,7 @@ function isRecordable(context: unknown): context is object {
 function standardized(denial: Error): Error {
   const extensions = (denial as { extensions?: unknown }).extensions;
   const own =
-    typeof extensions === 'object' && extensions !== null
-      ? (extensions as Record<string, unknown>)
-      : undefined;
+    typeof extensions === 'object' && extensions !== null ? (extensions as Record<string, unknown>) : undefined;
   if (typeof own?.code === 'string') {
     return denial;
   }
@@ -739,11 +709,7 @@ function deliver(
   info: GraphQLResolveInfo,
 ): unknown {
   const error = standardized(denial);
-  if (
-    !mask ||
-    (mask === MASK_NULL && report === DenialReport.Errors) ||
-    isRecordable(context) === false
-  ) {
+  if (!mask || (mask === MASK_NULL && report === DenialReport.Errors) || isRecordable(context) === false) {
     return Promise.reject(error);
   }
   let record = recorded.get(context);
@@ -779,10 +745,7 @@ function deliver(
  * is reported once, and a context with nothing recorded returns the result
  * untouched. Nothing is recorded under `'reject'` or `'mask'`.
  */
-export function reportDenials<TResult extends ExecutionResult>(
-  context: unknown,
-  result: TResult,
-): TResult {
+export function reportDenials<TResult extends ExecutionResult>(context: unknown, result: TResult): TResult {
   if (isRecordable(context) === false) {
     return result;
   }
@@ -800,10 +763,7 @@ export function reportDenials<TResult extends ExecutionResult>(
     ...result,
     extensions: {
       ...result.extensions,
-      [AUTHORIZATION_ERRORS_EXTENSION]: [
-        ...previous,
-        ...record.errors.map((error) => error.toJSON()),
-      ],
+      [AUTHORIZATION_ERRORS_EXTENSION]: [...previous, ...record.errors.map((error) => error.toJSON())],
     },
   };
 }
@@ -845,13 +805,7 @@ function isPlainRule(rule: Rule): rule is CheckableRule {
  */
 function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefined): Rule {
   const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
-  if (
-    !fallbackError &&
-    allowExternalErrors &&
-    debug === false &&
-    !mask &&
-    onDeny !== DenialMode.Filter
-  ) {
+  if (!fallbackError && allowExternalErrors && debug === false && !mask && onDeny !== DenialMode.Filter) {
     return rule;
   }
 
@@ -934,11 +888,7 @@ function withErrorControl(rule: Rule, options: ErrorControl, mask: Mask | undefi
  * @param mask - Produces the field's masked value.
  * @returns The wrapped rule.
  */
-function withCheckedErrorControl(
-  check: Check,
-  options: ErrorControl,
-  mask: Mask | undefined,
-): Rule {
+function withCheckedErrorControl(check: Check, options: ErrorControl, mask: Mask | undefined): Rule {
   const { fallbackError, allowExternalErrors, debug, onDeny, report } = options;
   const replaceResolverErrors = allowExternalErrors === false && fallbackError !== undefined;
 
@@ -988,9 +938,7 @@ function withCheckedErrorControl(
       return replaced(fallbackError, error, parent, args, context, info);
     }
     return isThenable(result)
-      ? Promise.resolve(result).catch((error) =>
-          replaced(fallbackError, error, parent, args, context, info),
-        )
+      ? Promise.resolve(result).catch((error) => replaced(fallbackError, error, parent, args, context, info))
       : result;
   }
 
@@ -1016,8 +964,8 @@ function withCheckedErrorControl(
     const explicit = denialKindOf(denial) === DenialKind.Explicit;
     if (onDeny === DenialMode.Filter) {
       if (fallbackError && explicit === false) {
-        return resolveFallbackError(fallbackError, denial, parent, args, context, info).then(
-          (error) => deliver(error, mask, report, context, info),
+        return resolveFallbackError(fallbackError, denial, parent, args, context, info).then((error) =>
+          deliver(error, mask, report, context, info),
         );
       }
       return deliver(denial, mask, report, context, info);
@@ -1198,13 +1146,8 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
     const type = schema.getTypeMap()[typeName];
     // Introspection is never guarded, so even `fallbackRule: deny` leaves it
     // working; a non-object type has no field to guard in the first place.
-    const field =
-      isObjectType(type) && isIntrospectionType(type) === false
-        ? type.getFields()[fieldName]
-        : undefined;
-    const rule = field
-      ? ruleForField(raw, typeName, fieldName, supertypes, fallbackRule)
-      : undefined;
+    const field = isObjectType(type) && isIntrospectionType(type) === false ? type.getFields()[fieldName] : undefined;
+    const rule = field ? ruleForField(raw, typeName, fieldName, supertypes, fallbackRule) : undefined;
     const guard =
       rule && field
         ? wrapped(rule, errorControl.onDeny === DenialMode.Reject ? undefined : maskFor(field.type))
@@ -1227,10 +1170,7 @@ export function resolvePermissions<TResolvers = AnyResolvers>(
  * can guard a field no map entry names. Introspection types are skipped by the
  * resolver itself, so even `fallbackRule: deny` leaves introspection working.
  */
-function resolveFieldRules(
-  schema: GraphQLSchema,
-  permissionFor: PermissionResolver,
-): IMiddlewareTypeMap {
+function resolveFieldRules(schema: GraphQLSchema, permissionFor: PermissionResolver): IMiddlewareTypeMap {
   const middleware: IMiddlewareTypeMap = {};
 
   for (const type of Object.values(schema.getTypeMap())) {
@@ -1367,16 +1307,10 @@ interface ErrorControl {
 export function denialModeOf(options: ApplyPermissionsOptions | undefined): DenialMode {
   const onDeny =
     options?.onDeny ??
-    (options?.maskDenials
-      ? DenialMode.Mask
-      : options?.strict
-        ? DenialMode.Filter
-        : DenialMode.Reject);
+    (options?.maskDenials ? DenialMode.Mask : options?.strict ? DenialMode.Filter : DenialMode.Reject);
   const problems: string[] = [];
   if (options?.maskDenials && onDeny !== DenialMode.Mask) {
-    problems.push(
-      `\`maskDenials: true\` is \`onDeny: 'mask'\`, which contradicts \`onDeny: '${onDeny}'\``,
-    );
+    problems.push(`\`maskDenials: true\` is \`onDeny: 'mask'\`, which contradicts \`onDeny: '${onDeny}'\``);
   }
   if (options?.report !== undefined && onDeny !== DenialMode.Filter) {
     problems.push(`\`report\` only applies under \`onDeny: 'filter'\`, not \`'${onDeny}'\``);

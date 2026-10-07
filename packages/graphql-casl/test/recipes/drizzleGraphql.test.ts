@@ -158,10 +158,7 @@ describe('folding an ability into a drizzle-graphql filter', () => {
       b.cannot(Actions.read, 'Note', { status: 'archived' });
     });
     expect(filter).toEqual({
-      OR: [
-        { status: { eq: 'public', ne: 'archived' } },
-        { userId: { eq: 'u1' }, status: { ne: 'archived' } },
-      ],
+      OR: [{ status: { eq: 'public', ne: 'archived' } }, { userId: { eq: 'u1' }, status: { ne: 'archived' } }],
     });
     assertLegalDrizzleFilter(filter);
   });
@@ -172,8 +169,8 @@ describe('folding an ability into a drizzle-graphql filter', () => {
   });
 
   it('throws rather than dropping a clause the dialect cannot express', () => {
-    expect(() =>
-      scopeFor((b) => b.can(Actions.read, 'Note', { status: { $regex: 'x' } as never })),
-    ).toThrow(/cannot express/);
+    expect(() => scopeFor((b) => b.can(Actions.read, 'Note', { status: { $regex: 'x' } as never }))).toThrow(
+      /cannot express/,
+    );
   });
 });

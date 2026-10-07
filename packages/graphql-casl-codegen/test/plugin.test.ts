@@ -26,9 +26,7 @@ describe('graphql-casl codegen plugin', () => {
     expect(content).toContain('export type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;');
     expect(content).toContain('export const Subject = subjectsOf<AppSubjectMap>();');
     expect(content).toContain('export const typed = createTyped<AppSubjectMap>();');
-    expect(content).toContain(
-      'export const ability = () => createGraphQLAbility<AppSubjectMap>();',
-    );
+    expect(content).toContain('export const ability = () => createGraphQLAbility<AppSubjectMap>();');
   });
 
   it('emits no hand-listed subject names', async () => {
@@ -77,9 +75,7 @@ describe('graphql-casl codegen plugin', () => {
     expect(prepend[0]).toContain("from '#auth'");
     expect(content).toContain('export type SubjectsMap = SubjectMap<Resolvers, ResolversTypes>;');
     expect(content).toContain('export const S = subjectsOf<SubjectsMap>();');
-    expect(content).toContain(
-      'export const makeAbility = () => createGraphQLAbility<SubjectsMap>();',
-    );
+    expect(content).toContain('export const makeAbility = () => createGraphQLAbility<SubjectsMap>();');
   });
 
   it('validate accepts valid (string / undefined / absent) config', async () => {
@@ -91,18 +87,14 @@ describe('graphql-casl codegen plugin', () => {
   });
 
   it('validate rejects non-string config values', async () => {
-    await expect(validate(schema, [], { subjectConstName: 123 }, 'out.ts', [])).rejects.toThrow(
-      /must be a string/,
-    );
+    await expect(validate(schema, [], { subjectConstName: 123 }, 'out.ts', [])).rejects.toThrow(/must be a string/);
   });
 
   it('validate ignores keys the plugin does not own', async () => {
     // The CLI injects `emitLegacyCommonJSImports` into every output, so this
     // arrives even when the user sets no config at all. Rejecting it made the
     // plugin unusable with @graphql-codegen/cli.
-    await expect(
-      validate(schema, [], { emitLegacyCommonJSImports: false }, 'out.ts', []),
-    ).resolves.toBeUndefined();
+    await expect(validate(schema, [], { emitLegacyCommonJSImports: false }, 'out.ts', [])).resolves.toBeUndefined();
   });
 
   it('validate ignores the sibling plugins’ options', async () => {
