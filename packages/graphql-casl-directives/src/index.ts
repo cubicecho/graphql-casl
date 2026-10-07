@@ -271,7 +271,7 @@ class Translator {
       // Interfaces are not walked on their own: the runtime resolves fields
       // against the concrete object type, so their directives are projected
       // onto each implementing type below instead.
-      if (!isObjectType(type) || isIntrospectionType(type)) {
+      if (isObjectType(type) === false || isIntrospectionType(type)) {
         continue;
       }
 
@@ -392,20 +392,20 @@ class Translator {
    */
   private canRule(args: Record<string, unknown>, site: Site): CheckableRule | undefined {
     const label = labelOf(site);
-    if (!this.can) {
+    if (this.can === undefined) {
       this.problems.push(
         `\`@can\` on \`${label}\` has no \`createCan\` builder to call: pass \`can\` to \`permissionsFromDirectives\`.`,
       );
       return undefined;
     }
-    if (!isAction(args.action)) {
+    if (isAction(args.action) === false) {
       this.problems.push(
         `\`@can\` on \`${label}\` has an unknown \`action\` ${JSON.stringify(args.action)}; expected one of ${ACTION_NAMES}.`,
       );
       return undefined;
     }
     const subject = args.subject === undefined ? this.inferSubject(site) : args.subject;
-    if (!isNonEmptyString(subject)) {
+    if (isNonEmptyString(subject) === false) {
       if (args.subject !== undefined) {
         this.problems.push(
           `\`@can\` on \`${label}\` has a \`subject\` that is not a non-empty string.`,
@@ -464,7 +464,7 @@ class Translator {
       return undefined;
     }
     const { names } = args;
-    if (!isNamesShape(names)) {
+    if (isNamesShape(names) === false) {
       this.problems.push(
         `\`@rule\` on \`${label}\` has a malformed \`names\`: expected a non-empty list of non-empty lists of rule names, e.g. \`[["isAuthenticated", "isOwner"], ["isAdmin"]]\`.`,
       );
@@ -481,7 +481,7 @@ class Translator {
           this.problems.push(
             `\`@rule\` on \`${label}\` names \`${name}\`, which is not in the rules registry.`,
           );
-        } else if (!isCheckableRule(found)) {
+        } else if (isCheckableRule(found) === false) {
           broken = true;
           this.problems.push(
             `\`@rule\` on \`${label}\` names \`${name}\`, which is not a checkable rule. Build it with \`rule()\` or \`createCan()\`; \`onResult\`, \`scopeArgs\` and \`wrap\` rules cannot be named from SDL.`,

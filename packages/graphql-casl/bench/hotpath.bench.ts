@@ -261,7 +261,7 @@ describe('apply time', () => {
       { fallbackRule: deny },
     );
     for (const type of Object.values(big.getTypeMap())) {
-      if (!isObjectType(type)) {
+      if (isObjectType(type) === false) {
         continue;
       }
       for (const fieldName of Object.keys(type.getFields())) {

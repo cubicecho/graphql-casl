@@ -40,7 +40,7 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
     throw new Error(`graphql-casl: \`${combinator}()\` needs at least one rule.`);
   }
   return rules.map((operand, index) => {
-    if (!isCheckableRule(operand)) {
+    if (isCheckableRule(operand) === false) {
       throw new Error(
         `graphql-casl: \`${combinator}()\` operand ${index} is not a checkable rule, so its ` +
           'verdict cannot be evaluated without also running the resolver. Build it with `rule()` ' +

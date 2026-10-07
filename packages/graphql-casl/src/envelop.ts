@@ -99,7 +99,7 @@ export function useGraphQLCasl<
   const filtering = denialModeOf(permissionOptions) === 'filter';
   // `disabled` still validates — `permissionsFor` runs on every schema — but
   // installs no resolver hook, so nothing is wrapped.
-  const enforcing = !permissionOptions.disabled;
+  const enforcing = permissionOptions.disabled !== true;
 
   /** Per schema, because envelop may hand over a new one at any point. */
   const resolvers = new WeakMap<GraphQLSchema, PermissionResolver>();
@@ -122,7 +122,7 @@ export function useGraphQLCasl<
 
   const plugin: Plugin<TContext> = {
     onPluginInit({ addPlugin }) {
-      if (!enforcing) {
+      if (enforcing === false) {
         return;
       }
       addPlugin(

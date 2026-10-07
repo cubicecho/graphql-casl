@@ -176,7 +176,7 @@ describe('a folded filter matches the same rows as the ability', () => {
           case '$in':
             return (value as unknown[]).includes(actual);
           case '$nin':
-            return !(value as unknown[]).includes(actual);
+            return (value as unknown[]).includes(actual) === false;
           case '$gt':
             return (actual as number) > (value as number);
           case '$gte':

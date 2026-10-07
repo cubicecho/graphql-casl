@@ -241,7 +241,7 @@ describe('accessibleBy in a list resolver', () => {
       return query.$and.every((part) => matches(row, part));
     }
     if (Array.isArray(query.$nor)) {
-      return !query.$nor.some((part) => matches(row, part));
+      return query.$nor.some((part) => matches(row, part)) === false;
     }
     return Object.entries(query).every(([field, value]) => row[field as keyof Note] === value);
   }

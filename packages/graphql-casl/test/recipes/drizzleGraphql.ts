@@ -180,14 +180,14 @@ export function assertLegalDrizzleFilter(filter: unknown): void {
       throw new Error(`drizzle-graphql has no \`${forbidden}\` key`);
     }
   }
-  if (!keys.includes('OR')) {
+  if (keys.includes('OR') === false) {
     return;
   }
   if (keys.length > 1) {
     throw new Error("cannot specify both fields and 'OR' in table filters");
   }
   const or = record.OR;
-  if (!Array.isArray(or)) {
+  if (Array.isArray(or) === false) {
     throw new Error('`OR` must be a list');
   }
   if (or.length === 0) {

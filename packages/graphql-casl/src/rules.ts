@@ -297,7 +297,7 @@ function argsKey(args: unknown): string | undefined {
   if (typeof args !== 'object') {
     return String(args);
   }
-  if (!Array.isArray(args)) {
+  if (Array.isArray(args) === false) {
     let empty = true;
     for (const _ in args) {
       empty = false;
@@ -351,7 +351,7 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
       // No object to hang the cache off — a request-scoped cache is not
       // available, so evaluate as if uncached rather than leaking entries into
       // a global map.
-      if (!isObject(context)) {
+      if (isObject(context) === false) {
         return check(parent, args, context, info);
       }
       const hit = byContext.get(context);
@@ -370,7 +370,7 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
   const keyOf = typeof mode === 'function' ? mode : undefined;
   const byContext = new WeakMap<object, Map<unknown, Map<string, Answer>>>();
   return (parent, args, context, info) => {
-    if (!isObject(context)) {
+    if (isObject(context) === false) {
       return check(parent, args, context, info);
     }
 
@@ -459,7 +459,7 @@ export function rule(check: Check, options?: RuleOptions): CheckableRule {
     // A synchronous answer skips the microtask an `await` would cost — on a
     // 100-row list with 5 guarded fields that is 500 promise hops — while a
     // denial is still delivered as a rejection, never a synchronous throw.
-    if (!isThenable(answer)) {
+    if (isThenable(answer) === false) {
       const denial = denialFrom(answer);
       return denial ? Promise.reject(denial) : resolve(parent, args, context, info);
     }

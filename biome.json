@@ -5,6 +5,7 @@
     "clientKind": "git",
     "useIgnoreFile": true
   },
+  "plugins": ["./no-negation.grit"],
   "files": {
     "includes": ["**", "!**/dist", "!**/node_modules"]
   },

@@ -156,7 +156,7 @@ function collectRuleProblems(
   checkPaths: boolean,
   problems: string[],
 ): void {
-  if (!isPlainObject(raw)) {
+  if (isPlainObject(raw) === false) {
     problems.push(`Rule ${index} is ${describeValue(raw)}, not an object.`);
     return;
   }
@@ -164,7 +164,7 @@ function collectRuleProblems(
   const label = labelOf(rule, index);
 
   for (const action of stringList(rule.action, 'action', label, problems) ?? []) {
-    if (!isAction(action)) {
+    if (isAction(action) === false) {
       problems.push(
         `${label}: action \`${action}\` is not one of ${ACTION_NAMES.map((name) => `\`${name}\``).join(', ')}.`,
       );
@@ -192,7 +192,8 @@ function collectRuleProblems(
         continue;
       }
       for (const type of subjects) {
-        if (!(head in type.getFields())) {
+        const isField = head in type.getFields();
+        if (isField === false) {
           problems.push(`${label}: field \`${field}\` is not a field of \`${type.name}\`.`);
         }
       }
@@ -200,7 +201,7 @@ function collectRuleProblems(
   }
 
   if (rule.conditions !== undefined) {
-    if (!isPlainObject(rule.conditions)) {
+    if (isPlainObject(rule.conditions) === false) {
       problems.push(
         `${label}: \`conditions\` is ${describeValue(rule.conditions)}, not an object.`,
       );
@@ -285,7 +286,7 @@ function walkConditions(
 ): void {
   for (const [key, value] of Object.entries(conditions)) {
     if (GROUP_OPERATORS.has(key)) {
-      if (!Array.isArray(value)) {
+      if (Array.isArray(value) === false) {
         problems.push(
           `${label}: \`${key}\` must be an array of conditions, not ${describeValue(value)}.`,
         );
@@ -344,7 +345,7 @@ function resolvePath(
   for (const type of types) {
     let current: GraphQLNamedType = type;
     for (const [i, segment] of segments.entries()) {
-      if (!isObjectType(current) && !isInterfaceType(current)) {
+      if (isObjectType(current) === false && isInterfaceType(current) === false) {
         break;
       }
       const field: GraphQLField<unknown, unknown> | undefined = current.getFields()[segment];
@@ -385,7 +386,7 @@ function checkOperators(
   label: string,
   problems: string[],
 ): void {
-  if (!isPlainObject(value)) {
+  if (isPlainObject(value) === false) {
     return;
   }
   const entries = Object.entries(value);
@@ -394,14 +395,14 @@ function checkOperators(
     return;
   }
   if (dollars.length !== entries.length) {
-    const plain = entries.find(([key]) => !key.startsWith('$'))?.[0];
+    const plain = entries.find(([key]) => key.startsWith('$') === false)?.[0];
     problems.push(
       `${label}: condition \`${path}\` mixes operators with plain keys (\`${plain}\` alongside \`${dollars[0]?.[0]}\`).`,
     );
     return;
   }
   for (const [operator, operand] of entries) {
-    if (!FIELD_OPERATORS.has(operator)) {
+    if (FIELD_OPERATORS.has(operator) === false) {
       problems.push(
         `${label}: \`${operator}\` on \`${path}\` is not a condition operator CASL supports.`,
       );
@@ -495,7 +496,7 @@ function quietStringList(value: unknown): readonly string[] | undefined {
  * @returns `true` for a non-null, non-array object.
  */
 function isPlainObject(value: unknown): value is object {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && Array.isArray(value) === false;
 }
 
 /**

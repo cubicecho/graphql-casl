@@ -151,7 +151,7 @@ export function isLeafAdapter<TFilter>(
 export function ruleTranslator<TFilter>(
   adapter: FilterAdapter<TFilter>,
 ): (conditions: object, inverted: boolean) => TFilter {
-  if (!isLeafAdapter(adapter)) {
+  if (isLeafAdapter(adapter) === false) {
     return adapter.rule.bind(adapter);
   }
   const leafAdapter = adapter;
@@ -220,7 +220,7 @@ function walk<TFilter>(conditions: object, adapter: LeafAdapter<TFilter>): TFilt
  * @returns The conditions. Throws when `value` is not an array.
  */
 function asGroup(key: string, value: unknown): object[] {
-  if (!Array.isArray(value)) {
+  if (Array.isArray(value) === false) {
     throw new Error(`graphql-casl: \`${key}\` in a condition must be an array of conditions.`);
   }
   return value as object[];
@@ -241,7 +241,7 @@ function field<TFilter>(path: string[], value: unknown, adapter: LeafAdapter<TFi
   }
 
   const parts = operators.map(([operator, operand]) => {
-    if (!LEAF_OPERATORS.has(operator)) {
+    if (LEAF_OPERATORS.has(operator) === false) {
       throw new Error(
         `graphql-casl: unsupported condition operator \`${operator}\` on \`${path.join('.')}\`. ` +
           'A leaf adapter cannot translate it, and dropping it would widen access. Use a ' +
@@ -280,7 +280,7 @@ function operatorEntries(value: unknown): [string, unknown][] | undefined {
     return undefined;
   }
   if (dollars.length !== entries.length) {
-    const plain = entries.find(([key]) => !key.startsWith('$'));
+    const plain = entries.find(([key]) => key.startsWith('$') === false);
     throw new Error(
       `graphql-casl: a condition cannot mix operators with plain keys (found \`${plain?.[0]}\` ` +
         `alongside \`${dollars[0]?.[0]}\`).`,

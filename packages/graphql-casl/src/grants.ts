@@ -54,7 +54,7 @@ function isObject(value: unknown): value is object {
  * @param scopes - The scopes to grant.
  */
 function tag(context: object, value: unknown, scopes: readonly string[]): void {
-  if (!isObject(value)) {
+  if (isObject(value) === false) {
     return;
   }
   if (Array.isArray(value)) {
@@ -87,7 +87,7 @@ function tag(context: object, value: unknown, scopes: readonly string[]): void {
  * @returns `true` when the grant exists.
  */
 function hasGrant(context: unknown, parent: unknown, scope: string): boolean {
-  if (!isObject(context) || !isObject(parent)) {
+  if (isObject(context) === false || isObject(parent) === false) {
     return false;
   }
   return grantsByContext.get(context)?.get(parent)?.has(scope) === true;
@@ -157,7 +157,7 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   const granting: Rule = (resolve, parent, args, context, info) => {
     const out = inner(resolve, parent, args, context, info);
     // Nothing to hang the grants off — see the module comment.
-    if (!isObject(context)) {
+    if (isObject(context) === false) {
       return out;
     }
     if (isThenable(out)) {
