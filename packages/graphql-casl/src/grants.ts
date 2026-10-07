@@ -17,7 +17,7 @@
  * unless that field grants too.
  */
 
-import { markScope, scopeInfoOf } from './internal.js';
+import { isWeakKey, markScope, scopeInfoOf } from './internal.js';
 import { type CheckableRule, isThenable, type Rule, rule } from './rules.js';
 
 /**
@@ -34,16 +34,6 @@ import { type CheckableRule, isThenable, type Rule, rule } from './rules.js';
 const grantsByContext = new WeakMap<object, WeakMap<object, Set<string>>>();
 
 /**
- * Whether a value can key a `WeakMap` — and so can carry, or hang, a grant.
- *
- * @param value - The value to test.
- * @returns `true` for a non-null object or a function.
- */
-function isObject(value: unknown): value is object {
-  return value !== null && (typeof value === 'object' || typeof value === 'function');
-}
-
-/**
  * Tags a resolved value with `scopes` for the request `context` identifies:
  * the object itself, or every object in a list (nested lists included, since
  * `[[Post]]` is a legal field type). `null`, scalars and anything else that
@@ -54,7 +44,7 @@ function isObject(value: unknown): value is object {
  * @param scopes - The scopes to grant.
  */
 function tag(context: object, value: unknown, scopes: readonly string[]): void {
-  if (isObject(value) === false) {
+  if (isWeakKey(value) === false) {
     return;
   }
   if (Array.isArray(value)) {
@@ -87,7 +77,7 @@ function tag(context: object, value: unknown, scopes: readonly string[]): void {
  * @returns `true` when the grant exists.
  */
 function hasGrant(context: unknown, parent: unknown, scope: string): boolean {
-  if (isObject(context) === false || isObject(parent) === false) {
+  if (isWeakKey(context) === false || isWeakKey(parent) === false) {
     return false;
   }
   return grantsByContext.get(context)?.get(parent)?.has(scope) === true;
@@ -155,7 +145,7 @@ export function grants(inner: Rule, scope: string | readonly string[]): Rule {
   const granting: Rule = (resolve, parent, args, context, info) => {
     const out = inner(resolve, parent, args, context, info);
     // Nothing to hang the grants off — see the module comment.
-    if (isObject(context) === false) {
+    if (isWeakKey(context) === false) {
       return out;
     }
     if (isThenable(out)) {

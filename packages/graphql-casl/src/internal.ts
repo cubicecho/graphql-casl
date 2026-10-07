@@ -8,6 +8,16 @@
 
 import type { AbilityLike } from './ability.js';
 
+/**
+ * Whether a value can key a `WeakMap`.
+ *
+ * @param value - The value to test.
+ * @returns `true` for a non-null object or a function.
+ */
+export function isWeakKey(value: unknown): value is object {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function';
+}
+
 /** Keys the private handle {@link createCan} attaches to its `requireCan`. */
 export const CAN_INTERNALS: unique symbol = Symbol.for('graphql-casl.canInternals');
 

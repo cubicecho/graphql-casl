@@ -5,6 +5,7 @@
  */
 
 import type { GraphQLResolveInfo } from 'graphql';
+import { isWeakKey } from './internal.js';
 
 type ResolveFn = (
   parent?: unknown,
@@ -271,16 +272,6 @@ export function isThenable<T>(value: T | PromiseLike<T>): value is PromiseLike<T
 }
 
 /**
- * Whether a value can key a `WeakMap`.
- *
- * @param value - The value to test.
- * @returns `true` for a non-null object or a function.
- */
-function isObject(value: unknown): value is object {
-  return value !== null && (typeof value === 'object' || typeof value === 'function');
-}
-
-/**
  * A stable key for a field's arguments, or `undefined` if none can be made.
  *
  * @param args - The field's arguments.
@@ -358,7 +349,7 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
       // No object to hang the cache off — a request-scoped cache is not
       // available, so evaluate as if uncached rather than leaking entries into
       // a global map.
-      if (isObject(context) === false) {
+      if (isWeakKey(context) === false) {
         return check(parent, args, context, info);
       }
       const hit = byContext.get(context);
@@ -377,7 +368,7 @@ function memoize(check: Check, mode: Exclude<CacheMode, 'no_cache'> | CacheKey):
   const keyOf = typeof mode === 'function' ? mode : undefined;
   const byContext = new WeakMap<object, Map<unknown, Map<string, Answer>>>();
   return (parent, args, context, info) => {
-    if (isObject(context) === false) {
+    if (isWeakKey(context) === false) {
       return check(parent, args, context, info);
     }
 

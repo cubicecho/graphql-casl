@@ -35,7 +35,7 @@ import {
   responsePathAsArray,
 } from 'graphql';
 import { applyMiddleware, type IMiddlewareFieldMap, type IMiddlewareTypeMap } from 'graphql-middleware';
-import { scopeInfoOf } from './internal.js';
+import { isWeakKey, scopeInfoOf } from './internal.js';
 import {
   type AnyResolvers,
   type Check,
@@ -648,16 +648,6 @@ interface DenialRecord {
 const recorded = new WeakMap<object, DenialRecord>();
 
 /**
- * Whether a context value can key the record — a `WeakMap` needs an object.
- *
- * @param context - The request context.
- * @returns `true` for an object or a function.
- */
-function isRecordable(context: unknown): context is object {
-  return (typeof context === 'object' && context !== null) || typeof context === 'function';
-}
-
-/**
  * The error a filtered denial is reported as: the denial's own words under the
  * standard code. A denial that already names a code — a check that returned a
  * `GraphQLError` with one, or a `fallbackError` that built one — is the rule
@@ -708,7 +698,7 @@ function deliver(
   info: GraphQLResolveInfo,
 ): unknown {
   const error = standardized(denial);
-  if (!mask || (mask === MASK_NULL && report === DenialReport.Errors) || isRecordable(context) === false) {
+  if (!mask || (mask === MASK_NULL && report === DenialReport.Errors) || isWeakKey(context) === false) {
     return Promise.reject(error);
   }
   let record = recorded.get(context);
@@ -745,7 +735,7 @@ function deliver(
  * untouched. Nothing is recorded under `'reject'` or `'mask'`.
  */
 export function reportDenials<TResult extends ExecutionResult>(context: unknown, result: TResult): TResult {
-  if (isRecordable(context) === false) {
+  if (isWeakKey(context) === false) {
     return result;
   }
   const record = recorded.get(context);

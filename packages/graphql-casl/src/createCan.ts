@@ -5,7 +5,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
-import { markCanInternals } from './internal.js';
+import { isWeakKey, markCanInternals } from './internal.js';
 import {
   type CacheKey,
   type CacheMode,
@@ -465,20 +465,19 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   function resolveAbility(context: TContext): AbilityLike | Promise<AbilityLike> {
     // A non-object context (undefined, a string) can't key a WeakMap. Rare, but
     // it must still work — just without the memo.
-    if (context === null || (typeof context !== 'object' && typeof context !== 'function')) {
+    if (isWeakKey(context) === false) {
       return Promise.resolve(getAbility(context));
     }
-    const key: object = context;
-    const cached = abilityCache.get(key);
+    const cached = abilityCache.get(context);
     if (cached) {
       return cached;
     }
     const pending = Promise.resolve(getAbility(context));
-    abilityCache.set(key, pending);
+    abilityCache.set(context, pending);
     pending.then(
-      (ability) => abilityCache.set(key, ability),
+      (ability) => abilityCache.set(context, ability),
       // Don't let one failed build poison every later field on the same request.
-      () => abilityCache.delete(key),
+      () => abilityCache.delete(context),
     );
     return pending;
   }
