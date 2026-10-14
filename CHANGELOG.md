@@ -1,3 +1,12 @@
+# [1.11.0](https://github.com/cubicecho/graphql-casl/compare/v1.10.0...v1.11.0) (2026-10-14)
+
+
+### Features
+
+* export named constants for the mode options ([a2063c0](https://github.com/cubicecho/graphql-casl/commit/a2063c08c802b9092afa23a43f7a0e53ca9b04ce))
+* export WILDCARD and isAction from the runtime ([f026a1c](https://github.com/cubicecho/graphql-casl/commit/f026a1cefa8a28ad9e4d2c28b5c6997a8b9e71eb))
+* let validateGraphQLRules check operators against a leaf adapter ([34fbd4c](https://github.com/cubicecho/graphql-casl/commit/34fbd4cd9e95f8a6a75647b80730ab666413e252))
+
 # [1.10.0](https://github.com/cubicecho/graphql-casl/compare/v1.9.0...v1.10.0) (2026-09-04)
 
 
