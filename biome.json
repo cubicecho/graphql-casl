@@ -5,19 +5,48 @@
     "clientKind": "git",
     "useIgnoreFile": true
   },
+  "plugins": ["./no-negation.grit"],
   "files": {
+    "ignoreUnknown": true,
     "includes": ["**", "!**/dist", "!**/node_modules"]
   },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
-    "rules": { "preset": "recommended" }
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error"
+      },
+      "style": {
+        "useImportType": "error",
+        "useConst": "error",
+        "useBlockStatements": "error",
+        "noMagicNumbers": "warn",
+        "noCommonJs": "error",
+        "noEnum": "error",
+        "noNamespace": "error",
+        "noParameterProperties": "error",
+        "noNonNullAssertion": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error"
+      }
+    }
   },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/test/**", "**/bench/**"],
+      "linter": { "rules": { "style": { "noMagicNumbers": "off" } } }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineWidth": 120
   },
   "javascript": {
     "formatter": {

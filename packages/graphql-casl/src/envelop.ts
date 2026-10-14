@@ -2,6 +2,7 @@
  * The envelop integration — the optional entry point,
  * `@vantreeseba/graphql-casl/envelop`.
  *
+ * @remarks
  * `applyPermissions` wraps a schema up front, which needs a schema you own
  * and can replace. That is awkward on Apollo Server 4+, on federated gateways,
  * and anywhere the schema is built or swapped for you. {@link useGraphQLCasl}
@@ -41,9 +42,10 @@ import {
   type ApplyPermissionsOptions,
   denialModeOf,
   type PermissionResolver,
-  reportDenials,
   resolvePermissions,
 } from './applyPermissions.js';
+import { DenialMode, reportDenials } from './denials.js';
+import { getOrCreate } from './internal.js';
 import type { PermissionsMap } from './rules.js';
 
 /**
@@ -63,6 +65,13 @@ export interface GraphQLCaslPluginOptions<TResolvers>
 /**
  * An envelop plugin that enforces a {@link PermissionsMap}.
  *
+ * @typeParam TResolvers - Your generated `Resolvers` type.
+ * @typeParam TContext - The plugin's context type.
+ * @param options - The map and the {@link ApplyPermissionsOptions}.
+ * @returns The envelop plugin.
+ * @throws `PermissionsError` if the map does not line up with the schema.
+ *
+ * @remarks
  * The map is validated against the schema as soon as envelop provides one, so a
  * map naming a type or field the schema does not have throws a `PermissionsError`
  * at that point rather than mid-query. A schema swapped at runtime is
@@ -72,11 +81,6 @@ export interface GraphQLCaslPluginOptions<TResolvers>
  * guarded too — the default resolver is wrapped like any other, which is what
  * makes a `canUser.fields(...)` rule on a plain object type work here.
  *
- * @typeParam TResolvers - Your generated `Resolvers` type.
- * @typeParam TContext - The plugin's context type.
- * @param options - The map and the {@link ApplyPermissionsOptions}.
- * @returns The envelop plugin.
- * @throws `PermissionsError` if the map does not line up with the schema.
  * @example
  * ```ts
  * const getEnveloped = envelop({
@@ -93,10 +97,10 @@ export function useGraphQLCasl<
   // Resolved here rather than read off the key, so `strict` alone (which
   // defaults the mode to `'filter'`) still gets its report hook. Resolving also
   // rejects a contradictory pair at wiring time, before any schema arrives.
-  const filtering = denialModeOf(permissionOptions) === 'filter';
+  const filtering = denialModeOf(permissionOptions) === DenialMode.Filter;
   // `disabled` still validates — `permissionsFor` runs on every schema — but
   // installs no resolver hook, so nothing is wrapped.
-  const enforcing = !permissionOptions.disabled;
+  const enforcing = permissionOptions.disabled !== true;
 
   /** Per schema, because envelop may hand over a new one at any point. */
   const resolvers = new WeakMap<GraphQLSchema, PermissionResolver>();
@@ -109,17 +113,14 @@ export function useGraphQLCasl<
 
   /** Resolves the map against a schema once, then reuses that lookup. */
   function permissionsFor(schema: GraphQLSchema): PermissionResolver {
-    let resolve = resolvers.get(schema);
-    if (!resolve) {
-      resolve = resolvePermissions<TResolvers>(schema, permissions, permissionOptions);
-      resolvers.set(schema, resolve);
-    }
-    return resolve;
+    return getOrCreate(resolvers, schema, () => resolvePermissions<TResolvers>(schema, permissions, permissionOptions));
   }
 
   const plugin: Plugin<TContext> = {
     onPluginInit({ addPlugin }) {
-      if (!enforcing) return;
+      if (enforcing === false) {
+        return;
+      }
       addPlugin(
         useOnResolve<TContext>(({ info, resolver, replaceResolver }) => {
           // `replaceResolver` is permanent for the field, not per call, so this
@@ -127,11 +128,15 @@ export function useGraphQLCasl<
           // callback itself still runs per call, so the "already done" test is
           // kept to one `WeakSet` lookup.
           const field = info.parentType.getFields()[info.fieldName];
-          if (!field || guarded.has(field)) return;
+          if (!field || guarded.has(field)) {
+            return;
+          }
           guarded.add(field);
 
           const rule = permissionsFor(info.schema)(info.parentType.name, info.fieldName);
-          if (!rule) return;
+          if (!rule) {
+            return;
+          }
 
           replaceResolver((root, args, context, resolveInfo) =>
             rule(
@@ -173,7 +178,9 @@ export function useGraphQLCasl<
       onExecuteDone(payload) {
         return handleStreamOrSingleExecutionResult(payload, ({ args, result, setResult }) => {
           const reported = reportDenials(args.contextValue, result);
-          if (reported !== result) setResult(reported);
+          if (reported !== result) {
+            setResult(reported);
+          }
         });
       },
     });

@@ -1,6 +1,7 @@
 /**
  * graphql-casl — generic CASL permissions middleware for GraphQL resolvers.
  *
+ * @remarks
  * Everything here is schema-agnostic: pass your own generated `Resolvers` /
  * `ResolversTypes` to the type helpers and you get a fully-derived subject
  * union without any manual type listing. The runtime helpers (`createCan`,
@@ -28,25 +29,11 @@
  */
 
 export type { AbilityLike, Action } from './ability.js';
-export { Actions } from './ability.js';
+export { Actions, isAction } from './ability.js';
 export type { AccessibleFilter } from './accessibleBy.js';
 export { accessibleBy } from './accessibleBy.js';
-export type {
-  ApplyPermissionsOptions,
-  DenialMode,
-  DenialReport,
-  FallbackError,
-  PermissionResolver,
-} from './applyPermissions.js';
-export {
-  AUTHORIZATION_ERRORS_EXTENSION,
-  applyPermissions,
-  PermissionsError,
-  reportDenials,
-  resolvePermissions,
-  UNAUTHORIZED_FIELD_OR_TYPE,
-  validatePermissions,
-} from './applyPermissions.js';
+export type { ApplyPermissionsOptions, PermissionResolver } from './applyPermissions.js';
+export { applyPermissions, resolvePermissions } from './applyPermissions.js';
 export { and, chain, not, or, race, wrap } from './combinators.js';
 export type {
   AdapterCore,
@@ -64,9 +51,16 @@ export type {
   RequireCanBare,
   RequireCanFields,
   RequireCanOnResult,
-  UnconditionedSubjectMode,
 } from './createCan.js';
-export { createCan } from './createCan.js';
+export { createCan, UnconditionedSubjectMode } from './createCan.js';
+export {
+  AUTHORIZATION_ERRORS_EXTENSION,
+  DenialMode,
+  DenialReport,
+  reportDenials,
+  UNAUTHORIZED_FIELD_OR_TYPE,
+} from './denials.js';
+export type { FallbackError } from './errorControl.js';
 export { granted, grants } from './grants.js';
 export type {
   GraphQLAbilities,
@@ -75,10 +69,11 @@ export type {
   GraphQLRule,
 } from './graphqlAbility.js';
 export { buildGraphQLAbility, createGraphQLAbility } from './graphqlAbility.js';
+export { validatePermissions } from './mapValidation.js';
+export { PermissionsError } from './permissionsError.js';
 export type {
   AnyResolvers,
   CacheKey,
-  CacheMode,
   Check,
   CheckableRule,
   PermissionsMap,
@@ -87,7 +82,7 @@ export type {
   RuleResult,
   Wildcard,
 } from './rules.js';
-export { accept, deny, isCheckableRule, rule } from './rules.js';
+export { accept, CacheMode, deny, isCheckableRule, rule, WILDCARD } from './rules.js';
 export type { ArgsOf, ContextOf, ParentOf, SubjectMap, SubjectName } from './schemaTypes.js';
 export { createSubjects, createTyped, type Subjects, subjectsOf } from './subjects.js';
 export type {

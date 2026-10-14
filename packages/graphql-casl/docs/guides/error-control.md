@@ -52,6 +52,11 @@ const schema = applyPermissions<Resolvers>(baseSchema, permissions, {
 });
 ```
 
+Each mode option also has a named constant, as `Actions` does for actions:
+`DenialMode.Filter`, `DenialReport.Extensions`, `CacheMode.Contextual`,
+`UnconditionedSubjectMode.Throw`, and `OnDenyAll.Nothing` from the `/scoping`
+entry point. The string and the constant are interchangeable.
+
 | `onDeny` | Denied field | The caller is told |
 | --- | --- | --- |
 | `'reject'` | throws, and non-null propagation applies | an `errors` entry, `Forbidden` |

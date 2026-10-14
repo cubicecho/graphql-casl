@@ -5,19 +5,27 @@ import {
   Actions,
   accept,
   and,
+  CacheMode,
   createCan,
   createGraphQLAbility,
   createSubjects,
   createTyped,
+  DenialMode,
+  DenialReport,
   deny,
   type GraphQLAbility,
+  isAction,
   isCheckableRule,
   or,
   type PermissionsMap,
   type RequireCan,
   type Rule,
+  rule,
   subjectsOf,
+  UnconditionedSubjectMode,
+  WILDCARD,
 } from '../src/index.js';
+import { OnDenyAll } from '../src/scoping.js';
 
 // An example subject map — in a real app this comes from SubjectMap<Resolvers, ResolversTypes>.
 type ExampleSubjectMap = {
@@ -35,7 +43,9 @@ const typed = createTyped<ExampleSubjectMap>();
 
 function buildAbility(userId: string | undefined): TestAbility {
   const { can, build } = createGraphQLAbility<ExampleSubjectMap>();
-  if (!userId) return build(); // no rules ⇒ everything denied
+  if (!userId) {
+    return build(); // no rules ⇒ everything denied
+  }
   can(Actions.read, 'Note');
   can(Actions.update, 'Note', { userId });
   return build();
@@ -54,6 +64,41 @@ const resultInfo = {
   parentType: queryOnlySchema.getQueryType(),
   fieldName: 'note',
 } as unknown as GraphQLResolveInfo;
+
+describe('isAction', () => {
+  it('accepts every member of Actions', () => {
+    for (const action of Object.values(Actions)) {
+      expect(isAction(action)).toBe(true);
+    }
+  });
+
+  it('rejects other strings and non-strings', () => {
+    expect(isAction('publish')).toBe(false);
+    expect(isAction(undefined)).toBe(false);
+    expect(isAction(1)).toBe(false);
+  });
+});
+
+describe('WILDCARD', () => {
+  it('is the key a permissions map treats as the wildcard', () => {
+    expect(WILDCARD).toBe('*');
+  });
+});
+
+describe('mode vocabularies', () => {
+  it('names every value its option accepts', () => {
+    expect(Object.values(DenialMode)).toEqual(['reject', 'filter', 'mask']);
+    expect(Object.values(DenialReport)).toEqual(['errors', 'extensions']);
+    expect(Object.values(CacheMode)).toEqual(['no_cache', 'contextual', 'strict']);
+    expect(Object.values(UnconditionedSubjectMode)).toEqual(['warn', 'throw', 'allow']);
+    expect(Object.values(OnDenyAll)).toEqual(['deny', 'nothing']);
+  });
+
+  it('is accepted where the string it names is', () => {
+    const cached = rule(() => true, { cache: CacheMode.Contextual });
+    expect(isCheckableRule(cached)).toBe(true);
+  });
+});
 
 describe('accept / deny', () => {
   it('accept invokes resolve and returns its value', async () => {
@@ -98,9 +143,7 @@ describe('createCan', () => {
       userId: args.userId,
     }));
     const resolve = vi.fn();
-    await expect(
-      rule(resolve, null, { userId: 'someone-else' }, { userId: 'u1' }, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(rule(resolve, null, { userId: 'someone-else' }, { userId: 'u1' }, info)).rejects.toThrow('Forbidden');
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -109,9 +152,7 @@ describe('createCan', () => {
     const rule = canUser(Actions.update, 'Note', (args: { userId: string }) => ({
       userId: args.userId,
     }));
-    await expect(rule(resolve, null, { userId: 'u1' }, { userId: 'u1' }, info)).resolves.toBe(
-      'updated',
-    );
+    await expect(rule(resolve, null, { userId: 'u1' }, { userId: 'u1' }, info)).resolves.toBe('updated');
   });
 
   it('types getSubjectData against the subject fields (compile-time)', () => {
@@ -133,9 +174,7 @@ describe('createCan', () => {
       subject: string,
       getSubjectData: (args: unknown) => Record<string, unknown>,
     ) => unknown;
-    expect(() => canBare(Actions.update, 'Note', () => ({ userId: 'u1' }))).toThrow(
-      /requires a `buildSubject` tagger/,
-    );
+    expect(() => canBare(Actions.update, 'Note', () => ({ userId: 'u1' }))).toThrow(/requires a `buildSubject` tagger/);
   });
 });
 
@@ -221,9 +260,7 @@ describe('createCan — unconditioned subject checks', () => {
     await expect(rule(resolve, null, {}, { userId: 'u2' }, info)).resolves.toBe('note');
 
     expect(warn).toHaveBeenCalledOnce();
-    expect(warn.mock.calls[0]?.[0]).toMatch(
-      /every rule granting 'update' on 'Note' has conditions/,
-    );
+    expect(warn.mock.calls[0]?.[0]).toMatch(/every rule granting 'update' on 'Note' has conditions/);
   });
 
   it("throws instead of allowing under onUnconditionedSubject: 'throw'", async () => {
@@ -234,9 +271,9 @@ describe('createCan — unconditioned subject checks', () => {
       { onUnconditionedSubject: 'throw' },
     );
     const resolve = vi.fn();
-    await expect(
-      canStrict(Actions.update, 'Note')(resolve, null, {}, { userId: 'u1' }, info),
-    ).rejects.toThrow(/was checked without `getSubjectData`/);
+    await expect(canStrict(Actions.update, 'Note')(resolve, null, {}, { userId: 'u1' }, info)).rejects.toThrow(
+      /was checked without `getSubjectData`/,
+    );
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -249,9 +286,7 @@ describe('createCan — unconditioned subject checks', () => {
       { onUnconditionedSubject: 'allow' },
     );
     const resolve = vi.fn().mockResolvedValue('note');
-    await expect(
-      canLoose(Actions.update, 'Note')(resolve, null, {}, { userId: 'u1' }, info),
-    ).resolves.toBe('note');
+    await expect(canLoose(Actions.update, 'Note')(resolve, null, {}, { userId: 'u1' }, info)).resolves.toBe('note');
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -263,34 +298,22 @@ describe('createCan — unconditioned subject checks', () => {
       { onUnconditionedSubject: 'allow' },
     );
     await expect(
-      canBare(Actions.update, 'Note')(
-        vi.fn().mockResolvedValue('note'),
-        null,
-        {},
-        { userId: 'u1' },
-        info,
-      ),
+      canBare(Actions.update, 'Note')(vi.fn().mockResolvedValue('note'), null, {}, { userId: 'u1' }, info),
     ).resolves.toBe('note');
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('stays quiet when an unconditioned rule grants the action', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await canUser(Actions.read, 'Note')(
-      vi.fn().mockResolvedValue('note'),
-      null,
-      {},
-      { userId: 'u1' },
-      info,
-    );
+    await canUser(Actions.read, 'Note')(vi.fn().mockResolvedValue('note'), null, {}, { userId: 'u1' }, info);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('stays quiet when nothing grants the action, since the check denies anyway', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(
-      canUser(Actions.delete, 'Note')(vi.fn(), null, {}, { userId: 'u1' }, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(canUser(Actions.delete, 'Note')(vi.fn(), null, {}, { userId: 'u1' }, info)).rejects.toThrow(
+      'Forbidden',
+    );
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -299,13 +322,7 @@ describe('createCan — unconditioned subject checks', () => {
     const rule = canUser(Actions.update, 'Note', (args: { userId: string }) => ({
       userId: args.userId,
     }));
-    await rule(
-      vi.fn().mockResolvedValue('updated'),
-      null,
-      { userId: 'u1' },
-      { userId: 'u1' },
-      info,
-    );
+    await rule(vi.fn().mockResolvedValue('updated'), null, { userId: 'u1' }, { userId: 'u1' }, info);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -316,13 +333,7 @@ describe('createCan — unconditioned subject checks', () => {
       () => true,
       typed,
     );
-    await canOpaque(Actions.update, 'Note')(
-      vi.fn().mockResolvedValue('ok'),
-      null,
-      {},
-      { userId: 'u1' },
-      info,
-    );
+    await canOpaque(Actions.update, 'Note')(vi.fn().mockResolvedValue('ok'), null, {}, { userId: 'u1' }, info);
     expect(warn).not.toHaveBeenCalled();
   });
 });
@@ -330,11 +341,7 @@ describe('createCan — unconditioned subject checks', () => {
 describe('createCan — ability memoization', () => {
   it('builds the ability once per context, across every rule of the factory', async () => {
     const getAbility = vi.fn(async (ctx: TestContext) => buildAbility(ctx.userId));
-    const canUser = createCan<TestContext, ExampleSubjectMap>(
-      getAbility,
-      (ctx) => ctx.userId != null,
-      typed,
-    );
+    const canUser = createCan<TestContext, ExampleSubjectMap>(getAbility, (ctx) => ctx.userId != null, typed);
     const read = canUser(Actions.read, 'Note');
     const update = canUser(Actions.update, 'Note', (args: { userId: string }) => ({
       userId: args.userId,
@@ -353,11 +360,7 @@ describe('createCan — ability memoization', () => {
 
   it('builds a fresh ability for a different context object', async () => {
     const getAbility = vi.fn(async (ctx: TestContext) => buildAbility(ctx.userId));
-    const canUser = createCan<TestContext, ExampleSubjectMap>(
-      getAbility,
-      (ctx) => ctx.userId != null,
-      typed,
-    );
+    const canUser = createCan<TestContext, ExampleSubjectMap>(getAbility, (ctx) => ctx.userId != null, typed);
     const rule = canUser(Actions.read, 'Note');
     const resolve = vi.fn().mockResolvedValue('ok');
 
@@ -372,11 +375,7 @@ describe('createCan — ability memoization', () => {
       .fn<(ctx: TestContext) => Promise<TestAbility>>()
       .mockRejectedValueOnce(new Error('db down'))
       .mockImplementation(async (ctx) => buildAbility(ctx.userId));
-    const canUser = createCan<TestContext, ExampleSubjectMap>(
-      getAbility,
-      (ctx) => ctx.userId != null,
-      typed,
-    );
+    const canUser = createCan<TestContext, ExampleSubjectMap>(getAbility, (ctx) => ctx.userId != null, typed);
     const rule = canUser(Actions.read, 'Note');
     const ctx: TestContext = { userId: 'u1' };
 
@@ -392,9 +391,7 @@ describe('createCan — ability memoization', () => {
       typed,
     );
     const rule = canUser(Actions.read, 'Note');
-    await expect(rule(vi.fn().mockResolvedValue('ok'), null, {}, undefined, info)).resolves.toBe(
-      'ok',
-    );
+    await expect(rule(vi.fn().mockResolvedValue('ok'), null, {}, undefined, info)).resolves.toBe('ok');
   });
 });
 
@@ -477,36 +474,28 @@ describe('createCan.onResult — post-execution rules', () => {
     // resolver loads someone else's note. The pre-execution form passes here.
     const args = { id: 'n1', userId: 'u1' };
     const preExec = canUser(Actions.update, 'Note', (a: typeof args) => ({ userId: a.userId }));
-    await expect(
-      preExec(vi.fn().mockResolvedValue('leaked'), null, args, { userId: 'u1' }, queryInfo),
-    ).resolves.toBe('leaked');
+    await expect(preExec(vi.fn().mockResolvedValue('leaked'), null, args, { userId: 'u1' }, queryInfo)).resolves.toBe(
+      'leaked',
+    );
 
     const resolve = vi.fn().mockResolvedValue({ id: 'n1', userId: 'someone-else' });
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(rule(resolve, null, args, { userId: 'u1' }, queryInfo)).rejects.toThrow(
-      'Forbidden',
-    );
+    await expect(rule(resolve, null, args, { userId: 'u1' }, queryInfo)).rejects.toThrow('Forbidden');
     expect(resolve).toHaveBeenCalledOnce();
   });
 
   it('allows when the resolved record matches the conditions', async () => {
     const note = { id: 'n1', userId: 'u1' };
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(vi.fn().mockResolvedValue(note), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toBe(note);
+    await expect(rule(vi.fn().mockResolvedValue(note), null, {}, { userId: 'u1' }, queryInfo)).resolves.toBe(note);
   });
 
   it('applies getSubjectData to each candidate', async () => {
-    const rule = canUser.onResult(
-      Actions.update,
-      'Note',
-      (row: { note: { id: string; userId: string } }) => row.note,
-    );
+    const rule = canUser.onResult(Actions.update, 'Note', (row: { note: { id: string; userId: string } }) => row.note);
     const wrapped = { note: { id: 'n1', userId: 'u1' } };
-    await expect(
-      rule(vi.fn().mockResolvedValue(wrapped), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toBe(wrapped);
+    await expect(rule(vi.fn().mockResolvedValue(wrapped), null, {}, { userId: 'u1' }, queryInfo)).resolves.toBe(
+      wrapped,
+    );
   });
 
   it('denies the whole field when any list element fails', async () => {
@@ -515,9 +504,9 @@ describe('createCan.onResult — post-execution rules', () => {
       { id: 'n2', userId: 'someone-else' },
     ];
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
-    ).rejects.toThrow('Forbidden');
+    await expect(rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo)).rejects.toThrow(
+      'Forbidden',
+    );
   });
 
   it('allows a list when every element passes', async () => {
@@ -526,35 +515,27 @@ describe('createCan.onResult — post-execution rules', () => {
       { id: 'n2', userId: 'u1' },
     ];
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toBe(list);
+    await expect(rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo)).resolves.toBe(list);
   });
 
   it('returns null and empty lists as-is — there is no subject to authorize', async () => {
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(vi.fn().mockResolvedValue(null), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toBeNull();
-    await expect(
-      rule(vi.fn().mockResolvedValue([]), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toEqual([]);
+    await expect(rule(vi.fn().mockResolvedValue(null), null, {}, { userId: 'u1' }, queryInfo)).resolves.toBeNull();
+    await expect(rule(vi.fn().mockResolvedValue([]), null, {}, { userId: 'u1' }, queryInfo)).resolves.toEqual([]);
   });
 
   it('skips null elements inside a list', async () => {
     const list = [null, { id: 'n1', userId: 'u1' }];
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo),
-    ).resolves.toBe(list);
+    await expect(rule(vi.fn().mockResolvedValue(list), null, {}, { userId: 'u1' }, queryInfo)).resolves.toBe(list);
   });
 
   it('refuses a root mutation field before the resolver runs', async () => {
     const resolve = vi.fn();
     const rule = canUser.onResult(Actions.update, 'Note');
-    await expect(
-      rule(resolve, null, {}, { userId: 'u1' }, infoFor('Mutation', 'updateNote')),
-    ).rejects.toThrow(/cannot guard the mutation field `Mutation.updateNote`/);
+    await expect(rule(resolve, null, {}, { userId: 'u1' }, infoFor('Mutation', 'updateNote'))).rejects.toThrow(
+      /cannot guard the mutation field `Mutation.updateNote`/,
+    );
     // The point of checking up front: the side effect never happened.
     expect(resolve).not.toHaveBeenCalled();
   });
@@ -564,9 +545,7 @@ describe('createCan.onResult — post-execution rules', () => {
       async (ctx) => buildAbility(ctx.userId),
       (ctx) => ctx.userId != null,
     ) as unknown as RequireCan<ExampleSubjectMap>;
-    expect(() => canBare.onResult(Actions.update, 'Note')).toThrow(
-      /`onResult` requires a `buildSubject` tagger/,
-    );
+    expect(() => canBare.onResult(Actions.update, 'Note')).toThrow(/`onResult` requires a `buildSubject` tagger/);
   });
 });
 
@@ -579,24 +558,20 @@ describe('createCan — parent-aware getSubjectData', () => {
 
   // The field-level shape: "read Note.userId only when the Note is yours" is a
   // condition on the parent, which the args of a field rule never carry.
-  const fieldRule = canUser(
-    Actions.update,
-    'Note',
-    (_args: Record<string, never>, parent: { userId: string }) => ({ userId: parent.userId }),
-  );
+  const fieldRule = canUser(Actions.update, 'Note', (_args: Record<string, never>, parent: { userId: string }) => ({
+    userId: parent.userId,
+  }));
 
   it('reads the condition off the parent, not the args', async () => {
     const resolve = vi.fn().mockResolvedValue('u1');
-    await expect(fieldRule(resolve, { userId: 'u1' }, {}, { userId: 'u1' }, info)).resolves.toBe(
-      'u1',
-    );
+    await expect(fieldRule(resolve, { userId: 'u1' }, {}, { userId: 'u1' }, info)).resolves.toBe('u1');
   });
 
   it('forbids when the parent belongs to someone else', async () => {
     const resolve = vi.fn();
-    await expect(
-      fieldRule(resolve, { userId: 'someone-else' }, {}, { userId: 'u1' }, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(fieldRule(resolve, { userId: 'someone-else' }, {}, { userId: 'u1' }, info)).rejects.toThrow(
+      'Forbidden',
+    );
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -607,30 +582,20 @@ describe('createCan — parent-aware getSubjectData', () => {
       userId: args.userId,
     }));
     await expect(
-      argsRule(
-        vi.fn().mockResolvedValue('ok'),
-        { userId: 'irrelevant' },
-        { userId: 'u1' },
-        { userId: 'u1' },
-        info,
-      ),
+      argsRule(vi.fn().mockResolvedValue('ok'), { userId: 'irrelevant' }, { userId: 'u1' }, { userId: 'u1' }, info),
     ).resolves.toBe('ok');
   });
 
   it('passes the parent to onResult extractors too', async () => {
     const seen: unknown[] = [];
-    const rule = canUser.onResult(
-      Actions.update,
-      'Note',
-      (result: { userId: string }, parent: { org: string }) => {
-        seen.push(parent);
-        return { userId: result.userId };
-      },
-    );
+    const rule = canUser.onResult(Actions.update, 'Note', (result: { userId: string }, parent: { org: string }) => {
+      seen.push(parent);
+      return { userId: result.userId };
+    });
     const note = { userId: 'u1' };
-    await expect(
-      rule(vi.fn().mockResolvedValue(note), { org: 'o1' }, {}, { userId: 'u1' }, resultInfo),
-    ).resolves.toBe(note);
+    await expect(rule(vi.fn().mockResolvedValue(note), { org: 'o1' }, {}, { userId: 'u1' }, resultInfo)).resolves.toBe(
+      note,
+    );
     expect(seen).toEqual([{ org: 'o1' }]);
   });
 });
@@ -648,23 +613,15 @@ describe('createCan — combinability', () => {
     // Org is denied for everyone by buildAbility, Note is readable — so `or`
     // passes and `and` does not.
     await expect(
-      or(canUser(Actions.read, 'Org'), r)(
-        vi.fn().mockResolvedValue('ok'),
-        null,
-        {},
-        { userId: 'u1' },
-        info,
-      ),
+      or(canUser(Actions.read, 'Org'), r)(vi.fn().mockResolvedValue('ok'), null, {}, { userId: 'u1' }, info),
     ).resolves.toBe('ok');
-    await expect(
-      and(canUser(Actions.read, 'Org'), r)(vi.fn(), null, {}, { userId: 'u1' }, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(and(canUser(Actions.read, 'Org'), r)(vi.fn(), null, {}, { userId: 'u1' }, info)).rejects.toThrow(
+      'Forbidden',
+    );
   });
 
   it('surfaces Not authenticated through a combinator', async () => {
-    await expect(and(canUser(Actions.read, 'Note'))(vi.fn(), null, {}, {}, info)).rejects.toThrow(
-      'Not authenticated',
-    );
+    await expect(and(canUser(Actions.read, 'Note'))(vi.fn(), null, {}, {}, info)).rejects.toThrow('Not authenticated');
   });
 
   it('labels itself with the action and subject', () => {
@@ -674,16 +631,16 @@ describe('createCan — combinability', () => {
   it('refuses an onResult rule as a combinator operand', () => {
     // Its verdict needs the resolved value, so it cannot be evaluated as one
     // branch of an `or` without running the resolver.
-    expect(() => and(canUser.onResult(Actions.read, 'Note'), accept)).toThrow(
-      /operand 0 is not a checkable rule/,
-    );
+    expect(() => and(canUser.onResult(Actions.read, 'Note'), accept)).toThrow(/operand 0 is not a checkable rule/);
   });
 });
 
 describe('createCan — CASL reason plumbing', () => {
   function abilityWithReason(userId: string | undefined): TestAbility {
     const { can, cannot, build } = createGraphQLAbility<ExampleSubjectMap>();
-    if (!userId) return build();
+    if (!userId) {
+      return build();
+    }
     can(Actions.update, 'Note', { userId });
     cannot(Actions.update, 'Note', { id: 'locked' }).because('That note is locked');
     return build();
@@ -701,36 +658,30 @@ describe('createCan — CASL reason plumbing', () => {
   }));
 
   it('uses a cannot(...).because reason as the denial message', async () => {
-    await expect(
-      noteRule(vi.fn(), null, { id: 'locked', userId: 'u1' }, { userId: 'u1' }, info),
-    ).rejects.toThrow('That note is locked');
+    await expect(noteRule(vi.fn(), null, { id: 'locked', userId: 'u1' }, { userId: 'u1' }, info)).rejects.toThrow(
+      'That note is locked',
+    );
   });
 
   it('falls back to Forbidden when no rule supplied a reason', async () => {
-    await expect(
-      noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info)).rejects.toThrow(
+      'Forbidden',
+    );
   });
 
   it('does not leak the schema type name into the default denial', async () => {
     // CASL's own ForbiddenError would say `Cannot execute "update" on "Note"`,
     // which tells an unauthorized caller a type name. The reason is read off the
     // rule directly to avoid that.
-    await expect(
-      noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info),
-    ).rejects.toThrow(/^Forbidden$/);
+    await expect(noteRule(vi.fn(), null, { id: 'n1', userId: 'someone-else' }, { userId: 'u1' }, info)).rejects.toThrow(
+      /^Forbidden$/,
+    );
   });
 
   it('reports the reason from onResult denials too', async () => {
     const rule = canUser.onResult(Actions.update, 'Note');
     await expect(
-      rule(
-        vi.fn().mockResolvedValue({ id: 'locked', userId: 'u1' }),
-        null,
-        {},
-        { userId: 'u1' },
-        resultInfo,
-      ),
+      rule(vi.fn().mockResolvedValue({ id: 'locked', userId: 'u1' }), null, {}, { userId: 'u1' }, resultInfo),
     ).rejects.toThrow('That note is locked');
   });
 });
@@ -741,7 +692,9 @@ describe('createCan.fields — CASL field-level permissions', () => {
 
   function fieldAbility(userId: string | undefined) {
     const { can, build } = createGraphQLAbility<FieldSubjectMap>();
-    if (!userId) return build();
+    if (!userId) {
+      return build();
+    }
     can(Actions.read, 'User', ['id', 'name']);
     can(Actions.read, 'User', ['email'], { id: userId }); // only your own
     return build();
@@ -761,52 +714,30 @@ describe('createCan.fields — CASL field-level permissions', () => {
 
   it('allows a field the ability grants unconditionally', async () => {
     await expect(
-      rule(
-        vi.fn().mockResolvedValue('Ada'),
-        { id: 'u2' },
-        {},
-        { userId: 'u1' },
-        infoForField('name'),
-      ),
+      rule(vi.fn().mockResolvedValue('Ada'), { id: 'u2' }, {}, { userId: 'u1' }, infoForField('name')),
     ).resolves.toBe('Ada');
   });
 
   it('decides a conditioned field from the parent object', async () => {
     // email is granted only when the User being read is your own.
     await expect(
-      rule(
-        vi.fn().mockResolvedValue('a@b.c'),
-        { id: 'u1' },
-        {},
-        { userId: 'u1' },
-        infoForField('email'),
-      ),
+      rule(vi.fn().mockResolvedValue('a@b.c'), { id: 'u1' }, {}, { userId: 'u1' }, infoForField('email')),
     ).resolves.toBe('a@b.c');
-    await expect(
-      rule(vi.fn(), { id: 'u2' }, {}, { userId: 'u1' }, infoForField('email')),
-    ).rejects.toThrow('Forbidden');
+    await expect(rule(vi.fn(), { id: 'u2' }, {}, { userId: 'u1' }, infoForField('email'))).rejects.toThrow('Forbidden');
   });
 
   it('denies a field no ability rule mentions — deny by default across the type', async () => {
     const resolve = vi.fn();
-    await expect(
-      rule(resolve, { id: 'u1' }, {}, { userId: 'u1' }, infoForField('ssn')),
-    ).rejects.toThrow('Forbidden');
+    await expect(rule(resolve, { id: 'u1' }, {}, { userId: 'u1' }, infoForField('ssn'))).rejects.toThrow('Forbidden');
     expect(resolve).not.toHaveBeenCalled();
   });
 
   it('throws Not authenticated before consulting the ability', async () => {
-    await expect(rule(vi.fn(), { id: 'u1' }, {}, {}, infoForField('name'))).rejects.toThrow(
-      'Not authenticated',
-    );
+    await expect(rule(vi.fn(), { id: 'u1' }, {}, {}, infoForField('name'))).rejects.toThrow('Not authenticated');
   });
 
   it('projects the subject with getSubjectData when supplied', async () => {
-    const projected = canUser.fields(
-      Actions.read,
-      'User',
-      (parent: { owner: { id: string } }) => parent.owner,
-    );
+    const projected = canUser.fields(Actions.read, 'User', (parent: { owner: { id: string } }) => parent.owner);
     await expect(
       projected(
         vi.fn().mockResolvedValue('a@b.c'),
@@ -824,9 +755,7 @@ describe('createCan.fields — CASL field-level permissions', () => {
     await expect(
       rule(vi.fn().mockResolvedValue('a@b.c'), null, {}, { userId: 'u1' }, infoForField('email')),
     ).resolves.toBe('a@b.c');
-    await expect(rule(vi.fn(), null, {}, { userId: 'u1' }, infoForField('ssn'))).rejects.toThrow(
-      'Forbidden',
-    );
+    await expect(rule(vi.fn(), null, {}, { userId: 'u1' }, infoForField('ssn'))).rejects.toThrow('Forbidden');
   });
 
   it('is checkable, so it composes', () => {
@@ -839,9 +768,7 @@ describe('createCan.fields — CASL field-level permissions', () => {
       async (ctx) => fieldAbility(ctx.userId),
       (ctx) => ctx.userId != null,
     ) as unknown as RequireCan<FieldSubjectMap>;
-    expect(() => canBare.fields(Actions.read, 'User')).toThrow(
-      /`fields` requires a `buildSubject` tagger/,
-    );
+    expect(() => canBare.fields(Actions.read, 'User')).toThrow(/`fields` requires a `buildSubject` tagger/);
   });
 });
 
@@ -864,7 +791,9 @@ describe('createCan — rule cache option', () => {
     const update = canUser(Actions.update, 'Note', getSubjectData);
     const row = { userId: 'u1' };
     const resolve = vi.fn().mockResolvedValue('ok');
-    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    for (let i = 0; i < 5; i++) {
+      await update(resolve, row, {}, ctx, info);
+    }
     expect(getSubjectData).toHaveBeenCalledTimes(5);
   });
 
@@ -873,7 +802,9 @@ describe('createCan — rule cache option', () => {
     const update = canUser(Actions.update, 'Note', getSubjectData, { cache: 'strict' });
     const row = { userId: 'u1' };
     const resolve = vi.fn().mockResolvedValue('ok');
-    for (let i = 0; i < 5; i++) await update(resolve, row, {}, ctx, info);
+    for (let i = 0; i < 5; i++) {
+      await update(resolve, row, {}, ctx, info);
+    }
     expect(getSubjectData).toHaveBeenCalledOnce();
     // Another row object is another subject.
     await update(resolve, { userId: 'u1' }, {}, ctx, info);
@@ -906,11 +837,7 @@ describe('createCan — rule cache option', () => {
 
   it('is accepted, and harmless, on the bare form', async () => {
     const getAbility = vi.fn(async (ctx: TestContext) => buildAbility(ctx.userId));
-    const canCounted = createCan<TestContext, ExampleSubjectMap>(
-      getAbility,
-      (ctx) => ctx.userId != null,
-      typed,
-    );
+    const canCounted = createCan<TestContext, ExampleSubjectMap>(getAbility, (ctx) => ctx.userId != null, typed);
     const read = canCounted(Actions.read, 'Note', undefined, { cache: 'contextual' });
     const resolve = vi.fn().mockResolvedValue('ok');
     await read(resolve, null, {}, ctx, info);

@@ -3,6 +3,7 @@
  * subject bindings for your generated resolver types, so you never hand-write
  * them.
  *
+ * @remarks
  * Run it after `typescript` + `typescript-resolvers` in the same output file (it
  * references the `Resolvers` / `ResolversTypes` they emit). It generates:
  *
@@ -44,6 +45,14 @@ const DEFAULTS = {
   resolversTypesName: 'ResolversTypes',
 } satisfies Required<GraphqlCaslPluginConfig>;
 
+/**
+ * The codegen plugin: emits the subject map type and the helpers typed to it.
+ *
+ * @param _schema - Unused; the output depends only on the config.
+ * @param _documents - Unused.
+ * @param config - The names to emit and the types to reference.
+ * @returns The generated source and the import it needs.
+ */
 export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _documents, config) => {
   const opts = { ...DEFAULTS, ...config };
 
@@ -59,9 +68,7 @@ export const plugin: PluginFunction<GraphqlCaslPluginConfig> = (_schema, _docume
   ].join('\n');
 
   return {
-    prepend: [
-      `import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '${opts.importPath}';`,
-    ],
+    prepend: [`import { createGraphQLAbility, createTyped, type SubjectMap, subjectsOf } from '${opts.importPath}';`],
     content,
   };
 };
@@ -72,6 +79,7 @@ const OPTION_NAMES = Object.keys(DEFAULTS) as (keyof GraphqlCaslPluginConfig)[];
 /**
  * Checks the options this plugin reads, and only those.
  *
+ * @remarks
  * The config object a plugin receives is not its own: the CLI injects keys into
  * every output (`emitLegacyCommonJSImports` is on all of them), and an output's
  * `config` block reaches *every* plugin in that output — which matters here,

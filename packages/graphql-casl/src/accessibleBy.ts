@@ -1,6 +1,7 @@
 /**
  * Row-level filtering: turning a caller's ability into a *query filter*.
  *
+ * @remarks
  * The rest of this library is a gate — a rule allows or denies a whole field.
  * That is the wrong shape for a list: `notes` should not be denied outright
  * because one row is off-limits, it should return the rows the caller may read.
@@ -23,10 +24,11 @@ import type { GraphQLAbility } from './graphqlAbility.js';
  * The default filter shape: one subject's CASL conditions, combined with
  * mongo's boolean operators.
  *
+ * @typeParam T - The subject type being filtered.
+ *
+ * @remarks
  * The leaves are the conditions exactly as written on the rules, so they are
  * typed against the subject's fields. Only the combining operators are added.
- *
- * @typeParam T - The subject type being filtered.
  */
 export type AccessibleFilter<T> =
   | MongoQuery<T>
@@ -37,9 +39,7 @@ export type AccessibleFilter<T> =
 /** The default, mongo-style dialect. */
 const mongoAdapter: FilterAdapter<AccessibleFilter<object>> = {
   rule: (conditions, inverted) =>
-    inverted
-      ? { $nor: [conditions as AccessibleFilter<object>] }
-      : (conditions as AccessibleFilter<object>),
+    inverted ? { $nor: [conditions as AccessibleFilter<object>] } : (conditions as AccessibleFilter<object>),
   and: (filters) => ({ $and: filters }),
   or: (filters) => ({ $or: filters }),
   everything: () => ({}) as AccessibleFilter<object>,
@@ -54,6 +54,11 @@ interface FoldableRule {
 /**
  * Flattens CASL's priority-ordered rules into boolean logic.
  *
+ * @param rules - The ability's rules for one action and subject, highest priority first.
+ * @param adapter - Builds the filter.
+ * @returns The filter, or `null` when no row is permitted.
+ *
+ * @remarks
  * CASL evaluates rules highest-priority first and stops at the first match, so a
  * `can` only applies to rows no higher-priority `cannot` already caught. A query
  * has no such ordering, so each `can` becomes an `or` branch *bounded by* the
@@ -73,10 +78,8 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   // A one-element group is the group itself. Worth doing here rather than in
   // each adapter: the common case is a single rule with a single condition, and
   // wrapping it in a pointless `or` forces every dialect to support one.
-  const and = (filters: TFilter[]) =>
-    filters.length === 1 ? (filters[0] as TFilter) : adapter.and(filters);
-  const or = (filters: TFilter[]) =>
-    filters.length === 1 ? (filters[0] as TFilter) : adapter.or(filters);
+  const and = (filters: TFilter[]) => (filters.length === 1 ? filters[0] : adapter.and(filters));
+  const or = (filters: TFilter[]) => (filters.length === 1 ? filters[0] : adapter.or(filters));
   const bounds: TFilter[] = [];
   const branches: TFilter[] = [];
   let unrestricted = false;
@@ -84,7 +87,9 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   for (const rule of rules) {
     if (rule.inverted) {
       // Nothing below an unconditioned `cannot` can be reached.
-      if (!rule.conditions) break;
+      if (!rule.conditions) {
+        break;
+      }
       bounds.push(translate(rule.conditions, true));
       continue;
     }
@@ -97,7 +102,9 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
   }
 
   if (unrestricted) {
-    if (bounds.length === 0) return adapter.everything();
+    if (bounds.length === 0) {
+      return adapter.everything();
+    }
     branches.push(and(bounds));
   }
 
@@ -108,23 +115,26 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * The filter matching every row of `subject` the ability permits `action` on, or
  * `null` when it permits none.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @param ability - The caller's ability.
+ * @param action - The action to filter for, e.g. `Actions.read`.
+ * @param subject - The subject name to filter, e.g. `'Note'`.
+ * @returns The filter, or `null` if no row is accessible.
+ *
+ * @remarks
  * `null` is a decision, not an absence: it means *deny all*, and the resolver
  * should return an empty list without querying. Any other value — including
  * `{}`, which means "no restriction" — is a filter to pass to the data layer.
  *
  * Field-level rules are ignored; this answers which *rows* are reachable.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @param ability - The caller's ability.
- * @param action - The action to filter for, e.g. `Actions.read`.
- * @param subject - The subject name to filter, e.g. `'Note'`.
- * @returns The filter, or `null` if no row is accessible.
  * @example
  * ```ts
  * const filter = accessibleBy(ability, Actions.read, 'Note');
  * if (filter === null) return [];
  * return db.notes.find(filter);
  * ```
+ *
  * @example A Prisma-shaped dialect:
  * ```ts
  * const prismaFilter: FilterAdapter<object> = {
@@ -137,6 +147,7 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * const where = accessibleBy(ability, Actions.read, 'Note', prismaFilter);
  * return where === null ? [] : prisma.note.findMany({ where });
  * ```
+ *
  * @example A leaf adapter, which translates the comparisons too:
  * ```ts
  * const prismaLeaves: FilterAdapter<object> = {
@@ -149,10 +160,7 @@ function fold<TFilter>(rules: readonly FoldableRule[], adapter: FilterAdapter<TF
  * };
  * ```
  */
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
@@ -171,21 +179,13 @@ export function accessibleBy<
  * `LeafAdapter` (one with `leaf`) also receives each comparison individually.
  * @returns The filter, or `null` if no row is accessible.
  */
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
   adapter: FilterAdapter<TFilter>,
 ): TFilter | null;
-export function accessibleBy<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function accessibleBy<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   ability: GraphQLAbility<TSubjectMap>,
   action: Action,
   subject: K,
@@ -194,7 +194,5 @@ export function accessibleBy<
   // `rulesFor` takes the ability's own subject union; a bare subject name is a
   // member of it, but only after the map's generic is resolved.
   const rules = (ability.rulesFor as (a: Action, s: K) => readonly FoldableRule[])(action, subject);
-  return adapter
-    ? fold(rules, adapter)
-    : (fold(rules, mongoAdapter) as AccessibleFilter<TSubjectMap[K]> | null);
+  return adapter ? fold(rules, adapter) : (fold(rules, mongoAdapter) as AccessibleFilter<TSubjectMap[K]> | null);
 }

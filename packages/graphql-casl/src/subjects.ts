@@ -17,6 +17,10 @@ export type Subjects<TMap> = { readonly [K in string & keyof TMap]: K };
  * Returns a {@link Subjects} namespace for `TMap` — autocompleted, typo-proof
  * subject names, with nothing to declare.
  *
+ * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns A namespace mapping each subject name to itself.
+ *
+ * @remarks
  * The names live entirely in `TMap`, so there is no list to keep in step with
  * the schema: adding a type to the schema makes `Subject.NewType` available on
  * the next codegen run, and removing one turns every reference into a compile
@@ -33,8 +37,6 @@ export type Subjects<TMap> = { readonly [K in string & keyof TMap]: K };
  * supported operation. Symbol properties read as `undefined` so the object still
  * behaves normally when inspected, awaited, or coerced.
  *
- * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @returns A namespace mapping each subject name to itself.
  * @example
  * ```ts
  * const Subject = subjectsOf<AppSubjectMap>();
@@ -55,17 +57,19 @@ export function subjectsOf<TMap extends Record<string, object>>(): Subjects<TMap
  * Returns a helper that validates a subject-name const object against the keys
  * of `TMap`.
  *
- * The object's keys must exactly cover the derived domain type names — TypeScript
- * errors if any are missing or misspelled. Values equal keys so each entry can be
- * used directly in CASL calls.
- *
+ * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns A function that returns the object it is given.
  * @deprecated Use {@link subjectsOf}, which needs no object and stays in step
  * with the schema on its own. This restates names `TMap` already carries, so
  * every type added to the schema has to be listed here too — interfaces and
  * unions included — before anything compiles again. It keeps working and is not
  * scheduled for removal.
  *
- * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @remarks
+ * The object's keys must exactly cover the derived domain type names — TypeScript
+ * errors if any are missing or misspelled. Values equal keys so each entry can be
+ * used directly in CASL calls.
+ *
  * @example
  * ```ts
  * const Subject = createSubjects<AppSubjectMap>()({
@@ -84,12 +88,15 @@ export function createSubjects<TMap extends Record<string, object>>() {
 /**
  * Returns a `typed(type, attrs)` helper bound to a specific subject map.
  *
+ * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns The `typed` helper.
+ *
+ * @remarks
  * Call once at the app level to tag plain objects with a required `__typename`
  * so CASL can classify them — both at runtime (`detectSubjectType`) and at the
  * type level, where the narrowed `__typename` makes the object satisfy a typed
  * `GraphQLAbility`'s `can`/`cannot` subject parameter.
  *
- * @typeParam TMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @example
  * ```ts
  * const typed = createTyped<AppSubjectMap>();
@@ -97,10 +104,7 @@ export function createSubjects<TMap extends Record<string, object>>() {
  * ```
  */
 export function createTyped<TMap extends Record<string, object>>() {
-  return function typed<K extends string & keyof TMap>(
-    type: K,
-    attrs: Partial<TMap[K]>,
-  ): TMap[K] & { __typename: K } {
+  return function typed<K extends string & keyof TMap>(type: K, attrs: Partial<TMap[K]>): TMap[K] & { __typename: K } {
     // Spread attrs first so the `__typename` tag always wins — an attrs object
     // that carries its own `__typename` must not be able to mis-tag the subject.
     return { ...attrs, __typename: type } as unknown as TMap[K] & { __typename: K };

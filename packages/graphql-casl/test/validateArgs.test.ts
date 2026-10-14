@@ -66,17 +66,15 @@ const Everything = standard<never>(() => ({
 describe('validateArgs — a hand-rolled Standard Schema', () => {
   it('calls the resolver with the parsed output as its args', async () => {
     const resolve = vi.fn().mockResolvedValue('ok');
-    await expect(
-      validateArgs(NoteArgs)(resolve, 'p', { title: '  hello ' }, { userId: 'u1' }, info),
-    ).resolves.toBe('ok');
+    await expect(validateArgs(NoteArgs)(resolve, 'p', { title: '  hello ' }, { userId: 'u1' }, info)).resolves.toBe(
+      'ok',
+    );
     expect(resolve).toHaveBeenCalledWith('p', { title: 'hello', tags: [] }, { userId: 'u1' }, info);
   });
 
   it('awaits an asynchronous validator', async () => {
     const resolve = vi.fn().mockResolvedValue('ok');
-    await expect(
-      validateArgs(AsyncNoteArgs)(resolve, 'p', { title: 'hi', tags: ['a'] }, {}, info),
-    ).resolves.toBe('ok');
+    await expect(validateArgs(AsyncNoteArgs)(resolve, 'p', { title: 'hi', tags: ['a'] }, {}, info)).resolves.toBe('ok');
     expect(resolve).toHaveBeenCalledWith('p', { title: 'hi', tags: ['a'] }, {}, info);
   });
 
@@ -131,9 +129,9 @@ describe('validateArgs — a hand-rolled Standard Schema', () => {
   });
 
   it('still rejects a failure under replace: false', async () => {
-    await expect(
-      validateArgs(NoteArgs, { replace: false })(vi.fn(), 'p', {}, {}, info),
-    ).rejects.toMatchObject({ extensions: { code: BAD_USER_INPUT } });
+    await expect(validateArgs(NoteArgs, { replace: false })(vi.fn(), 'p', {}, {}, info)).rejects.toMatchObject({
+      extensions: { code: BAD_USER_INPUT },
+    });
   });
 
   it('lets an error thrown by the validator propagate as itself, not as a denial', async () => {
@@ -202,9 +200,7 @@ describe('validateArgs — a hand-rolled Standard Schema', () => {
   it('never validates when the gate in front of it denies', async () => {
     const validate = vi.fn(parseNote);
     const resolve = vi.fn();
-    await expect(
-      wrap(deny, validateArgs(standard(validate)))(resolve, 'p', {}, {}, info),
-    ).rejects.toThrow('Forbidden');
+    await expect(wrap(deny, validateArgs(standard(validate)))(resolve, 'p', {}, {}, info)).rejects.toThrow('Forbidden');
     expect(validate).not.toHaveBeenCalled();
     expect(resolve).not.toHaveBeenCalled();
   });
@@ -221,30 +217,13 @@ describe('validateArgs — zod', () => {
 
   it('applies defaults, trims and coerces on the way to the resolver', async () => {
     const resolve = vi.fn().mockResolvedValue('ok');
-    await validateArgs(CreateNoteArgs)(
-      resolve,
-      'p',
-      { input: { title: '  hello ', priority: '3' } },
-      {},
-      info,
-    );
-    expect(resolve).toHaveBeenCalledWith(
-      'p',
-      { input: { title: 'hello', tags: [], priority: 3 } },
-      {},
-      info,
-    );
+    await validateArgs(CreateNoteArgs)(resolve, 'p', { input: { title: '  hello ', priority: '3' } }, {}, info);
+    expect(resolve).toHaveBeenCalledWith('p', { input: { title: 'hello', tags: [], priority: 3 } }, {}, info);
   });
 
   it('reports a nested path', async () => {
     await expect(
-      validateArgs(CreateNoteArgs)(
-        vi.fn(),
-        'p',
-        { input: { title: '', tags: ['a', 'b', 'c'] } },
-        {},
-        info,
-      ),
+      validateArgs(CreateNoteArgs)(vi.fn(), 'p', { input: { title: '', tags: ['a', 'b', 'c'] } }, {}, info),
     ).rejects.toMatchObject({
       message: 'input.title: A note needs a title; input.tags: At most two tags',
       extensions: {
@@ -299,9 +278,7 @@ describe('validateArgs — through applyPermissions', () => {
 
   const Limit = standard<{ limit: number }>((value) => {
     const limit = (value as { limit?: number | null }).limit ?? 10;
-    return limit > 100
-      ? { issues: [{ message: 'At most 100', path: ['limit'] }] }
-      : { value: { limit } };
+    return limit > 100 ? { issues: [{ message: 'At most 100', path: ['limit'] }] } : { value: { limit } };
   });
 
   type LooseMap = PermissionsMap<Record<string, Record<string, unknown>>>;
@@ -369,8 +346,7 @@ describe('validateArgs — through applyPermissions', () => {
     const { schema } = guarded(
       { Mutation: { createNote: validateArgs(CreateNoteArgs) } },
       {
-        fallbackError: () =>
-          new GraphQLError('Not Authorised!', { extensions: { code: 'FORBIDDEN' } }),
+        fallbackError: () => new GraphQLError('Not Authorised!', { extensions: { code: 'FORBIDDEN' } }),
       },
     );
     const result = await run(schema, CREATE_BLANK);
@@ -401,10 +377,7 @@ describe('validateArgs — through applyPermissions', () => {
   });
 
   it("keeps its own code under onDeny: 'filter' through reportDenials too", async () => {
-    const { schema, received } = guarded(
-      { Query: { notes: validateArgs(Limit) } },
-      { onDeny: 'filter' },
-    );
+    const { schema, received } = guarded({ Query: { notes: validateArgs(Limit) } }, { onDeny: 'filter' });
     const result = await run(schema, '{ notes(limit: 1000) { id } }');
     expect(result.data).toEqual({ notes: [] });
     expect(result.errors).toHaveLength(1);
@@ -422,10 +395,7 @@ describe('validateArgs — through applyPermissions', () => {
   });
 
   it("is masked under onDeny: 'mask', like any other refusal", async () => {
-    const { schema } = guarded(
-      { Mutation: { createNote: validateArgs(CreateNoteArgs) } },
-      { onDeny: 'mask' },
-    );
+    const { schema } = guarded({ Mutation: { createNote: validateArgs(CreateNoteArgs) } }, { onDeny: 'mask' });
     const result = await run(schema, CREATE_BLANK);
     expect(result.errors).toBeUndefined();
     expect(result.data).toEqual({ createNote: null });

@@ -10,6 +10,12 @@
     "declarationMap": true,
     "sourceMap": true,
     "strict": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "isolatedModules": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "esModuleInterop": false,
     "skipLibCheck": true
   },

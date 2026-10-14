@@ -57,8 +57,11 @@ const typed = createTyped<SubjectMap>();
 function abilityFor(userId: string | null, conditioned: boolean) {
   const { can, build } = createGraphQLAbility<SubjectMap>();
   if (userId) {
-    if (conditioned) can('read', 'Note', { author: userId });
-    else can('read', 'Note');
+    if (conditioned) {
+      can('read', 'Note', { author: userId });
+    } else {
+      can('read', 'Note');
+    }
   }
   return build();
 }
@@ -78,7 +81,9 @@ function guarded(permissions: Map, options?: ApplyPermissionsOptions): () => Pro
   const schema = applyPermissions(baseSchema(), permissions, options);
   return async () => {
     const result = await graphql({ schema, source: query, contextValue: { userId: 'u1' } });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   };
 }
 
@@ -86,7 +91,9 @@ describe('100 rows x 5 fields', () => {
   const unguarded = baseSchema();
   bench('unguarded schema (graphql-js baseline)', async () => {
     const result = await graphql({ schema: unguarded, source: query, contextValue: {} });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   });
 
   bench('accept on every field', guarded({ Query: { notes: accept }, Note: accept }));
@@ -101,10 +108,7 @@ describe('100 rows x 5 fields', () => {
     name: 'isU1',
     cache: 'contextual',
   });
-  bench(
-    "rule() with cache: 'contextual'",
-    guarded({ Query: { notes: contextual }, Note: contextual }),
-  );
+  bench("rule() with cache: 'contextual'", guarded({ Query: { notes: contextual }, Note: contextual }));
 
   const strict = rule(async (_p, _a, ctx) => ctx.userId === 'u1', {
     name: 'isU1',
@@ -134,10 +138,7 @@ describe('100 rows x 5 fields', () => {
     (ctx) => ctx.userId != null,
     typed,
   )('read', 'Note', (_args, parent: Note) => ({ author: parent.author }));
-  bench(
-    'createCan conditioned check from parent on every field',
-    guarded({ Query: { notes: accept }, Note: allRows }),
-  );
+  bench('createCan conditioned check from parent on every field', guarded({ Query: { notes: accept }, Note: allRows }));
 
   const fields = makeCan(false).fields('read', 'Note');
   bench('createCan.fields on the type', guarded({ Query: { notes: accept }, Note: fields }));
@@ -168,10 +169,7 @@ describe('100 rows x 5 fields', () => {
     guarded({ Query: { notes: grantingList }, Note: granted('note') }),
   );
 
-  bench(
-    'and(sync, sync) on every field',
-    guarded({ Query: { notes: accept }, Note: and(syncRole, accept) }),
-  );
+  bench('and(sync, sync) on every field', guarded({ Query: { notes: accept }, Note: and(syncRole, accept) }));
 
   bench(
     'accept + fallbackError set (error-control wrapper)',
@@ -208,7 +206,9 @@ describe('100 rows x 5 fields', () => {
       document,
       contextValue: await contextFactory(),
     });
-    if (result.errors) throw result.errors[0];
+    if (result.errors) {
+      throw result.errors[0];
+    }
   });
 
   void deny;
@@ -220,8 +220,7 @@ describe('apply time', () => {
   const bigTypeDefs = [
     ...Array.from(
       { length: TYPES },
-      (_, t) =>
-        `type T${t} { ${Array.from({ length: FIELDS }, (_, f) => `f${f}: String`).join(' ')} }`,
+      (_, t) => `type T${t} { ${Array.from({ length: FIELDS }, (_, f) => `f${f}: String`).join(' ')} }`,
     ),
     `type Query { ${Array.from({ length: TYPES }, (_, t) => `t${t}: T${t}`).join(' ')} }`,
   ].join('\n');
@@ -236,24 +235,20 @@ describe('apply time', () => {
   });
 
   bench(`applyPermissions, ${TYPES} types x ${FIELDS} fields, fallbackRule + maskDenials`, () => {
-    applyPermissions(
-      big,
-      { Query: { t0: accept } },
-      { fallbackRule: deny, maskDenials: true, fallbackError: 'Nope' },
-    );
+    applyPermissions(big, { Query: { t0: accept } }, { fallbackRule: deny, maskDenials: true, fallbackError: 'Nope' });
   });
 
   // The half this package owns: validation plus the per-field rule lookup for
   // every field, without graphql-middleware's rebuild.
   bench(`resolvePermissions only, ${TYPES} types x ${FIELDS} fields, fallbackRule: deny`, () => {
-    const permissionFor = resolvePermissions(
-      big,
-      { Query: { t0: accept } },
-      { fallbackRule: deny },
-    );
+    const permissionFor = resolvePermissions(big, { Query: { t0: accept } }, { fallbackRule: deny });
     for (const type of Object.values(big.getTypeMap())) {
-      if (!isObjectType(type)) continue;
-      for (const fieldName of Object.keys(type.getFields())) permissionFor(type.name, fieldName);
+      if (isObjectType(type) === false) {
+        continue;
+      }
+      for (const fieldName of Object.keys(type.getFields())) {
+        permissionFor(type.name, fieldName);
+      }
     }
   });
 
@@ -270,11 +265,8 @@ describe('apply time', () => {
     applyPermissions(fresh, { Query: { t0: accept } }, { inPlace: true });
   });
 
-  bench(
-    `build + applyPermissions inPlace, ${TYPES} types x ${FIELDS} fields, fallbackRule: deny`,
-    () => {
-      const fresh = makeExecutableSchema({ typeDefs: bigTypeDefs });
-      applyPermissions(fresh, { Query: { t0: accept } }, { fallbackRule: deny, inPlace: true });
-    },
-  );
+  bench(`build + applyPermissions inPlace, ${TYPES} types x ${FIELDS} fields, fallbackRule: deny`, () => {
+    const fresh = makeExecutableSchema({ typeDefs: bigTypeDefs });
+    applyPermissions(fresh, { Query: { t0: accept } }, { fallbackRule: deny, inPlace: true });
+  });
 });

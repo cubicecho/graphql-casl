@@ -51,3 +51,9 @@ database models — codegen `mappers` pointing `ResolversTypes` at your ORM type
 Pass `{ conditionFields: 'none' }` to check only the shape and operators of
 conditions; subjects and `fields` are still checked, since those are schema
 names either way.
+
+The operator check is against CASL's matcher, which is all a rule needs to be
+*checked*. A leaf filter adapter translates fewer: `accessibleBy` and `scopeArgs`
+throw on `$not`, `$mod` and `$options` per request rather than drop a condition.
+If your rules are folded into a query filter that way, pass
+`{ operators: 'leaf' }` so those three are reported here instead.

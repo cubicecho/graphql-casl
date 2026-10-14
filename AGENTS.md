@@ -53,7 +53,7 @@ README is also published to npm).
   `@apollo/server` is a devDependency for its tests only
 - **graphql-casl-codegen peer deps:** `@graphql-codegen/plugin-helpers >=5`, `graphql >=16`,
   `@vantreeseba/graphql-casl` (the runtime its generated code imports from)
-- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.5.0`
+- **graphql-casl-directives peer deps:** `graphql >=16`, `@vantreeseba/graphql-casl >=1.11.0`
   (it imports `and` / `or` / `PermissionsError` from the runtime). Its tests and
   typecheck resolve the runtime through the workspace symlink to
   `packages/graphql-casl/dist`, so build the runtime first — CI builds before it
@@ -72,8 +72,15 @@ packages/
       rules.ts            — rule layer (Rule, CheckableRule, rule, PermissionsMap, accept, deny)
       combinators.ts      — and / or / not / chain / race over CheckableRules, plus wrap,
                             which nests any rules as middleware
-      applyPermissions.ts — validates a PermissionsMap against the schema, resolves it to a
-                            per-field rule lookup, and applies it via graphql-middleware
+      applyPermissions.ts — resolves a validated PermissionsMap to a per-field rule lookup and
+                            applies it via graphql-middleware or in place; the options live here
+      mapValidation.ts    — validatePermissions: every way a map can fail to line up with the schema
+      rulePrecedence.ts   — which map entry guards a field (field, type, interface/union, wildcard)
+      errorControl.ts     — the per-field wrapper behind fallbackError / allowExternalErrors /
+                            debug / onDeny; a hot path
+      denials.ts          — DenialMode / DenialReport, masks, the per-request denial record and
+                            reportDenials
+      permissionsError.ts — PermissionsError + the kind wording the validators share
       ability.ts          — CASL Action/Actions + the loose AbilityLike shape
       accessibleBy.ts     — folds an ability into a query filter (row-level filtering)
       conditions.ts       — the FilterAdapter union (skeleton/leaf) + the conditions walker

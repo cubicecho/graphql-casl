@@ -110,9 +110,7 @@ describe('applyPermissions — enforcement', () => {
   });
 
   it('rules still receive the full resolver arguments', async () => {
-    const spy = vi.fn<Rule>((resolve, parent, args, context, info) =>
-      resolve(parent, args, context, info),
-    );
+    const spy = vi.fn<Rule>((resolve, parent, args, context, info) => resolve(parent, args, context, info));
     const schema = apply({ Query: { note: spy } });
     await graphql({ schema, source: '{ note { id } }', contextValue: { userId: 'u1' } });
 
@@ -128,7 +126,9 @@ describe('applyPermissions — schema validation', () => {
     try {
       apply(permissions);
     } catch (error) {
-      if (error instanceof PermissionsError) return [...error.problems];
+      if (error instanceof PermissionsError) {
+        return [...error.problems];
+      }
       throw error;
     }
     throw new Error('expected applyPermissions to throw');
@@ -161,9 +161,7 @@ describe('applyPermissions — schema validation', () => {
   });
 
   it('rejects a non-object type', () => {
-    expect(problemsOf({ Colour: { RED: deny } })).toEqual([
-      '`Colour` is an enum type, not an object type.',
-    ]);
+    expect(problemsOf({ Colour: { RED: deny } })).toEqual(['`Colour` is an enum type, not an object type.']);
   });
 
   it('rejects an introspection type', () => {
@@ -214,9 +212,9 @@ describe('applyPermissions — fallbackRule', () => {
       { Query: { note: accept } },
       { fallbackRule: deny },
     );
-    await expect(
-      graphql({ schema, source: '{ note { id } }' }).then((r) => r.errors?.[0]?.message),
-    ).resolves.toBe('Forbidden');
+    await expect(graphql({ schema, source: '{ note { id } }' }).then((r) => r.errors?.[0]?.message)).resolves.toBe(
+      'Forbidden',
+    );
     const denied = await graphql({ schema, source: '{ notes { id } }' });
     expect(denied.errors?.[0]?.message).toBe('Forbidden');
   });
@@ -233,11 +231,7 @@ describe('applyPermissions — fallbackRule', () => {
   });
 
   it('leaves introspection working even when it denies everything', async () => {
-    const schema = applyPermissions<Record<string, Record<string, unknown>>>(
-      baseSchema(),
-      {},
-      { fallbackRule: deny },
-    );
+    const schema = applyPermissions<Record<string, Record<string, unknown>>>(baseSchema(), {}, { fallbackRule: deny });
     const introspection = await graphql({ schema, source: '{ __schema { types { name } } }' });
     expect(introspection.errors).toBeUndefined();
 
@@ -289,9 +283,7 @@ describe('applyPermissions — wildcard precedence', () => {
   });
 
   it('any field of a named type beats the wildcard type', async () => {
-    expect(await guardOf({ Note: { '*': 'type.*' }, '*': { id: '*.field', '*': '*.*' } })).toBe(
-      'type.*',
-    );
+    expect(await guardOf({ Note: { '*': 'type.*' }, '*': { id: '*.field', '*': '*.*' } })).toBe('type.*');
   });
 
   it('a type-level rule is shorthand for the type wildcard', async () => {
@@ -311,19 +303,14 @@ describe('applyPermissions — wildcard precedence', () => {
   });
 
   it('applies exactly one rule per field — wildcards never compose', async () => {
-    const marks = await guards(
-      { Note: { '*': 'type.*' }, '*': { '*': '*.*' } },
-      '{ note { id body } }',
-    );
+    const marks = await guards({ Note: { '*': 'type.*' }, '*': { '*': '*.*' } }, '{ note { id body } }');
     // Three fields resolve, each guarded exactly once, each by its most specific
     // entry: Query.note has no Note entry so it falls to the wildcard.
     expect(marks.sort()).toEqual(['Note.body=type.*', 'Note.id=type.*', 'Query.note=*.*']);
   });
 
   it('rejects a wildcard field name that matches nothing in the schema', () => {
-    expect(() => apply({ '*': { nope: deny } })).toThrow(
-      /no type in the schema has a field named `nope`/,
-    );
+    expect(() => apply({ '*': { nope: deny } })).toThrow(/no type in the schema has a field named `nope`/);
   });
 
   it('accepts a wildcard field name that exists on some other type', () => {
@@ -389,7 +376,9 @@ describe('applyPermissions — rules on interfaces and unions', () => {
     try {
       validatePermissions(abstractSchema(), permissions);
     } catch (error) {
-      if (error instanceof PermissionsError) return [...error.problems];
+      if (error instanceof PermissionsError) {
+        return [...error.problems];
+      }
       throw error;
     }
     return [];
@@ -413,37 +402,31 @@ describe('applyPermissions — rules on interfaces and unions', () => {
   });
 
   it('a bare interface rule covers every field of its implementors, declared on the interface or not', async () => {
-    expect(await guards({ Node: 'iface.*' }, '{ note { id body } }')).toEqual([
-      'Note.body=iface.*',
-      'Note.id=iface.*',
-    ]);
+    expect(await guards({ Node: 'iface.*' }, '{ note { id body } }')).toEqual(['Note.body=iface.*', 'Note.id=iface.*']);
   });
 
   it("the implementor's own field entry beats the interface's", async () => {
-    expect(
-      await guards({ Note: { id: 'type.field' }, Node: { id: 'iface.field' } }, '{ note { id } }'),
-    ).toEqual(['Note.id=type.field']);
-  });
-
-  it("an interface's field entry beats the implementor's wildcard", async () => {
-    expect(
-      await guards(
-        { Note: { '*': 'type.*' }, Node: { id: 'iface.field' } },
-        '{ note { id body } }',
-      ),
-    ).toEqual(['Note.body=type.*', 'Note.id=iface.field']);
-  });
-
-  it("the implementor's wildcard beats the interface's", async () => {
-    expect(await guards({ Note: 'type.*', Node: 'iface.*' }, '{ note { id } }')).toEqual([
-      'Note.id=type.*',
+    expect(await guards({ Note: { id: 'type.field' }, Node: { id: 'iface.field' } }, '{ note { id } }')).toEqual([
+      'Note.id=type.field',
     ]);
   });
 
+  it("an interface's field entry beats the implementor's wildcard", async () => {
+    expect(await guards({ Note: { '*': 'type.*' }, Node: { id: 'iface.field' } }, '{ note { id body } }')).toEqual([
+      'Note.body=type.*',
+      'Note.id=iface.field',
+    ]);
+  });
+
+  it("the implementor's wildcard beats the interface's", async () => {
+    expect(await guards({ Note: 'type.*', Node: 'iface.*' }, '{ note { id } }')).toEqual(['Note.id=type.*']);
+  });
+
   it("the interface's wildcard beats the wildcard type", async () => {
-    expect(
-      await guards({ Node: 'iface.*', '*': { id: '*.field', '*': '*.*' } }, '{ note { id } }'),
-    ).toEqual(['Note.id=iface.*', 'Query.note=*.*']);
+    expect(await guards({ Node: 'iface.*', '*': { id: '*.field', '*': '*.*' } }, '{ note { id } }')).toEqual([
+      'Note.id=iface.*',
+      'Query.note=*.*',
+    ]);
   });
 
   it('sits above fallbackRule', async () => {
@@ -464,21 +447,18 @@ describe('applyPermissions — rules on interfaces and unions', () => {
   });
 
   it("a union's wildcard guards every member's fields, however the member is reached", async () => {
-    expect(
-      await guards({ Thing: 'union.*' }, '{ note { id } thing { ... on Note { body } } }'),
-    ).toEqual(['Note.body=union.*', 'Note.id=union.*']);
+    expect(await guards({ Thing: 'union.*' }, '{ note { id } thing { ... on Note { body } } }')).toEqual([
+      'Note.body=union.*',
+      'Note.id=union.*',
+    ]);
   });
 
   it('a union entry sits at the interface-wildcard tier', async () => {
-    expect(
-      await guards(
-        { Thing: { '*': 'union.*' }, Node: { id: 'iface.field' } },
-        '{ note { id body } }',
-      ),
-    ).toEqual(['Note.body=union.*', 'Note.id=iface.field']);
-    expect(await guards({ Thing: 'union.*', Note: 'type.*' }, '{ note { id } }')).toEqual([
-      'Note.id=type.*',
+    expect(await guards({ Thing: { '*': 'union.*' }, Node: { id: 'iface.field' } }, '{ note { id body } }')).toEqual([
+      'Note.body=union.*',
+      'Note.id=iface.field',
     ]);
+    expect(await guards({ Thing: 'union.*', Note: 'type.*' }, '{ note { id } }')).toEqual(['Note.id=type.*']);
   });
 
   it('works under inPlace', async () => {
@@ -489,18 +469,14 @@ describe('applyPermissions — rules on interfaces and unions', () => {
   });
 
   it('accepts interface and union entries in validatePermissions', () => {
-    expect(
-      problemsOf({ Node: { id: deny, '*': accept }, Searchable: { title: deny }, Thing: accept }),
-    ).toEqual([]);
+    expect(problemsOf({ Node: { id: deny, '*': accept }, Searchable: { title: deny }, Thing: accept })).toEqual([]);
   });
 
   it('rejects a field two interfaces both cover, until the implementor chooses', () => {
     expect(problemsOf({ Node: { id: deny }, Searchable: { id: accept } })).toEqual([
       'Field `Note.id` gets a rule from `Node` and `Searchable`, and `Note` does not say which applies — add `Note: { id: … }` to choose.',
     ]);
-    expect(
-      problemsOf({ Node: { id: deny }, Searchable: { id: accept }, Note: { id: accept } }),
-    ).toEqual([]);
+    expect(problemsOf({ Node: { id: deny }, Searchable: { id: accept }, Note: { id: accept } })).toEqual([]);
   });
 
   it('accepts the same rule reached through two interfaces', () => {
@@ -515,17 +491,13 @@ describe('applyPermissions — rules on interfaces and unions', () => {
   });
 
   it('names a single unsettled field on its own', () => {
-    expect(
-      problemsOf({ Node: deny, Searchable: accept, Note: { id: accept, title: accept } }),
-    ).toEqual([
+    expect(problemsOf({ Node: deny, Searchable: accept, Note: { id: accept, title: accept } })).toEqual([
       "`Note` gets a type-wide rule from `Node` and `Searchable`, and nothing says which applies to `body` — add `Note: { '*': … }`, or a rule per field, to choose.",
     ]);
   });
 
   it('ignores an interface entry that is undefined, as it does any other', () => {
-    expect(problemsOf({ Node: undefined, Searchable: undefined, Note: { id: accept } })).toEqual(
-      [],
-    );
+    expect(problemsOf({ Node: undefined, Searchable: undefined, Note: { id: accept } })).toEqual([]);
   });
 
   it("an interface's field entry settles a field above the type-wide tier", () => {
@@ -596,29 +568,19 @@ describe('applyPermissions — rules on interfaces and unions', () => {
       expect(() => validatePermissions(abstractSchema(), map as LooseMap)).not.toThrow();
     }
     for (const map of [wrong, discriminator]) {
-      expect(() => validatePermissions(abstractSchema(), map as LooseMap)).toThrow(
-        PermissionsError,
-      );
+      expect(() => validatePermissions(abstractSchema(), map as LooseMap)).toThrow(PermissionsError);
     }
   });
 });
 
 describe('applyPermissions — error control', () => {
   /** A schema whose one field can be made to fail in each distinct way. */
-  function scenario(
-    rule: Rule,
-    options?: ApplyPermissionsOptions,
-    resolver: () => unknown = () => 'ok',
-  ) {
+  function scenario(rule: Rule, options?: ApplyPermissionsOptions, resolver: () => unknown = () => 'ok') {
     const schema = makeExecutableSchema({
       typeDefs: `type Query { note: String }`,
       resolvers: { Query: { note: resolver } },
     });
-    return applyPermissions<Record<string, Record<string, unknown>>>(
-      schema,
-      { Query: { note: rule } },
-      options,
-    );
+    return applyPermissions<Record<string, Record<string, unknown>>>(schema, { Query: { note: rule } }, options);
   }
 
   async function run(schema: GraphQLSchema) {
@@ -732,13 +694,9 @@ describe('applyPermissions — error control', () => {
     // debug is about the rule, not the resolver: a resolver error still follows
     // allowExternalErrors.
     const error = await run(
-      scenario(
-        accept,
-        { fallbackError: 'Not Authorised!', allowExternalErrors: false, debug: true },
-        () => {
-          throw new Error('connection refused');
-        },
-      ),
+      scenario(accept, { fallbackError: 'Not Authorised!', allowExternalErrors: false, debug: true }, () => {
+        throw new Error('connection refused');
+      }),
     );
     expect(error?.message).toBe('Not Authorised!');
   });
@@ -757,7 +715,9 @@ describe('applyPermissions — a fields() rule as a type-level entry', () => {
     const canUser = createCan<{ userId?: string }, M>(
       async (ctx) => {
         const { can, build } = createGraphQLAbility<M>();
-        if (!ctx.userId) return build();
+        if (!ctx.userId) {
+          return build();
+        }
         can('read', 'Note', ['id', 'body']);
         can('read', 'Note', ['secret'], { userId: ctx.userId });
         return build();
@@ -1094,10 +1054,7 @@ describe('applyPermissions — filtering denials', () => {
   });
 
   it('does not reword an explicit denial with fallbackError', async () => {
-    const schema = filtering(
-      { Query: { list: rule(() => 'Trial expired') } },
-      { fallbackError: 'Nope' },
-    );
+    const schema = filtering({ Query: { list: rule(() => 'Trial expired') } }, { fallbackError: 'Nope' });
     const result = await query(schema, '{ list { id } }');
     expect(result.errors?.[0]?.message).toBe('Trial expired');
   });
@@ -1117,9 +1074,7 @@ describe('applyPermissions — filtering denials', () => {
     );
     const result = await query(schema, '{ list { id } nullable nullableList { id } }');
     expect(result.data).toEqual({ list: [], nullable: null, nullableList: null });
-    const byPath = Object.fromEntries(
-      (result.errors ?? []).map((error) => [String(error.path?.[0]), error.message]),
-    );
+    const byPath = Object.fromEntries((result.errors ?? []).map((error) => [String(error.path?.[0]), error.message]));
     expect(byPath).toEqual({ list: 'Nope', nullable: 'Nope', nullableList: 'Trial expired' });
     expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE, CODE]);
   });
@@ -1145,9 +1100,7 @@ describe('applyPermissions — filtering denials', () => {
     const schema = filtering({ Query: { list: deny, nullable: deny } }, { inPlace: true });
     const result = await query(schema, '{ list { id } nullable }');
     expect(result.data).toEqual({ list: [], nullable: null });
-    expect(result.errors?.map((error) => error.path)).toEqual(
-      expect.arrayContaining([['list'], ['nullable']]),
-    );
+    expect(result.errors?.map((error) => error.path)).toEqual(expect.arrayContaining([['list'], ['nullable']]));
     expect(result.errors?.map((error) => error.extensions)).toEqual([CODE, CODE]);
   });
 
@@ -1211,22 +1164,16 @@ describe('applyPermissions — filtering denials', () => {
       const result = await query(masked, '{ list { id } }');
       expect(result.data).toEqual({ list: [] });
       expect(result.errors).toBeUndefined();
-      expect(() =>
-        filtering({ Query: { list: deny } }, { onDeny: 'mask', maskDenials: true }),
-      ).not.toThrow();
+      expect(() => filtering({ Query: { list: deny } }, { onDeny: 'mask', maskDenials: true })).not.toThrow();
     });
 
     it('rejects maskDenials alongside a different onDeny', () => {
-      expect(() => filtering({}, { onDeny: 'filter', maskDenials: true })).toThrow(
-        PermissionsError,
-      );
+      expect(() => filtering({}, { onDeny: 'filter', maskDenials: true })).toThrow(PermissionsError);
       expect(() => filtering({}, { onDeny: 'reject', maskDenials: true })).toThrow(/contradicts/);
     });
 
     it("rejects report without onDeny: 'filter'", () => {
-      expect(() => filtering({}, { onDeny: 'reject', report: 'extensions' })).toThrow(
-        /only applies under/,
-      );
+      expect(() => filtering({}, { onDeny: 'reject', report: 'extensions' })).toThrow(/only applies under/);
       expect(() => filtering({}, { onDeny: 'mask', report: 'errors' })).toThrow(PermissionsError);
     });
   });
@@ -1272,18 +1219,12 @@ describe('applyPermissions — strict', () => {
     expect(masked.errors?.[0]?.message).toBe('Not Authorised!');
 
     // The same map without `strict` lets the resolver's own error through.
-    const loose = await query(
-      strictly(map, { strict: false, fallbackError: 'Not Authorised!' }),
-      '{ broken }',
-    );
+    const loose = await query(strictly(map, { strict: false, fallbackError: 'Not Authorised!' }), '{ broken }');
     expect(loose.errors?.[0]?.message).toBe('db down');
   });
 
   it('moves defaults only — a key passed explicitly still wins', async () => {
-    const rejected = await query(
-      strictly({ Query: { list: deny } }, { onDeny: 'reject' }),
-      '{ list }',
-    );
+    const rejected = await query(strictly({ Query: { list: deny } }, { onDeny: 'reject' }), '{ list }');
     expect(rejected.data).toBeNull();
     expect(rejected.errors?.[0]?.message).toBe('Forbidden');
     expect(rejected.errors?.[0]?.extensions).toEqual({});
@@ -1296,19 +1237,13 @@ describe('applyPermissions — strict', () => {
   });
 
   it('lets maskDenials choose the mode, since it is a choice', async () => {
-    const result = await query(
-      strictly({ Query: { list: deny } }, { maskDenials: true }),
-      '{ list }',
-    );
+    const result = await query(strictly({ Query: { list: deny } }, { maskDenials: true }), '{ list }');
     expect(result.data).toEqual({ list: [] });
     expect(result.errors).toBeUndefined();
   });
 
   it("accepts report, because the mode is 'filter'", async () => {
-    const result = await query(
-      strictly({ Query: { list: deny } }, { report: 'extensions' }),
-      '{ list }',
-    );
+    const result = await query(strictly({ Query: { list: deny } }, { report: 'extensions' }), '{ list }');
     expect(result.data).toEqual({ list: [] });
     expect(result.errors).toBeUndefined();
     expect(result.extensions?.authorizationErrors).toEqual([
@@ -1342,9 +1277,9 @@ describe('applyPermissions — disabled', () => {
   });
 
   it('still validates the map and the options', () => {
-    expect(() =>
-      applyPermissions(baseSchema(), { Nope: { id: deny } } as LooseMap, { disabled: true }),
-    ).toThrow(PermissionsError);
+    expect(() => applyPermissions(baseSchema(), { Nope: { id: deny } } as LooseMap, { disabled: true })).toThrow(
+      PermissionsError,
+    );
     expect(() =>
       applyPermissions(baseSchema(), {} as LooseMap, {
         disabled: true,
@@ -1444,9 +1379,9 @@ describe('resolvePermissions', () => {
       { fallbackError: 'Not Authorised!' },
     );
     const rule = permissionFor('Query', 'note');
-    await expect(
-      rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo),
-    ).rejects.toThrow('Not Authorised!');
+    await expect(rule?.(async () => 'ok', undefined, {}, {}, {} as GraphQLResolveInfo)).rejects.toThrow(
+      'Not Authorised!',
+    );
   });
 
   it('masks a denial when asked to', async () => {
@@ -1648,11 +1583,7 @@ describe('applyPermissions — error control on a check-then-resolve rule', () =
   // `rule()` marks its middleware, and error control then talks to the check
   // directly instead of catching a thrown denial. Same contract as the generic
   // wrapper, different code path, so each branch is pinned here.
-  function scenario(
-    guard: Rule,
-    options?: ApplyPermissionsOptions,
-    resolver: () => unknown = () => 'ok',
-  ) {
+  function scenario(guard: Rule, options?: ApplyPermissionsOptions, resolver: () => unknown = () => 'ok') {
     const schema = makeExecutableSchema({
       typeDefs: `type Query { note: String  other: String }`,
       resolvers: { Query: { note: resolver, other: () => 'ok' } },
@@ -1784,10 +1715,7 @@ describe('applyPermissions — error control on a check-then-resolve rule', () =
       },
       { cache: 'contextual' },
     );
-    const error = await run(
-      scenario(counted, { fallbackError: 'Not Authorised!' }),
-      '{ note other }',
-    );
+    const error = await run(scenario(counted, { fallbackError: 'Not Authorised!' }), '{ note other }');
     expect(error).toBeUndefined();
     expect(calls).toBe(1);
   });
@@ -1876,9 +1804,7 @@ describe('applyPermissions — inPlace', () => {
     }
     const denied = { Subscription: { tick: deny } } as RichMap;
     expect(await firstEvent(applyPermissions(richSchema(), denied))).toBe('Forbidden');
-    expect(await firstEvent(applyPermissions(richSchema(), denied, { inPlace: true }))).toBe(
-      'Forbidden',
-    );
+    expect(await firstEvent(applyPermissions(richSchema(), denied, { inPlace: true }))).toBe('Forbidden');
     const allowed = { Subscription: { tick: accept } } as RichMap;
     expect(await firstEvent(applyPermissions(richSchema(), allowed, { inPlace: true }))).toEqual({
       tick: 1,
@@ -1887,9 +1813,9 @@ describe('applyPermissions — inPlace', () => {
 
   it('validates the map before touching the schema', async () => {
     const base = richSchema();
-    expect(() =>
-      applyPermissions(base, { Query: { note: deny }, Nope: deny } as RichMap, { inPlace: true }),
-    ).toThrow(PermissionsError);
+    expect(() => applyPermissions(base, { Query: { note: deny }, Nope: deny } as RichMap, { inPlace: true })).toThrow(
+      PermissionsError,
+    );
     const result = await graphql({ schema: base, source: '{ note { id } }' });
     expect(result.errors).toBeUndefined();
   });
@@ -1897,9 +1823,9 @@ describe('applyPermissions — inPlace', () => {
   it('refuses to guard a schema twice', () => {
     const base = richSchema();
     applyPermissions(base, { Query: { note: accept } } as RichMap, { inPlace: true });
-    expect(() =>
-      applyPermissions(base, { Query: { note: deny } } as RichMap, { inPlace: true }),
-    ).toThrow(/already guarded/);
+    expect(() => applyPermissions(base, { Query: { note: deny } } as RichMap, { inPlace: true })).toThrow(
+      /already guarded/,
+    );
   });
 
   it('leaves introspection working under fallbackRule: deny', async () => {

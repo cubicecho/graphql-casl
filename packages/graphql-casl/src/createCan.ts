@@ -5,22 +5,24 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import type { AbilityLike, Action } from './ability.js';
-import { CAN_INTERNALS, type CanInternals } from './internal.js';
+import { isWeakKey, markCanInternals } from './internal.js';
 import {
   type CacheKey,
   type CacheMode,
   type CheckableRule,
-  denialFrom,
-  isThenable,
+  denialOf,
+  NOT_AUTHENTICATED,
   type Rule,
   type RuleResult,
   rule,
+  whenSettled,
 } from './rules.js';
 
 /**
  * What {@link createCan} does when a bare-subject check is made against a subject
  * whose only matching rules carry conditions.
  *
+ * @remarks
  * `ability.can('update', 'Note')` asks CASL *"is updating a Note possible at
  * all?"*, not *"may I update this Note?"* — a rule of
  * `can('update', 'Note', { userId })` makes the bare check return `true` for every
@@ -31,8 +33,11 @@ import {
  * - `'throw'` — deny with an explanatory error. Recommended for new projects.
  * - `'allow'` — say nothing. For deliberate "is this possible at all" gates, e.g.
  *   guarding a list field whose rows are filtered inside the resolver.
+ *
+ * The object names each mode: `onUnconditionedSubject: UnconditionedSubjectMode.Throw`.
  */
-export type UnconditionedSubjectMode = 'warn' | 'throw' | 'allow';
+export const UnconditionedSubjectMode = { Warn: 'warn', Throw: 'throw', Allow: 'allow' } as const;
+export type UnconditionedSubjectMode = (typeof UnconditionedSubjectMode)[keyof typeof UnconditionedSubjectMode];
 
 /** Options for {@link createCan}. */
 export interface CreateCanOptions {
@@ -46,16 +51,16 @@ export interface CreateCanOptions {
 }
 
 /**
- * The subset of CASL's `PureAbility` used to detect the conditioned-subject
- * footgun. Optional because {@link AbilityLike} only promises `can`, and a
- * hand-rolled ability may not implement it — in which case the check is skipped
- * rather than guessed at.
- */
-/**
  * Reads the `reason` CASL attached to the rule that decided a check, so a
  * `cannot(...).because('...')` explanation reaches the caller instead of being
  * replaced by a generic `Forbidden`.
  *
+ * @param ability - The ability that decided.
+ * @param action - The action checked.
+ * @param subject - The subject checked.
+ * @returns The reason, or `undefined` when the rule gave none.
+ *
+ * @remarks
  * CASL surfaces this through `ForbiddenError.from(ability).throwUnlessCan(...)`,
  * but that also rewrites the default message to `Cannot execute "x" on "Y"`,
  * which both changes this library's denial message and tells an unauthorized
@@ -64,41 +69,61 @@ export interface CreateCanOptions {
  */
 function reasonFor(ability: AbilityLike, action: Action, subject: unknown): string | undefined {
   const { relevantRuleFor } = ability as AbilityLike & ReasonIntrospection;
-  if (typeof relevantRuleFor !== 'function') return undefined;
+  if (typeof relevantRuleFor !== 'function') {
+    return undefined;
+  }
   const reason = relevantRuleFor.call(ability, action, subject)?.reason;
   return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
 }
 
+/** The subset of CASL's `PureAbility` that {@link reasonFor} reads. Optional for the same reason. */
 type ReasonIntrospection = {
   relevantRuleFor?: (action: Action, subject: unknown) => { reason?: unknown } | undefined;
 };
 
+/**
+ * The subset of CASL's `PureAbility` used to detect the conditioned-subject
+ * footgun. Optional because {@link AbilityLike} only promises `can`, and a
+ * hand-rolled ability may not implement it — in which case the check is skipped
+ * rather than guessed at.
+ */
 type RuleIntrospection = {
-  rulesFor?: (
-    action: Action,
-    subjectType: string,
-  ) => ReadonlyArray<{ conditions?: unknown; inverted?: boolean }>;
+  rulesFor?: (action: Action, subjectType: string) => ReadonlyArray<{ conditions?: unknown; inverted?: boolean }>;
 };
 
 /**
  * Whether every rule granting `action` on `subject` carries conditions, making a
  * bare-subject check a possibility test rather than a permission test.
  *
+ * @param ability - The ability to inspect.
+ * @param action - The action checked.
+ * @param subject - The subject name checked.
+ * @returns `true` when the bare check ignores conditions.
+ *
+ * @remarks
  * Conservative by design: returns `false` when the ability can't be introspected,
  * when no rule matches (the check denies anyway), or when any inverted (`cannot`)
  * rule is in play — a false positive here trains people to ignore the warning.
  */
 function isUnconditionedCheck(ability: AbilityLike, action: Action, subject: string): boolean {
   const { rulesFor } = ability as AbilityLike & RuleIntrospection;
-  if (typeof rulesFor !== 'function') return false;
+  if (typeof rulesFor !== 'function') {
+    return false;
+  }
   const rules = rulesFor.call(ability, action, subject);
-  if (!rules || rules.length === 0) return false;
+  if (!rules || rules.length === 0) {
+    return false;
+  }
   return rules.every((rule) => rule.inverted !== true && rule.conditions != null);
 }
 
 /**
  * The object an ability-level memo is keyed on.
  *
+ * @param ability - The ability.
+ * @returns Its `rules` array, or `undefined` when it exposes none.
+ *
+ * @remarks
  * CASL's `PureAbility` replaces its `rules` array on every `update()`, so the
  * array's identity changes exactly when a verdict derived from the rules could.
  * An ability that does not expose `rules` as an object cannot be memoized
@@ -109,6 +134,13 @@ function rulesKeyOf(ability: AbilityLike): object | undefined {
   return typeof rules === 'object' && rules !== null ? rules : undefined;
 }
 
+/**
+ * Explains a bare-subject check against a subject whose rules all have conditions.
+ *
+ * @param action - The action checked.
+ * @param subject - The subject name checked.
+ * @returns The message.
+ */
 function unconditionedMessage(action: Action, subject: string): string {
   return (
     `graphql-casl: \`can('${action}', '${subject}')\` was checked without \`getSubjectData\`, ` +
@@ -124,13 +156,23 @@ function unconditionedMessage(action: Action, subject: string): string {
  * The subject candidates in a resolved value: the value itself, or each non-null
  * element when the field resolved to a list. `null` yields none — a field that
  * resolved to nothing has no subject to authorize.
+ *
+ * @param result - What the field resolved to.
+ * @returns The values to authorize.
  */
 function subjectCandidates(result: unknown): unknown[] {
-  if (result == null) return [];
+  if (result == null) {
+    return [];
+  }
   return Array.isArray(result) ? result.filter((item) => item != null) : [result];
 }
 
-/** Whether the guarded field is a root mutation field. */
+/**
+ * Whether the guarded field is a root mutation field.
+ *
+ * @param info - The field's resolve info.
+ * @returns `true` for a field of the mutation root.
+ */
 function isMutationField(info: GraphQLResolveInfo): boolean {
   const mutationType = info.schema.getMutationType();
   return mutationType != null && info.parentType.name === mutationType.name;
@@ -142,17 +184,20 @@ function isMutationField(info: GraphQLResolveInfo): boolean {
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type BuildSubject<TSubjectMap extends Record<string, object>> = <
-  K extends keyof TSubjectMap & string,
->(
+export type BuildSubject<TSubjectMap extends Record<string, object>> = <K extends keyof TSubjectMap & string>(
   type: K,
   attrs: Partial<TSubjectMap[K]>,
 ) => unknown;
 
 /**
- * The rule builder returned by {@link createCan} when a `buildSubject` tagger is
- * provided. Supports both bare-subject checks and condition checks where the
- * subject instance is built from resolver args via `getSubjectData`.
+ * The rule builder returned by {@link createCan} when a `buildSubject` tagger
+ * is provided.
+ *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
+ * Supports both bare-subject checks and condition checks where the subject
+ * instance is built from resolver args via `getSubjectData`.
  *
  * The subject name `K` narrows `getSubjectData`'s return to that subject's fields
  * (`Partial<TSubjectMap[K]>`); annotate `getSubjectData`'s `args` parameter with
@@ -163,8 +208,6 @@ export type BuildSubject<TSubjectMap extends Record<string, object>> = <
  * condition on the parent `User`, not on the field's args. Annotate it with
  * `ParentOf<UserResolvers['email']>` to type it. See the caveat on
  * {@link createCan} about resolvers that project by selection set.
- *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
 export interface RequireCan<TSubjectMap extends Record<string, object>> {
   <
@@ -198,6 +241,9 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * Builds a single rule that guards **every field of a type**, deciding each one
  * from CASL's field-level permissions rather than from a hand-written entry.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
  * `can('read', 'User', ['id', 'name'])` already says which fields may be read.
  * Restating that as a `PermissionsMap` entry per field duplicates it, and the two
  * drift. Attached to a type, this rule checks
@@ -223,8 +269,6 @@ export interface RequireCan<TSubjectMap extends Record<string, object>> {
  * A field with no matching rule is denied, so this is deny-by-default across the
  * type's fields — unlike the `PermissionsMap`, where an unnamed field is
  * unguarded.
- *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
 export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
   K extends keyof TSubjectMap & string,
@@ -239,6 +283,9 @@ export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
 /**
  * Builds a rule that runs the resolver first and authorizes what it returned.
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ *
+ * @remarks
  * The pre-execution form checks what the **client asserted** — a condition built
  * from `args.userId` says nothing about the record the resolver actually loads,
  * which is how a caller passes their own `userId` alongside someone else's `id`.
@@ -266,7 +313,6 @@ export type RequireCanFields<TSubjectMap extends Record<string, object>> = <
  * rather than after. For those, check the args up front with the pre-execution
  * form, or write a {@link Rule} by hand.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @example
  * ```ts
  * Query: {
@@ -294,9 +340,7 @@ export type RequireCanOnResult<TSubjectMap extends Record<string, object>> = <
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
-  K extends keyof TSubjectMap & string,
->(
+export type RequireCanBare<TSubjectMap extends Record<string, object>> = <K extends keyof TSubjectMap & string>(
   action: Action,
   subject: K,
   getSubjectData?: undefined,
@@ -309,7 +353,10 @@ export type RequireCanBare<TSubjectMap extends Record<string, object>> = <
 export interface CanRuleOptions {
   /**
    * Reuses the rule's verdict within a request — a {@link CacheMode}, or a
-   * {@link CacheKey} function. Default `'no_cache'`.
+   * {@link CacheKey} function.
+   *
+   * @remarks
+   * Default `'no_cache'`.
    *
    * A bare-subject check is already answered once per ability, so this is for
    * the conditioned form: `'strict'` evaluates the CASL conditions once per
@@ -325,6 +372,16 @@ export interface CanRuleOptions {
  * Factory that returns a `requireCan(action, subject, getSubjectData?)` rule
  * builder bound to a specific ability resolver and subject map.
  *
+ * @typeParam TContext - Your resolver context type.
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @param getAbility - Builds the ability for a request's context. Memoized per context.
+ * @param isAuthenticated - Returns whether the context represents a logged-in caller.
+ * @param buildSubject - Optional subject constructor, typically `createTyped`'s `typed`.
+ * @param options - Optional {@link CreateCanOptions}. May be passed in
+ * `buildSubject`'s position when no tagger is used.
+ * @returns A `requireCan(action, subject, getSubjectData?)` builder.
+ *
+ * @remarks
  * This decouples the auth/ability logic from the permissions map so projects can
  * swap in any ability-building strategy. The returned builder produces a
  * {@link Rule} that:
@@ -355,14 +412,6 @@ export interface CanRuleOptions {
  * factory shares the result, so a query touching many guarded fields builds the
  * ability once. A rejected build is not cached.
  *
- * @typeParam TContext - Your resolver context type.
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @param getAbility - Builds the ability for a request's context. Memoized per context.
- * @param isAuthenticated - Returns whether the context represents a logged-in caller.
- * @param buildSubject - Optional subject constructor, typically `createTyped`'s `typed`.
- * @param options - Optional {@link CreateCanOptions}. May be passed in
- * `buildSubject`'s position when no tagger is used.
- * @returns A `requireCan(action, subject, getSubjectData?)` builder.
  * @example
  * ```ts
  * const canUser = createCan<Context, AppSubjectMap>(
@@ -399,7 +448,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   const hasTagger = typeof buildSubjectOrOptions === 'function';
   const buildSubject = hasTagger ? buildSubjectOrOptions : undefined;
   const options = (hasTagger ? maybeOptions : buildSubjectOrOptions) ?? {};
-  const onUnconditionedSubject = options.onUnconditionedSubject ?? 'warn';
+  const onUnconditionedSubject = options.onUnconditionedSubject ?? UnconditionedSubjectMode.Warn;
 
   // One ability per context object, shared by every rule this factory produces.
   // A query touching 50 guarded fields otherwise rebuilds it 50 times. Keyed on
@@ -416,26 +465,27 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   function resolveAbility(context: TContext): AbilityLike | Promise<AbilityLike> {
     // A non-object context (undefined, a string) can't key a WeakMap. Rare, but
     // it must still work — just without the memo.
-    if (context === null || (typeof context !== 'object' && typeof context !== 'function')) {
+    if (isWeakKey(context) === false) {
       return Promise.resolve(getAbility(context));
     }
-    const key = context as unknown as object;
-    const cached = abilityCache.get(key);
-    if (cached) return cached;
+    const cached = abilityCache.get(context);
+    if (cached) {
+      return cached;
+    }
     const pending = Promise.resolve(getAbility(context));
-    abilityCache.set(key, pending);
+    abilityCache.set(context, pending);
     pending.then(
-      (ability) => abilityCache.set(key, ability),
+      (ability) => abilityCache.set(context, ability),
       // Don't let one failed build poison every later field on the same request.
-      () => abilityCache.delete(key),
+      () => abilityCache.delete(context),
     );
     return pending;
   }
 
   /** Shared prologue: authenticate, then get the request's ability. */
   async function authorize(context: TContext): Promise<AbilityLike> {
-    if (!isAuthenticated(context)) {
-      throw denialFrom('Not authenticated') ?? new Error('Not authenticated');
+    if (isAuthenticated(context) === false) {
+      throw denialOf(NOT_AUTHENTICATED);
     }
     return resolveAbility(context);
   }
@@ -449,9 +499,11 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     context: TContext,
     decide: (ability: AbilityLike) => RuleResult,
   ): RuleResult | Promise<RuleResult> {
-    if (!isAuthenticated(context)) return new Error('Not authenticated');
+    if (isAuthenticated(context) === false) {
+      return new Error(NOT_AUTHENTICATED);
+    }
     const ability = resolveAbility(context);
-    return isThenable(ability) ? ability.then(decide) : decide(ability);
+    return whenSettled(ability, decide);
   }
 
   function requireCan<
@@ -484,7 +536,9 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     function verdict(ability: AbilityLike, instance: unknown): RuleResult {
       // `instance` is an opaque subject value or name here; the ability's `can`
       // is narrowly overloaded, so check through the loose AbilityLike shape.
-      if (ability.can(action, instance)) return true;
+      if (ability.can(action, instance)) {
+        return true;
+      }
       // A `cannot(...).because('...')` reason is the rule author's own words
       // for this denial; prefer it over the generic message.
       return reasonFor(ability, action, instance) ?? false;
@@ -499,15 +553,17 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
     function bareVerdict(ability: AbilityLike): RuleResult {
       const key = rulesKeyOf(ability);
       const memo = key && bareVerdicts.get(key);
-      if (memo !== undefined) return memo;
+      if (memo !== undefined) {
+        return memo;
+      }
 
       let result: RuleResult | undefined;
       if (
-        onUnconditionedSubject !== 'allow' &&
-        (onUnconditionedSubject === 'throw' || !warned) &&
+        onUnconditionedSubject !== UnconditionedSubjectMode.Allow &&
+        (onUnconditionedSubject === UnconditionedSubjectMode.Throw || warned === false) &&
         isUnconditionedCheck(ability, action, subject)
       ) {
-        if (onUnconditionedSubject === 'throw') {
+        if (onUnconditionedSubject === UnconditionedSubjectMode.Throw) {
           result = new Error(unconditionedMessage(action, subject));
         } else {
           warned = true;
@@ -515,25 +571,23 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
         }
       }
       result ??= verdict(ability, subject);
-      if (key) bareVerdicts.set(key, result);
+      if (key) {
+        bareVerdicts.set(key, result);
+      }
       return result;
     }
 
     const decide =
       getSubjectData && buildSubject
         ? (ability: AbilityLike, parent: unknown, args: unknown) =>
-            verdict(
-              ability,
-              buildSubject(subject, getSubjectData(args as TArgs, parent as TParent)),
-            )
+            verdict(ability, buildSubject(subject, getSubjectData(args as TArgs, parent as TParent)))
         : bareVerdict;
 
     // A pre-execution check reaches its verdict without the resolver, so this is
     // a `rule()` rather than raw middleware — which is what makes it usable as an
     // operand of `and` / `or` / `not` / `chain` / `race`.
     return rule(
-      (parent, args, context) =>
-        withAbility(context as TContext, (ability) => decide(ability, parent, args)),
+      (parent, args, context) => withAbility(context as TContext, (ability) => decide(ability, parent, args)),
       { name: `can(${action}, ${subject})`, cache: ruleOptions?.cache },
     );
   }
@@ -571,18 +625,16 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
                 )
               : subject;
 
-          if (ability.can(action, instance, info.fieldName)) return true;
+          if (ability.can(action, instance, info.fieldName)) {
+            return true;
+          }
           return reasonFor(ability, action, instance) ?? false;
         }),
       { name: `can(${action}, ${subject}, <field>)` },
     );
   };
 
-  requireCan.onResult = function onResult<
-    K extends keyof TSubjectMap & string,
-    TResult = unknown,
-    TParent = unknown,
-  >(
+  requireCan.onResult = function onResult<K extends keyof TSubjectMap & string, TResult = unknown, TParent = unknown>(
     action: Action,
     subject: K,
     getSubjectData?: (result: TResult, parent: TParent) => Partial<TSubjectMap[K]>,
@@ -618,11 +670,10 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
           ? getSubjectData(candidate as TResult, parent as TParent)
           : (candidate as Partial<TSubjectMap[K]>);
         const instance = tag(subject, data);
-        if (!ability.can(action, instance)) {
+        if (ability.can(action, instance) === false) {
           // Marked as a denial so the error-control and masking options in
           // `applyPermissions` can tell it apart from a rule that broke.
-          const denial = denialFrom(reasonFor(ability, action, instance) ?? false);
-          if (denial) throw denial;
+          throw denialOf(reasonFor(ability, action, instance) ?? false);
         }
       }
       return result;
@@ -633,8 +684,7 @@ export function createCan<TContext, TSubjectMap extends Record<string, object>>(
   // same authentication check and the same per-request ability memo but is not
   // a `requireCan` method — it lives behind a subpath export so the core
   // surface stays unchanged for anyone not using it.
-  const internals: CanInternals<TContext> = { authorize };
-  Object.defineProperty(requireCan, CAN_INTERNALS, { value: internals });
+  markCanInternals<TContext>(requireCan, { authorize });
 
   return requireCan as RequireCan<TSubjectMap>;
 }

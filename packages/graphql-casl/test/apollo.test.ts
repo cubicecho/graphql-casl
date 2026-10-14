@@ -35,7 +35,9 @@ function serverWith(permissions: LooseMap, options?: ApplyPermissionsOptions) {
 /** Runs one query the way a test against Apollo does, and returns the body. */
 async function query(server: ApolloServer<Context>, source: string) {
   const response = await server.executeOperation({ query: source }, { contextValue: {} });
-  if (response.body.kind !== 'single') throw new Error('expected a single result');
+  if (response.body.kind !== 'single') {
+    throw new Error('expected a single result');
+  }
   return response.body.singleResult;
 }
 

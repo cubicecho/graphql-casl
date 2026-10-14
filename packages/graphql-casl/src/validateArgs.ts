@@ -4,6 +4,7 @@
  * the resolver does, and hands the resolver the *parsed* arguments — defaults
  * filled in, values coerced, transforms applied.
  *
+ * @remarks
  * The schema is whatever validator you already use: zod (3.24+), valibot,
  * arktype, yup (1.7+) and others all expose the `~standard` property the spec
  * defines, so this module needs none of them as a dependency. The interface it
@@ -12,7 +13,7 @@
 
 import type { GraphQLResolveInfo } from 'graphql';
 import { GraphQLError } from 'graphql';
-import { denialFrom, isThenable, type Rule } from './rules.js';
+import { denialOf, isThenable, type Rule } from './rules.js';
 
 // ---------------------------------------------------------------------------
 // The Standard Schema interface, copied verbatim from
@@ -27,6 +28,7 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly '~standard': StandardSchemaV1.Props<Input, Output>;
 }
 
+// biome-ignore lint/style/noNamespace: vendored verbatim; an ambient namespace holds only types and is erased.
 export declare namespace StandardSchemaV1 {
   /** The Standard Schema properties interface. */
   export interface Props<Input = unknown, Output = Input> {
@@ -80,14 +82,10 @@ export declare namespace StandardSchemaV1 {
   }
 
   /** Infers the input type of a Standard Schema. */
-  export type InferInput<Schema extends StandardSchemaV1> = NonNullable<
-    Schema['~standard']['types']
-  >['input'];
+  export type InferInput<Schema extends StandardSchemaV1> = NonNullable<Schema['~standard']['types']>['input'];
 
   /** Infers the output type of a Standard Schema. */
-  export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<
-    Schema['~standard']['types']
-  >['output'];
+  export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<Schema['~standard']['types']>['output'];
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +132,11 @@ export type ValidatedArgs<TSchema extends StandardSchemaV1> = StandardSchemaV1.I
 export interface ValidateArgsOptions {
   /**
    * Whether the resolver receives the schema's parsed output in place of the
-   * raw arguments. Defaults to `true`, which is the point of a Standard Schema
-   * — defaults, coercion and transforms reach the resolver.
+   * raw arguments.
+   *
+   * @remarks
+   * Defaults to `true`, which is the point of a Standard Schema — defaults,
+   * coercion and transforms reach the resolver.
    *
    * `false` validates only: the arguments the resolver sees are exactly the
    * ones GraphQL coerced, and the schema's output is discarded. Use it when a
@@ -149,6 +150,14 @@ export interface ValidateArgsOptions {
  * A rule that validates a field's arguments against a Standard Schema, and on
  * success calls the resolver with the parsed output as its `args`.
  *
+ * @typeParam TSchema - The Standard Schema. Its output type is what the
+ * resolver receives; {@link ValidatedArgs} names it.
+ * @param schema - Any object with a `~standard` property: a zod, valibot,
+ * arktype or yup schema, or a hand-written one.
+ * @param options - See {@link ValidateArgsOptions}.
+ * @returns A rule; not checkable.
+ *
+ * @remarks
  * GraphQL's own input coercion checks *shape* — the right scalars in the right
  * places. It has nothing to say about a title that is blank, an end date before
  * its start, or a page size of ten million. Those checks usually end up
@@ -186,11 +195,6 @@ export interface ValidateArgsOptions {
  * SDL never promised. That is often the point; just make sure the resolver
  * expects it.
  *
- * @typeParam TSchema - The Standard Schema. Its output type is what the
- * resolver receives; {@link ValidatedArgs} names it.
- * @param schema - Any object with a `~standard` property: a zod, valibot,
- * arktype or yup schema, or a hand-written one.
- * @param options - See {@link ValidateArgsOptions}.
  * @example
  * ```ts
  * import { z } from 'zod';
@@ -210,10 +214,7 @@ export interface ValidateArgsOptions {
  * } satisfies PermissionsMap<Resolvers>;
  * ```
  */
-export function validateArgs<TSchema extends StandardSchemaV1>(
-  schema: TSchema,
-  options?: ValidateArgsOptions,
-): Rule {
+export function validateArgs<TSchema extends StandardSchemaV1>(schema: TSchema, options?: ValidateArgsOptions): Rule {
   const standard = (schema as Partial<StandardSchemaV1> | null | undefined)?.['~standard'];
   if (typeof standard?.validate !== 'function') {
     throw new Error(
@@ -234,7 +235,9 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
     context: unknown,
     info: GraphQLResolveInfo,
   ): unknown {
-    if (result.issues) return Promise.reject(invalidArguments(result.issues));
+    if (result.issues) {
+      return Promise.reject(invalidArguments(result.issues));
+    }
     return resolve(parent, replace ? result.value : args, context, info);
   }
 
@@ -248,9 +251,7 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
       return Promise.reject(error);
     }
     if (isThenable(result)) {
-      return Promise.resolve(result).then((settled) =>
-        settle(settled, resolve, parent, args, context, info),
-      );
+      return Promise.resolve(result).then((settled) => settle(settled, resolve, parent, args, context, info));
     }
     // Synchronous end to end when the validator and the resolver both are — see
     // `Rule` on why that is within contract.
@@ -261,6 +262,9 @@ export function validateArgs<TSchema extends StandardSchemaV1>(
 /**
  * Builds the error a failed validation rejects with, marked as an explicit
  * denial so `applyPermissions`' error control passes it through untouched.
+ *
+ * @param issues - The validator's issues.
+ * @returns A `GraphQLError` with the `BAD_USER_INPUT` code.
  */
 function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error {
   const flattened: ArgumentIssue[] = issues.map((issue) => ({
@@ -268,23 +272,26 @@ function invalidArguments(issues: ReadonlyArray<StandardSchemaV1.Issue>): Error 
     path: pathOf(issue),
   }));
   const message = flattened
-    .map((issue) =>
-      issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message,
-    )
+    .map((issue) => (issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message))
     .join('; ');
   const error = new GraphQLError(message, {
     extensions: { code: BAD_USER_INPUT, issues: flattened },
   });
-  return denialFrom(error) as Error;
+  return denialOf(error);
 }
 
 /**
  * Flattens an issue's path to its keys. The spec allows each segment to be a
  * bare key or a `{ key }` object; a symbol key has no JSON form and is spelled
  * out instead, so the extension stays serializable.
+ *
+ * @param issue - One validator issue.
+ * @returns The keys, outermost first; empty when the issue has no path.
  */
 function pathOf(issue: StandardSchemaV1.Issue): ReadonlyArray<string | number> {
-  if (!issue.path) return [];
+  if (!issue.path) {
+    return [];
+  }
   return issue.path.map((segment) => {
     const key = typeof segment === 'object' && segment !== null ? segment.key : segment;
     return typeof key === 'symbol' ? String(key) : key;

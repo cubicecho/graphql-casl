@@ -19,8 +19,6 @@ import {
   type PermissionsMap,
 } from '../../src/index.js';
 
-// --- The app's domain model -------------------------------------------------
-
 interface Note {
   id: string;
   userId: string;
@@ -34,8 +32,6 @@ const SEED: readonly Note[] = [
 
 // Resolvers mutate notes in place, so this is reset before each test (see beforeEach).
 let NOTES: Note[];
-
-// --- Request context + ability builder -------------------------------------
 
 interface Context {
   userId?: string;
@@ -52,7 +48,9 @@ const typed = createTyped<AppSubjectMap>();
 
 function defineAbilitiesFor(userId: string | undefined): AppAbility {
   const { can, build } = createGraphQLAbility<AppSubjectMap>();
-  if (!userId) return build();
+  if (!userId) {
+    return build();
+  }
   can(Actions.read, 'User');
   can(Actions.read, 'Note');
   // Callers may only update their own notes.
@@ -65,8 +63,6 @@ const canUser = createCan<Context, AppSubjectMap>(
   (ctx) => ctx.userId != null,
   typed,
 );
-
-// --- The schema + resolvers -------------------------------------------------
 
 const typeDefs = /* GraphQL */ `
   type Query {
@@ -101,7 +97,9 @@ const resolvers = {
       // Scope by the authorized `userId` too (the rule checked it pre-resolution),
       // so a forged userId that passes the gate can't reach another user's note.
       const note = NOTES.find((n) => n.id === args.id && n.userId === args.userId);
-      if (!note) return null;
+      if (!note) {
+        return null;
+      }
       note.body = args.body;
       return note;
     },
@@ -232,11 +230,19 @@ describe('permissions middleware against an executable schema', () => {
 describe('accessibleBy in a list resolver', () => {
   /** A stand-in data layer: equality leaves plus the boolean operators. */
   function matches(row: Note, filter: unknown): boolean {
-    if (filter === null) return false;
+    if (filter === null) {
+      return false;
+    }
     const query = filter as Record<string, unknown>;
-    if (Array.isArray(query.$or)) return query.$or.some((part) => matches(row, part));
-    if (Array.isArray(query.$and)) return query.$and.every((part) => matches(row, part));
-    if (Array.isArray(query.$nor)) return !query.$nor.some((part) => matches(row, part));
+    if (Array.isArray(query.$or)) {
+      return query.$or.some((part) => matches(row, part));
+    }
+    if (Array.isArray(query.$and)) {
+      return query.$and.every((part) => matches(row, part));
+    }
+    if (Array.isArray(query.$nor)) {
+      return query.$nor.some((part) => matches(row, part)) === false;
+    }
     return Object.entries(query).every(([field, value]) => row[field as keyof Note] === value);
   }
 
@@ -273,9 +279,7 @@ describe('accessibleBy in a list resolver', () => {
   it('returns only the rows the caller may read', async () => {
     // `update` is the conditioned action here, so filter on it.
     const ability = defineAbilitiesFor('alice');
-    expect(findNotes(accessibleBy(ability, Actions.update, 'Note')).map((n) => n.id)).toEqual([
-      'n1',
-    ]);
+    expect(findNotes(accessibleBy(ability, Actions.update, 'Note')).map((n) => n.id)).toEqual(['n1']);
   });
 
   it('returns every row when the rule is unconditioned', async () => {

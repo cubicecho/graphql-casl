@@ -19,14 +19,7 @@ import {
   wrap,
 } from '@vantreeseba/graphql-casl';
 import { useGraphQLCasl } from '@vantreeseba/graphql-casl/envelop';
-import {
-  buildSchema,
-  type ExecutionResult,
-  GraphQLBoolean,
-  GraphQLObjectType,
-  GraphQLSchema,
-  graphql,
-} from 'graphql';
+import { buildSchema, type ExecutionResult, GraphQLBoolean, GraphQLObjectType, GraphQLSchema, graphql } from 'graphql';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type DirectivePermissions,
@@ -34,8 +27,6 @@ import {
   directiveTypeDefs,
   permissionsFromDirectives,
 } from '../src/index.js';
-
-// --- Domain -----------------------------------------------------------------
 
 interface User {
   id: string;
@@ -74,8 +65,6 @@ beforeEach(() => {
   NOTES = SEED.map((note) => ({ ...note }));
 });
 
-// --- Context, ability, rules ------------------------------------------------
-
 interface Context {
   userId?: string;
   roles?: string[];
@@ -107,7 +96,9 @@ const typed = createTyped<M>();
 const canUser = createCan<Context, M>(
   async (ctx) => {
     const { can, build } = createGraphQLAbility<M>();
-    for (const [action, subject] of GRANTS[ctx.userId ?? ''] ?? []) can(action, subject);
+    for (const [action, subject] of GRANTS[ctx.userId ?? ''] ?? []) {
+      can(action, subject);
+    }
     return build();
   },
   (ctx) => ctx.userId != null,
@@ -123,10 +114,9 @@ const isAdmin = rule((_p, _a, ctx: Context) => ctx.roles?.includes('admin') || '
 const isVerified = rule((_p, _a, ctx: Context) => ctx.verified === true || 'Verify your email', {
   name: 'isVerified',
 });
-const isOwner = rule(
-  (parent, _a, ctx: Context) => (parent as Note).userId === ctx.userId || 'Not your note',
-  { name: 'isOwner' },
-);
+const isOwner = rule((parent, _a, ctx: Context) => (parent as Note).userId === ctx.userId || 'Not your note', {
+  name: 'isOwner',
+});
 const isSelf = rule((parent, _a, ctx: Context) => (parent as User).id === ctx.userId || 'Not you', {
   name: 'isSelf',
 });
@@ -141,8 +131,6 @@ const bob: Context = { userId: 'bob', verified: true };
 const carol: Context = { userId: 'carol' };
 const carolAdmin: Context = { userId: 'carol', roles: ['admin'], verified: true };
 const root: Context = { userId: 'root', roles: ['admin'], verified: true };
-
-// --- Schema -----------------------------------------------------------------
 
 const typeDefs = /* GraphQL */ `
   type Query {
@@ -184,7 +172,9 @@ const resolvers = {
   Mutation: {
     updateNote: (_p: unknown, args: { id: string; body: string }) => {
       const note = NOTES.find((n) => n.id === args.id);
-      if (!note) return null;
+      if (!note) {
+        return null;
+      }
       note.body = args.body;
       return note;
     },
@@ -215,10 +205,7 @@ function messagesOf(result: ExecutionResult): string[] {
 }
 
 /** The aggregated problems a translation fails with. */
-function problemsOf(
-  sdl: string,
-  options: DirectivePermissionsOptions = { can: canUser, rules },
-): readonly string[] {
+function problemsOf(sdl: string, options: DirectivePermissionsOptions = { can: canUser, rules }): readonly string[] {
   try {
     permissionsFromDirectives(build(sdl, {}), options);
   } catch (error) {
@@ -227,8 +214,6 @@ function problemsOf(
   }
   throw new Error('expected the translation to fail');
 }
-
-// --- Tests ------------------------------------------------------------------
 
 describe('permissionsFromDirectives', () => {
   const schema = build(typeDefs, resolvers);
@@ -240,7 +225,9 @@ describe('permissionsFromDirectives', () => {
     expect(Object.keys(map.Mutation as object).sort()).toEqual(['purge', 'updateNote']);
     expect(Object.keys(map.User as object)).toEqual(['email']);
     for (const entry of Object.values(map)) {
-      for (const value of Object.values(entry as object)) expect(typeof value).toBe('function');
+      for (const value of Object.values(entry as object)) {
+        expect(typeof value).toBe('function');
+      }
     }
   });
 
@@ -544,9 +531,7 @@ describe('validation', () => {
       rules: { ...rules, audit: wrap(accept) as never },
     });
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain(
-      '`@rule` on `Query.a` names `audit`, which is not a checkable rule.',
-    );
+    expect(problems[0]).toContain('`@rule` on `Query.a` names `audit`, which is not a checkable rule.');
   });
 
   it('rejects @can on a root field whose subject cannot be inferred', () => {
@@ -618,9 +603,7 @@ describe('validation', () => {
     expect(caught).toBeInstanceOf(PermissionsError);
     const error = caught as PermissionsError;
     expect(error.problems).toHaveLength(2);
-    expect(error.message).toMatch(
-      /^graphql-casl: the schema directives could not be translated\.\n {2}- /,
-    );
+    expect(error.message).toMatch(/^graphql-casl: the schema directives could not be translated\.\n {2}- /);
   });
 
   it('reports an interface problem once, not once per implementor', () => {

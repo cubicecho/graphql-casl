@@ -12,13 +12,7 @@ export default defineConfig({
   test: {
     server: {
       deps: {
-        inline: [
-          'graphql',
-          /@graphql-tools\//,
-          /@envelop\//,
-          /@vantreeseba\//,
-          'graphql-middleware',
-        ],
+        inline: ['graphql', /@graphql-tools\//, /@envelop\//, /@vantreeseba\//, 'graphql-middleware'],
       },
     },
     coverage: {

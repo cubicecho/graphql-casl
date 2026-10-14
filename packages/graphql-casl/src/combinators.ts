@@ -1,13 +1,16 @@
 /**
- * Logic combinators over {@link CheckableRule}s: `and`, `or`, `not`, `chain` and
- * `race`. Each returns a `CheckableRule`, so combinators nest freely.
+ * Logic combinators over {@link CheckableRule}s: `and`, `or`, `not`, `chain`
+ * and `race`.
+ *
+ * @remarks
+ * Each returns a `CheckableRule`, so combinators nest freely.
  *
  * {@link wrap} sits apart from those: it composes *any* rules, including ones
  * that decide by running the resolver, and returns a plain {@link Rule}.
  */
 
 import type { GraphQLResolveInfo } from 'graphql';
-import { SCOPE_INFO, type ScopeInfo } from './internal.js';
+import { markScope, scopeInfoOf } from './internal.js';
 import {
   type Check,
   type CheckableRule,
@@ -17,11 +20,17 @@ import {
   type Rule,
   type RuleResult,
   rule,
+  whenSettled,
 } from './rules.js';
 
 /**
  * Extracts the operands' checks, rejecting anything that cannot be combined.
  *
+ * @param combinator - The combinator's name, for the message.
+ * @param rules - Its operands.
+ * @returns One check per operand.
+ *
+ * @remarks
  * A plain {@link Rule} decides by running, and running it may run the resolver —
  * so it cannot be evaluated speculatively as one branch of an `or`. Rather than
  * degrade silently, name the offending operand and fail while the permissions
@@ -32,7 +41,7 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
     throw new Error(`graphql-casl: \`${combinator}()\` needs at least one rule.`);
   }
   return rules.map((operand, index) => {
-    if (!isCheckableRule(operand)) {
+    if (isCheckableRule(operand) === false) {
       throw new Error(
         `graphql-casl: \`${combinator}()\` operand ${index} is not a checkable rule, so its ` +
           'verdict cannot be evaluated without also running the resolver. Build it with `rule()` ' +
@@ -47,7 +56,13 @@ function checksOf(combinator: string, rules: readonly Rule[]): Check[] {
   });
 }
 
-/** Labels a combinator for error messages, e.g. `and(isSelf, isAdmin)`. */
+/**
+ * Labels a combinator for error messages, e.g. `and(isSelf, isAdmin)`.
+ *
+ * @param combinator - The combinator's name.
+ * @param rules - Its operands.
+ * @returns The label.
+ */
 function label(combinator: string, rules: readonly Rule[]): string {
   return `${combinator}(${rules.map((r) => (isCheckableRule(r) ? r.ruleName : '') || '?').join(', ')})`;
 }
@@ -55,6 +70,7 @@ function label(combinator: string, rules: readonly Rule[]): string {
 /**
  * One operand's outcome under a *tolerant* combinator.
  *
+ * @remarks
  * `or` and `race` need to tell three things apart, where the strict combinators
  * only need two: the operand passed, it denied, or it *broke*. A broken operand
  * must not be collapsed into a denial — that is the distinction the whole error
@@ -68,6 +84,13 @@ type Outcome = { readonly denial: Error | undefined } | { readonly thrown: unkno
  * Synchronous when the operand is, like everything else in this module: a
  * combinator of synchronous checks is itself a synchronous check, so the field
  * it guards resolves without a promise.
+ *
+ * @param check - The operand's check.
+ * @param parent - The field's parent value.
+ * @param args - The field's arguments.
+ * @param context - The request context.
+ * @param info - The field's resolve info.
+ * @returns The outcome, or a promise of it when the check is asynchronous.
  */
 function outcomeOf(
   check: Check,
@@ -91,12 +114,26 @@ function outcomeOf(
   return { denial: denialFrom(answer) };
 }
 
-/** Whether any of the operands' answers is still pending. */
+/**
+ * Whether any of the operands' answers is still pending.
+ *
+ * @param values - The operands' answers.
+ * @returns `true` when at least one is a promise.
+ */
 function anyPending<T>(values: readonly (T | Promise<T>)[]): values is Promise<T>[] {
   return values.some(isThenable);
 }
 
-/** Runs every operand in parallel, settling synchronously when all of them do. */
+/**
+ * Runs every operand in parallel, settling synchronously when all of them do.
+ *
+ * @param checks - The operands' checks.
+ * @param parent - The field's parent value.
+ * @param args - The field's arguments.
+ * @param context - The request context.
+ * @param info - The field's resolve info.
+ * @returns One outcome per check, in order.
+ */
 function outcomesOf(
   checks: readonly Check[],
   parent: unknown,
@@ -108,7 +145,12 @@ function outcomesOf(
   return anyPending(outcomes) ? Promise.all(outcomes) : (outcomes as Outcome[]);
 }
 
-/** Whether an outcome is a pass. */
+/**
+ * Whether an outcome is a pass.
+ *
+ * @param outcome - The outcome to read.
+ * @returns `true` when the operand allowed the field.
+ */
 function passed(outcome: Outcome): boolean {
   return 'denial' in outcome && outcome.denial === undefined;
 }
@@ -116,6 +158,10 @@ function passed(outcome: Outcome): boolean {
 /**
  * Decides a tolerant combinator once no operand has passed.
  *
+ * @param outcomes - Every operand's outcome.
+ * @returns The error to deny with.
+ *
+ * @remarks
  * A throw wins over a denial: a rule that broke is an outage to report, not an
  * access decision, and *returning* it here would let `rule()` mark it as a
  * denial. Throwing keeps it propagating unchanged, exactly as it would from a
@@ -123,14 +169,22 @@ function passed(outcome: Outcome): boolean {
  */
 function failureOf(outcomes: readonly Outcome[]): Error {
   const broken = outcomes.find((outcome) => 'thrown' in outcome);
-  if (broken && 'thrown' in broken) throw broken.thrown;
+  if (broken && 'thrown' in broken) {
+    throw broken.thrown;
+  }
   const last = outcomes[outcomes.length - 1] as { readonly denial: Error | undefined };
   return last.denial as Error;
 }
 
 /**
- * Passes when **every** operand passes. Operands are evaluated **in parallel**;
- * on failure the **first** failing operand's error is thrown.
+ * Passes when **every** operand passes.
+ *
+ * @param rules - The operands; each must be checkable.
+ * @returns A checkable rule.
+ *
+ * @remarks
+ * Operands are evaluated **in parallel**; on failure the **first** failing
+ * operand's error is thrown.
  *
  * Use {@link chain} when the operands must run in order, or when a later one is
  * expensive and should be skipped once an earlier one has already failed.
@@ -145,26 +199,31 @@ export function and(...rules: Rule[]): CheckableRule {
   function firstDenial(results: readonly RuleResult[]): RuleResult {
     for (const result of results) {
       const denial = denialFrom(result);
-      if (denial) return denial;
+      if (denial) {
+        return denial;
+      }
     }
     return true;
   }
   return rule(
     (parent, args, context, info) => {
       const answers = checks.map((check) => check(parent, args, context, info));
-      return anyPending(answers)
-        ? Promise.all(answers).then(firstDenial)
-        : firstDenial(answers as RuleResult[]);
+      return anyPending(answers) ? Promise.all(answers).then(firstDenial) : firstDenial(answers as RuleResult[]);
     },
     { name: label('and', rules) },
   );
 }
 
 /**
- * Passes when **any** operand passes. Operands are evaluated **in parallel**;
- * when all of them fail the **last** operand's error is thrown, on the reasoning
- * that the last branch is the most specific fallback and so the most useful
- * thing to tell the caller.
+ * Passes when **any** operand passes.
+ *
+ * @param rules - The operands; each must be checkable.
+ * @returns A checkable rule.
+ *
+ * @remarks
+ * Operands are evaluated **in parallel**; when all of them fail the **last**
+ * operand's error is thrown, on the reasoning that the last branch is the most
+ * specific fallback and so the most useful thing to tell the caller.
  *
  * An operand that **throws** counts as a failed operand rather than failing the
  * whole rule, so a passing branch still carries the field. This matters for the
@@ -190,8 +249,7 @@ export function or(...rules: Rule[]): CheckableRule {
   }
   return rule(
     (parent, args, context, info) => {
-      const outcomes = outcomesOf(checks, parent, args, context, info);
-      return isThenable(outcomes) ? outcomes.then(decide) : decide(outcomes);
+      return whenSettled(outcomesOf(checks, parent, args, context, info), decide);
     },
     { name: label('or', rules) },
   );
@@ -199,7 +257,13 @@ export function or(...rules: Rule[]): CheckableRule {
 
 /**
  * Sequential {@link and}: evaluates operands in order and stops at the first
- * failure, throwing its error. Later operands are not evaluated at all.
+ * failure, throwing its error.
+ *
+ * @param rules - The operands, in evaluation order.
+ * @returns A checkable rule.
+ *
+ * @remarks
+ * Later operands are not evaluated at all.
  *
  * Prefer this over `and` when an operand is expensive — a database lookup, a
  * call to an external policy decision point — and should be reached only after
@@ -218,12 +282,14 @@ export function chain(...rules: Rule[]): CheckableRule {
       // one hands the rest of the walk to a promise.
       function from(index: number): RuleResult | Promise<RuleResult> {
         for (let i = index; i < checks.length; i++) {
-          const answer = (checks[i] as Check)(parent, args, context, info);
+          const answer = checks[i](parent, args, context, info);
           if (isThenable(answer)) {
             return Promise.resolve(answer).then((result) => denialFrom(result) ?? from(i + 1));
           }
           const denial = denialFrom(answer);
-          if (denial) return denial;
+          if (denial) {
+            return denial;
+          }
         }
         return true;
       }
@@ -235,7 +301,13 @@ export function chain(...rules: Rule[]): CheckableRule {
 
 /**
  * Sequential {@link or}: evaluates operands in order and stops at the first one
- * that passes. When all of them fail, the last operand's error is thrown.
+ * that passes.
+ *
+ * @param rules - The operands, in evaluation order.
+ * @returns A checkable rule.
+ *
+ * @remarks
+ * When all of them fail, the last operand's error is thrown.
  *
  * Put the cheap or common case first — a passing first operand means the rest
  * never run.
@@ -256,15 +328,19 @@ export function race(...rules: Rule[]): CheckableRule {
       // As in `chain`: a plain loop until an operand is pending.
       function from(index: number): RuleResult | Promise<RuleResult> {
         for (let i = index; i < checks.length; i++) {
-          const outcome = outcomeOf(checks[i] as Check, parent, args, context, info);
+          const outcome = outcomeOf(checks[i], parent, args, context, info);
           if (isThenable(outcome)) {
             return outcome.then((settled) => {
-              if (passed(settled)) return true;
+              if (passed(settled)) {
+                return true;
+              }
               outcomes.push(settled);
               return from(i + 1);
             });
           }
-          if (passed(outcome)) return true;
+          if (passed(outcome)) {
+            return true;
+          }
           outcomes.push(outcome);
         }
         return failureOf(outcomes);
@@ -278,12 +354,15 @@ export function race(...rules: Rule[]): CheckableRule {
 /**
  * Inverts a rule: passes when the operand denies, denies when it passes.
  *
+ * @param operand - The rule to invert.
+ * @param error - The denial message or error to use when `operand` passes.
+ * @returns A checkable rule.
+ *
+ * @remarks
  * The operand's error is discarded — it explains why the operand failed, which
  * is the *reason this rule passed*. Supply `error` to say why the inverted rule
  * denied; without one it denies with `Forbidden`.
  *
- * @param operand - The rule to invert.
- * @param error - The denial message or error to use when `operand` passes.
  * @example
  * ```ts
  * Mutation: { deleteAccount: not(isImpersonating, 'Not while impersonating') }
@@ -294,8 +373,7 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
   const invert = (result: RuleResult): RuleResult => (denialFrom(result) ? true : (error ?? false));
   return rule(
     (parent, args, context, info) => {
-      const answer = (check as Check)(parent, args, context, info);
-      return isThenable(answer) ? Promise.resolve(answer).then(invert) : invert(answer);
+      return whenSettled((check as Check)(parent, args, context, info), invert);
     },
     { name: label('not', [operand]) },
   );
@@ -305,11 +383,15 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * Composes rules as nested middleware: each one receives the next as its
  * `resolve`, and the last receives the field's real resolver.
  *
+ * @param rules - The rules to nest, outermost first. At least one.
+ * @returns A rule; not checkable.
+ *
+ * @remarks
  * This is the escape hatch from the combinators' one restriction. `and`, `or`,
  * `not`, `chain` and `race` all need to ask an operand for a verdict *without*
  * side effects, so they accept only {@link CheckableRule}s. `wrap` never asks —
  * it just nests — so it accepts anything, including the rules that decide by
- * running the resolver: `createCan(...).onResult`, `scopeArgs(...)` and
+ * running the resolver: `createCan(...).onResult`, `scopeArgs(...)`,
  * `validateArgs(...)` and `grants(...)`.
  *
  * ```ts
@@ -340,7 +422,6 @@ export function not(operand: Rule, error?: string | Error): CheckableRule {
  * its `resolve` stops the chain there, exactly as it would if it were the only
  * rule on the field.
  *
- * @param rules - The rules to nest, outermost first. At least one.
  * @example
  * ```ts
  * Mutation: { publish: wrap(chain(isAuthenticated, isNotBanned), auditTrail) }
@@ -352,9 +433,7 @@ export function wrap(...rules: Rule[]): Rule {
   }
   for (const [index, operand] of rules.entries()) {
     if (typeof operand !== 'function') {
-      throw new Error(
-        `graphql-casl: \`wrap()\` operand ${index} is ${typeof operand}, not a rule.`,
-      );
+      throw new Error(`graphql-casl: \`wrap()\` operand ${index} is ${typeof operand}, not a rule.`);
     }
   }
 
@@ -373,24 +452,15 @@ export function wrap(...rules: Rule[]): Rule {
         context,
         info,
       ),
-    (resolve, parent, args, context, info) =>
-      resolve(parent, args, context, info as GraphQLResolveInfo),
+    (resolve, parent, args, context, info) => resolve(parent, args, context, info as GraphQLResolveInfo),
   );
 
   // Argument-scoping rules advertise the argument they inject into so
   // `applyPermissions` can check the field declares it. Nesting one must not
   // hide it, so the composed rule re-advertises every target beneath it.
-  const targets = [
-    ...new Set(
-      rules.flatMap(
-        (operand) =>
-          (operand as Partial<Record<typeof SCOPE_INFO, ScopeInfo>>)[SCOPE_INFO]?.into ?? [],
-      ),
-    ),
-  ];
+  const targets = [...new Set(rules.flatMap((operand) => scopeInfoOf(operand)?.into ?? []))];
   if (targets.length > 0) {
-    const info: ScopeInfo = { into: targets };
-    Object.defineProperty(composed, SCOPE_INFO, { value: info });
+    markScope(composed, { into: targets });
   }
   return composed;
 }

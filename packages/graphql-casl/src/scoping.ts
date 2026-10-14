@@ -2,6 +2,7 @@
  * Argument scoping — the optional entry point,
  * `@vantreeseba/graphql-casl/scoping`.
  *
+ * @remarks
  * The rest of this library is a gate: a rule decides whether a field may be
  * resolved. That is the wrong shape for a generated CRUD field. `notes(where:)`
  * should not be denied outright because one row is off-limits — it should
@@ -39,11 +40,15 @@ import { accessibleBy } from './accessibleBy.js';
 import type { FilterAdapter } from './conditions.js';
 import type { RequireCan, RequireCanBare } from './createCan.js';
 import type { GraphQLAbility } from './graphqlAbility.js';
-import { CAN_INTERNALS, type CanInternals, SCOPE_INFO, type ScopeInfo } from './internal.js';
-import { denialFrom, type Rule } from './rules.js';
+import { canInternalsOf, markScope } from './internal.js';
+import { denialOf, type Rule } from './rules.js';
 
-/** What {@link scopeArgs} does when the ability permits no row at all. */
-export type OnDenyAll = 'deny' | 'nothing';
+/**
+ * What {@link scopeArgs} does when the ability permits no row at all. The
+ * object names each choice: `onDenyAll: OnDenyAll.Nothing`.
+ */
+export const OnDenyAll = { Deny: 'deny', Nothing: 'nothing' } as const;
+export type OnDenyAll = (typeof OnDenyAll)[keyof typeof OnDenyAll];
 
 /** Options for {@link scopeArgs}. */
 export interface ScopeOptions<TFilter> {
@@ -54,15 +59,21 @@ export interface ScopeOptions<TFilter> {
    */
   adapter: FilterAdapter<TFilter>;
   /**
-   * The argument to inject the filter into. Default `'where'`.
+   * The argument to inject the filter into.
+   *
+   * @remarks
+   * Default `'where'`.
    *
    * `applyPermissions` checks that the field really has an argument by this
    * name and refuses the map if it does not.
    */
   into?: string;
   /**
-   * How to combine the caller's own filter with the scope. The default is a
-   * top-level AND via the adapter — `adapter.and([clientFilter, scope])`.
+   * How to combine the caller's own filter with the scope.
+   *
+   * @remarks
+   * The default is a top-level AND via the adapter —
+   * `adapter.and([clientFilter, scope])`.
    *
    * Override it only if the dialect needs a different combining shape. Do not
    * "merge" by spreading keys: a client filter of `{ OR: [...] }` sits beside
@@ -72,6 +83,7 @@ export interface ScopeOptions<TFilter> {
   /**
    * What to do when the ability permits no row of this subject.
    *
+   * @remarks
    * - `'deny'` (default) — throw `Forbidden`. Honest, and the only safe choice
    *   for a mutation: a forbidden delete must fail, not silently match nothing.
    * - `'nothing'` — inject `adapter.nothing()` so the field resolves to an
@@ -89,13 +101,6 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * A rule that narrows a field's filter argument to the rows the caller may
  * `action`, instead of allowing or denying the field outright.
  *
- * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
- * arguments and calling the resolver, so it cannot be an operand of `and` /
- * `or` / `not` / `chain` / `race`. Use `wrap` to put a gate in front of it —
- * `wrap(isNotBanned, scopeArgs(...))` — or to stack it with `onResult`. Pair it
- * with `fallbackRule` too: a scoped field is not an authenticated-only field,
- * and scoping alone says nothing about the fields *around* it.
- *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @typeParam TFilter - The dialect's filter type.
  * @param requireCan - The `requireCan` returned by `createCan`. Its
@@ -104,6 +109,16 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * @param action - The action to scope for, e.g. `Actions.read`.
  * @param subject - The subject name whose rows are being filtered, e.g. `'Note'`.
  * @param options - The dialect and where to put the filter. See {@link ScopeOptions}.
+ * @returns A rule; not checkable.
+ *
+ * @remarks
+ * It is a plain {@link Rule}, not a `CheckableRule`: it decides by rewriting
+ * arguments and calling the resolver, so it cannot be an operand of `and` /
+ * `or` / `not` / `chain` / `race`. Use `wrap` to put a gate in front of it —
+ * `wrap(isNotBanned, scopeArgs(...))` — or to stack it with `onResult`. Pair it
+ * with `fallbackRule` too: a scoped field is not an authenticated-only field,
+ * and scoping alone says nothing about the fields *around* it.
+ *
  * @example
  * ```ts
  * import { scopeArgs } from '@vantreeseba/graphql-casl/scoping';
@@ -115,11 +130,7 @@ export type Scopable<TSubjectMap extends Record<string, object>> =
  * };
  * ```
  */
-export function scopeArgs<
-  TSubjectMap extends Record<string, object>,
-  K extends keyof TSubjectMap & string,
-  TFilter,
->(
+export function scopeArgs<TSubjectMap extends Record<string, object>, K extends keyof TSubjectMap & string, TFilter>(
   requireCan: Scopable<TSubjectMap>,
   action: Action,
   subject: K,
@@ -127,18 +138,16 @@ export function scopeArgs<
 ): Rule {
   const { adapter, merge } = options;
   const into = options.into ?? 'where';
-  const onDenyAll = options.onDenyAll ?? 'deny';
+  const onDenyAll = options.onDenyAll ?? OnDenyAll.Deny;
 
-  if (onDenyAll === 'nothing' && typeof adapter.nothing !== 'function') {
+  if (onDenyAll === OnDenyAll.Nothing && typeof adapter.nothing !== 'function') {
     throw new Error(
       "graphql-casl: `scopeArgs` with `onDenyAll: 'nothing'` needs an adapter that supplies " +
         '`nothing()` — the filter matching no row. Add it, or use the default `deny`.',
     );
   }
 
-  const internals = (requireCan as Partial<Record<typeof CAN_INTERNALS, CanInternals<unknown>>>)[
-    CAN_INTERNALS
-  ];
+  const internals = canInternalsOf(requireCan);
   if (!internals) {
     throw new Error(
       'graphql-casl: `scopeArgs` expects the `requireCan` returned by `createCan`, so it can ' +
@@ -156,22 +165,19 @@ export function scopeArgs<
 
   const scoped: Rule = async (resolve, parent, args, context, info) => {
     const ability = await internals.authorize(context);
-    const filter = accessibleBy(
-      ability as unknown as GraphQLAbility<TSubjectMap>,
-      action,
-      subject,
-      probe,
-    );
+    const filter = accessibleBy(ability as unknown as GraphQLAbility<TSubjectMap>, action, subject, probe);
 
     if (filter === null) {
-      if (onDenyAll === 'deny') {
+      if (onDenyAll === OnDenyAll.Deny) {
         // Marked as a denial so `applyPermissions`' masking and error control
         // treat it like any other refusal.
-        throw denialFrom(false) ?? new Error('Forbidden');
+        throw denialOf(false);
       }
       return resolve(parent, withArg(args, into, adapter.nothing?.()), context, info);
     }
-    if (filter === unrestricted) return resolve(parent, args, context, info);
+    if (filter === unrestricted) {
+      return resolve(parent, args, context, info);
+    }
 
     const clientFilter = (args as Record<string, unknown> | null | undefined)?.[into];
     const combined =
@@ -184,12 +190,18 @@ export function scopeArgs<
     return resolve(parent, withArg(args, into, combined), context, info);
   };
 
-  const info: ScopeInfo = { into: [into] };
-  Object.defineProperty(scoped, SCOPE_INFO, { value: info });
+  markScope(scoped, { into: [into] });
   return scoped;
 }
 
-/** The field's args with one argument replaced. Never mutates the original. */
+/**
+ * The field's args with one argument replaced. Never mutates the original.
+ *
+ * @param args - The field's arguments.
+ * @param name - The argument to replace.
+ * @param value - Its new value.
+ * @returns A copy with the argument set.
+ */
 function withArg(args: unknown, name: string, value: unknown): Record<string, unknown> {
   const base = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {};
   return { ...base, [name]: value };

@@ -1,9 +1,12 @@
 /**
- * The schema-typed ability. {@link GraphQLAbility} is a CASL `MongoAbility` whose
- * subjects are detected by `__typename` and whose `can`/`cannot` conditions are
- * statically typed against each subject's fields. {@link createGraphQLAbility}
- * returns a builder bound to your subject map; {@link buildGraphQLAbility}
- * reconstructs an ability from stored {@link GraphQLRule}s.
+ * The schema-typed ability.
+ *
+ * @remarks
+ * {@link GraphQLAbility} is a CASL `MongoAbility` whose subjects are detected
+ * by `__typename` and whose `can`/`cannot` conditions are statically typed
+ * against each subject's fields. {@link createGraphQLAbility} returns a builder
+ * bound to your subject map; {@link buildGraphQLAbility} reconstructs an
+ * ability from stored {@link GraphQLRule}s.
  *
  * Subjects are discriminated by `__typename` — CASL's `TaggedInterface` natively
  * accepts a required `__typename` tag, so no `__caslSubjectType__` is needed.
@@ -46,9 +49,7 @@ export type GraphQLAbilities<TSubjectMap extends Record<string, object>> =
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAbility<
-  GraphQLAbilities<TSubjectMap>
->;
+export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAbility<GraphQLAbilities<TSubjectMap>>;
 
 /**
  * A single serializable permission rule for a {@link GraphQLAbility}. This is a
@@ -58,9 +59,7 @@ export type GraphQLAbility<TSubjectMap extends Record<string, object>> = MongoAb
  *
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  */
-export type GraphQLRule<TSubjectMap extends Record<string, object>> = RawRuleOf<
-  GraphQLAbility<TSubjectMap>
->;
+export type GraphQLRule<TSubjectMap extends Record<string, object>> = RawRuleOf<GraphQLAbility<TSubjectMap>>;
 
 /** Options accepted by {@link buildGraphQLAbility} / the builder's `build()`. */
 export type GraphQLAbilityOptions<TSubjectMap extends Record<string, object>> = Partial<
@@ -70,8 +69,11 @@ export type GraphQLAbilityOptions<TSubjectMap extends Record<string, object>> = 
 /**
  * Reads a subject's `__typename`. CASL only calls this for object subjects (bare
  * string subject names and `undefined` are handled before this runs), so a
- * missing/`non-string `__typename` means an untagged object reached the check —
+ * missing or non-string `__typename` means an untagged object reached the check —
  * fail loud rather than silently denying, since CASL can't classify it.
+ *
+ * @param subject - The object subject.
+ * @returns Its `__typename`. Throws when that is missing or not a string.
  */
 function detectSubjectType(subject: { __typename?: unknown }): string {
   const typename = subject.__typename;
@@ -84,14 +86,18 @@ function detectSubjectType(subject: { __typename?: unknown }): string {
   return typename;
 }
 
+/**
+ * Builds CASL's ability options with `__typename` detection as the default.
+ *
+ * @param [overrides] - Options that replace the defaults; `undefined` values are ignored.
+ * @returns The options.
+ */
 function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
   overrides?: GraphQLAbilityOptions<TSubjectMap>,
 ): AbilityOptionsOf<GraphQLAbility<TSubjectMap>> {
   // Drop present-but-`undefined` overrides so they can't silently clobber the
   // default `__typename` detection (e.g. `build({ detectSubjectType: undefined })`).
-  const defined = Object.fromEntries(
-    Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
-  );
+  const defined = Object.fromEntries(Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined));
   return {
     detectSubjectType,
     ...defined,
@@ -108,6 +114,8 @@ function gqlAbilityOptions<TSubjectMap extends Record<string, object>>(
  * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
  * @param rules - The stored rules.
  * @param options - Extra CASL ability options to override or extend the defaults.
+ * @returns The ability.
+ *
  * @example
  * ```ts
  * const rules: GraphQLRule<AppSubjectMap>[] = await db.loadPermissionRules();
@@ -126,12 +134,14 @@ export function buildGraphQLAbility<TSubjectMap extends Record<string, object>>(
  * `__typename` detection applied by `build()` (the mongo conditions matcher is
  * built in).
  *
+ * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
+ * @returns A typed `AbilityBuilder` whose `build()` wires the GraphQL defaults.
+ *
+ * @remarks
  * The returned builder's `can` / `cannot` type their conditions per subject (see
  * {@link GraphQLAbility}). Read `builder.rules` (or `ability.rules`) to persist
  * the rules and later rehydrate them with {@link buildGraphQLAbility}.
  *
- * @typeParam TSubjectMap - The subject map, e.g. `SubjectMap<Resolvers, ResolversTypes>`.
- * @returns A typed `AbilityBuilder` whose `build()` wires the GraphQL defaults.
  * @example
  * ```ts
  * type AppSubjectMap = SubjectMap<Resolvers, ResolversTypes>;
@@ -149,7 +159,6 @@ export function buildGraphQLAbility<TSubjectMap extends Record<string, object>>(
 export function createGraphQLAbility<TSubjectMap extends Record<string, object>>() {
   const builder = new AbilityBuilder<GraphQLAbility<TSubjectMap>>(createMongoAbility);
   const build = builder.build;
-  builder.build = (options?: GraphQLAbilityOptions<TSubjectMap>) =>
-    build(gqlAbilityOptions(options));
+  builder.build = (options?: GraphQLAbilityOptions<TSubjectMap>) => build(gqlAbilityOptions(options));
   return builder;
 }

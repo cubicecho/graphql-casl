@@ -2,6 +2,7 @@
  * The Apollo Server integration — the optional entry point,
  * `@vantreeseba/graphql-casl/apollo`.
  *
+ * @remarks
  * On Apollo Server the schema is wrapped up front with `applyPermissions`, so
  * enforcement needs nothing from here. What `applyPermissions` cannot do is see
  * the finished response — and under `onDeny: 'filter'` some denials can only be
@@ -30,13 +31,8 @@
  * @packageDocumentation
  */
 
-import type {
-  ExecutionResult,
-  FormattedExecutionResult,
-  GraphQLError,
-  GraphQLFormattedError,
-} from 'graphql';
-import { reportDenials } from './applyPermissions.js';
+import type { ExecutionResult, FormattedExecutionResult, GraphQLError, GraphQLFormattedError } from 'graphql';
+import { reportDenials } from './denials.js';
 
 /**
  * The response body Apollo Server hands `willSendResponse`: the slice of its
@@ -44,9 +40,7 @@ import { reportDenials } from './applyPermissions.js';
  * result; an `'incremental'` one (`@defer` / `@stream`) is a stream of
  * payloads, which the plugin leaves alone.
  */
-export type ApolloResponseBody =
-  | { kind: 'single'; singleResult: FormattedExecutionResult }
-  | { kind: 'incremental' };
+export type ApolloResponseBody = { kind: 'single'; singleResult: FormattedExecutionResult } | { kind: 'incremental' };
 
 /**
  * The slice of Apollo Server's `ApolloServerPlugin` that
@@ -56,25 +50,31 @@ export type ApolloResponseBody =
  */
 export interface ReportDenialsApolloPlugin {
   requestDidStart(requestContext: { contextValue: unknown }): Promise<{
-    willSendResponse(requestContext: {
-      contextValue: unknown;
-      response: { body: ApolloResponseBody };
-    }): Promise<void>;
+    willSendResponse(requestContext: { contextValue: unknown; response: { body: ApolloResponseBody } }): Promise<void>;
   }>;
 }
 
-/** Whether an error is still a `GraphQLError` instance rather than its JSON. */
+/**
+ * Whether an error is still a `GraphQLError` instance rather than its JSON.
+ *
+ * @param error - An entry of a response's `errors`.
+ * @returns `true` for a `GraphQLError` instance.
+ */
 function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is GraphQLError {
   return typeof (error as Partial<GraphQLError>).toJSON === 'function';
 }
 
 /**
  * An Apollo Server plugin that reports the denials `onDeny: 'filter'` held for
- * each request — the ones the response could not carry through the denied
- * field itself — into the response before it is sent. It is
- * {@link reportDenials}, called from `willSendResponse` with the request's
- * `contextValue`; see {@link ApplyPermissionsOptions.onDeny} for which denials
- * those are.
+ * each request — the ones the response could not carry through the denied field
+ * itself — into the response before it is sent.
+ *
+ * @returns The plugin, for Apollo Server's `plugins` array.
+ *
+ * @remarks
+ * It is {@link reportDenials}, called from `willSendResponse` with the
+ * request's `contextValue`; see `ApplyPermissionsOptions.onDeny` for which
+ * denials those are.
  *
  * Under `report: 'errors'` they are appended to the response's `errors`,
  * formatted the way Apollo formats its own; under `report: 'extensions'` they
@@ -87,7 +87,6 @@ function isUnformatted(error: GraphQLFormattedError | GraphQLError): error is Gr
  * follow, so a denial held for a deferred payload is silently masked — the same
  * degradation as no hook at all.
  *
- * @returns The plugin, for Apollo Server's `plugins` array.
  * @example
  * ```ts
  * const server = new ApolloServer<Context>({
@@ -102,20 +101,24 @@ export function reportDenialsPlugin(): ReportDenialsApolloPlugin {
       return {
         async willSendResponse({ contextValue, response }) {
           const { body } = response;
-          if (body.kind !== 'single') return;
+          if (body.kind !== 'single') {
+            return;
+          }
           const { singleResult } = body;
           // Apollo has already formatted its own errors by this point, so the
           // result is a `FormattedExecutionResult`; `reportDenials` appends
           // `GraphQLError`s, which are formatted the same way below before the
           // response goes out.
           const reported = reportDenials(contextValue, singleResult as ExecutionResult);
-          if (reported === singleResult) return;
-          if (reported.errors) {
-            singleResult.errors = reported.errors.map((error) =>
-              isUnformatted(error) ? error.toJSON() : error,
-            );
+          if (reported === singleResult) {
+            return;
           }
-          if (reported.extensions) singleResult.extensions = reported.extensions;
+          if (reported.errors) {
+            singleResult.errors = reported.errors.map((error) => (isUnformatted(error) ? error.toJSON() : error));
+          }
+          if (reported.extensions) {
+            singleResult.extensions = reported.extensions;
+          }
         },
       };
     },

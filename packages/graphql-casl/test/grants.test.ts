@@ -311,8 +311,7 @@ describe('grants / granted — composition', () => {
 
   it('forwards a wrapped rule′s scoping marker', () => {
     const marker = Symbol.for('graphql-casl.scopeInfo');
-    const scoping: Rule = async (resolve, parent, args, context, info) =>
-      resolve(parent, args, context, info);
+    const scoping: Rule = async (resolve, parent, args, context, info) => resolve(parent, args, context, info);
     Object.defineProperty(scoping, marker, { value: { into: ['where'] } });
     expect((grants(scoping, 'x') as unknown as Record<symbol, unknown>)[marker]).toEqual({
       into: ['where'],
@@ -372,7 +371,9 @@ describe('grants / granted — the synchronous path', () => {
     const rows = [{}, {}];
     const granting = grants(accept, 'x');
     expect(granting(syncResolve(rows), null, null, ctx, info)).toBe(rows);
-    for (const row of rows) expect(granted('x').check(row, null, ctx, info)).toBe(true);
+    for (const row of rows) {
+      expect(granted('x').check(row, null, ctx, info)).toBe(true);
+    }
 
     const later = [{}];
     const out = granting(async () => later, null, null, ctx, info);

@@ -1,6 +1,7 @@
 /**
  * CASL action verbs and the minimal ability shape the rule layer depends on.
  *
+ * @remarks
  * The concrete typed ability lives in `./graphqlAbility.js`
  * ({@link GraphQLAbility} / {@link createGraphQLAbility}).
  */
@@ -13,6 +14,7 @@ export type Action = 'create' | 'read' | 'update' | 'delete' | 'manage';
  * in `can`/`cannot` calls and rule definitions to get autocomplete and catch
  * typos at compile time.
  *
+ * @remarks
  * The `satisfies` clause validates full coverage: TypeScript errors if `Action`
  * gains a new value and this object is not updated.
  */
@@ -24,12 +26,27 @@ export const Actions = {
   manage: 'manage',
 } as const satisfies Record<Action, Action>;
 
+const ACTION_VALUES: ReadonlySet<string> = new Set(Object.values(Actions));
+
 /**
- * Minimal structural type for anything with a CASL-style `can` method — what the
- * rule layer needs to check an action against a subject. A typed
- * {@link GraphQLAbility} satisfies it; the method shape keeps type-checking for
- * consumers who annotate their ability with this type, unlike a `(...args: any[])`
- * shim.
+ * Whether a value is one of the {@link Action} verbs. Use it to narrow an
+ * action read from outside the type system: a stored rule, a directive argument.
+ *
+ * @param value - The value to test.
+ * @returns `true` when `value` is a member of {@link Actions}.
+ */
+export function isAction(value: unknown): value is Action {
+  return typeof value === 'string' && ACTION_VALUES.has(value);
+}
+
+/**
+ * Minimal structural type for anything with a CASL-style `can` method — what
+ * the rule layer needs to check an action against a subject.
+ *
+ * @remarks
+ * A typed {@link GraphQLAbility} satisfies it; the method shape keeps
+ * type-checking for consumers who annotate their ability with this type, unlike
+ * a `(...args: any[])` shim.
  *
  * The optional third argument is CASL's field-level check
  * (`can('read', user, 'email')`), which `createCan(...).fields` uses to decide a

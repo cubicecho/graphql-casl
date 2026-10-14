@@ -7,10 +7,12 @@
 import { buildSchema } from 'graphql';
 import { describe, expect, it } from 'vitest';
 import {
+  accessibleBy,
   buildGraphQLAbility,
   createGraphQLAbility,
   createTyped,
   type GraphQLRule,
+  type LeafAdapter,
   PermissionsError,
   type ValidateGraphQLRulesOptions,
   validateGraphQLRules,
@@ -66,7 +68,9 @@ function problemsOf(rules: readonly unknown[], options?: ValidateGraphQLRulesOpt
   try {
     validateGraphQLRules(schema, rules, options);
   } catch (error) {
-    if (error instanceof PermissionsError) return [...error.problems];
+    if (error instanceof PermissionsError) {
+      return [...error.problems];
+    }
     throw error;
   }
   throw new Error('expected validateGraphQLRules to throw');
@@ -114,17 +118,13 @@ describe('validateGraphQLRules — what passes', () => {
 
   it('follows dotted paths through object-typed fields and lists', () => {
     expect(() =>
-      validateGraphQLRules(schema, [
-        read({ conditions: { 'author.id': 'u1', 'tags.name': { $in: ['a'] } } }),
-      ]),
+      validateGraphQLRules(schema, [read({ conditions: { 'author.id': 'u1', 'tags.name': { $in: ['a'] } } })]),
     ).not.toThrow();
   });
 
   it('accepts any path below a scalar, an enum or a union', () => {
     // A `JSON` column has whatever keys it has; there is nothing to check.
-    expect(() =>
-      validateGraphQLRules(schema, [read({ conditions: { 'meta.anything.deeper': 1 } })]),
-    ).not.toThrow();
+    expect(() => validateGraphQLRules(schema, [read({ conditions: { 'meta.anything.deeper': 1 } })])).not.toThrow();
   });
 
   it('accepts field patterns and dotted fields', () => {
@@ -140,9 +140,7 @@ describe('validateGraphQLRules — what passes', () => {
     expect(() =>
       validateGraphQLRules(schema, [{ action: 'read', subject: 'all', conditions: { x: 1 } }]),
     ).not.toThrow();
-    expect(
-      problemsOf([{ action: 'read', subject: 'all', conditions: { x: { $foo: 1 } } }]),
-    ).toEqual([
+    expect(problemsOf([{ action: 'read', subject: 'all', conditions: { x: { $foo: 1 } } }])).toEqual([
       'Rule 0 (`read` on `all`): `$foo` on `x` is not a condition operator CASL supports.',
     ]);
   });
@@ -214,9 +212,7 @@ describe('validateGraphQLRules — subjects', () => {
       { action: 'read', subject: 'Node' },
       { action: 'read', subject: 'Thing' },
     ]);
-    expect(problems[0]).toMatch(
-      /^Rule 0 .*subject `Node` is an interface type, not an object type\./,
-    );
+    expect(problems[0]).toMatch(/^Rule 0 .*subject `Node` is an interface type, not an object type\./);
     expect(problems[0]).toContain('Subjects are detected by `__typename`');
     expect(problems[1]).toMatch(/subject `Thing` is a union type, not an object type\./);
   });
@@ -297,15 +293,13 @@ describe('validateGraphQLRules — conditions', () => {
   });
 
   it('checks inside $and / $or / $nor groups', () => {
-    expect(
-      problemsOf([read({ conditions: { $and: [{ ownerId: 'u1' }, { titel: 'x' }] } })]),
-    ).toEqual(['Rule 0 (`read` on `Note`): condition field `titel` is not a field of `Note`.']);
+    expect(problemsOf([read({ conditions: { $and: [{ ownerId: 'u1' }, { titel: 'x' }] } })])).toEqual([
+      'Rule 0 (`read` on `Note`): condition field `titel` is not a field of `Note`.',
+    ]);
   });
 
   it('rejects a malformed group', () => {
-    expect(
-      problemsOf([read({ conditions: { $and: 'x' } }), read({ conditions: { $or: [1] } })]),
-    ).toEqual([
+    expect(problemsOf([read({ conditions: { $and: 'x' } }), read({ conditions: { $or: [1] } })])).toEqual([
       'Rule 0 (`read` on `Note`): `$and` must be an array of conditions, not the string "x".',
       'Rule 1 (`read` on `Note`): `$or[0]` is a number, not a condition object.',
     ]);
@@ -332,11 +326,63 @@ describe('validateGraphQLRules — conditions', () => {
   it("conditionFields: 'none' skips the field check but still checks operators", () => {
     const stale = read({ conditions: { ownr: 'u1' } });
     expect(() => validateGraphQLRules(schema, [stale], { conditionFields: 'none' })).not.toThrow();
-    expect(
-      problemsOf([read({ conditions: { ownr: { $foo: 1 } } })], { conditionFields: 'none' }),
-    ).toEqual([
+    expect(problemsOf([read({ conditions: { ownr: { $foo: 1 } } })], { conditionFields: 'none' })).toEqual([
       'Rule 0 (`read` on `Note`): `$foo` on `ownr` is not a condition operator CASL supports.',
     ]);
+  });
+
+  /** A leaf adapter that translates nothing in particular; only whether the walk throws matters. */
+  const leafAdapter: LeafAdapter<string> = {
+    leaf: ({ operator }) => operator,
+    and: (filters) => filters.join('&'),
+    or: (filters) => filters.join('|'),
+    not: (filter) => `!${filter}`,
+    everything: () => 'ALL',
+  };
+  const fold = (rules: object[]) =>
+    accessibleBy(
+      buildGraphQLAbility<AppSubjectMap>(rules as GraphQLRule<AppSubjectMap>[]),
+      'read',
+      'Note',
+      leafAdapter,
+    );
+
+  it("operators: 'leaf' also rejects what a leaf adapter cannot translate", () => {
+    const rules = [
+      read({ conditions: { title: { $regex: 'x', $options: 'i' } } }),
+      read({ conditions: { ownerId: { $not: { $eq: 'u1' } } } }),
+      read({ conditions: { $or: [{ title: { $mod: [2, 0] } }] } }),
+    ];
+    expect(() => validateGraphQLRules(schema, rules)).not.toThrow();
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'matcher' })).not.toThrow();
+    expect(problemsOf(rules, { operators: 'leaf' })).toEqual([
+      'Rule 0 (`read` on `Note`): `$options` on `title` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+      'Rule 1 (`read` on `Note`): `$not` on `ownerId` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+      'Rule 2 (`read` on `Note`): `$mod` on `title` is an operator CASL supports, but a leaf filter adapter cannot translate it.',
+    ]);
+    // What the option guards against: each of these throws when folded.
+    for (const rule of rules) {
+      expect(() => fold([rule])).toThrow(/unsupported condition operator/);
+    }
+  });
+
+  it("operators: 'leaf' accepts exactly what the leaf walker translates", () => {
+    const translated = {
+      $and: [{ ownerId: { $eq: 'u1', $ne: 'u2', $in: ['u1'], $nin: ['u2'], $exists: true } }],
+      $nor: [{ title: { $gt: 'a', $gte: 'a', $lt: 'z', $lte: 'z', $regex: 'x' } }],
+      tags: { $all: [], $size: 2, $elemMatch: { name: 'z' } },
+    };
+    const rules = [read({ conditions: translated })];
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'leaf' })).not.toThrow();
+    // The claim the option makes: a rule that passes it folds without throwing.
+    expect(() => fold(rules)).not.toThrow();
+  });
+
+  it("operators: 'leaf' leaves the conditions under $elemMatch to the adapter", () => {
+    // The walker hands an `$elemMatch` operand to `leaf` as written.
+    const rules = [read({ conditions: { tags: { $elemMatch: { name: { $not: { $eq: 'z' } } } } } })];
+    expect(() => validateGraphQLRules(schema, rules, { operators: 'leaf' })).not.toThrow();
+    expect(() => fold(rules)).not.toThrow();
   });
 });
 
@@ -367,9 +413,7 @@ describe('validateGraphQLRules — reporting', () => {
     const error = caught as PermissionsError;
     expect(error.name).toBe('PermissionsError');
     expect(error.message).toContain('graphql-casl: the ability rules do not match the schema.');
-    expect(error.message).toContain(
-      '  - Rule 0 (`read` on `Ghost`): subject `Ghost` is not a type in the schema.',
-    );
+    expect(error.message).toContain('  - Rule 0 (`read` on `Ghost`): subject `Ghost` is not a type in the schema.');
   });
 
   it('catches what buildGraphQLAbility lets through silently', () => {
